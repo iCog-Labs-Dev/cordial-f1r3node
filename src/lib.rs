@@ -81,6 +81,72 @@ impl Blocklace {
         Self { blocks: HashMap::new() }
     }
 
+
+    // direct predecessors of b — implements ←b
+    /// { a | a ← b } i.e. the blocks directly pointed to by b
+    fn predecessors(&self, id: &BlockIdentity) -> HashSet<Block> {
+        match self.content(id) {
+            None => HashSet::new(),
+            Some(content) => self.get_set(&content.predecessors),
+        }
+    }
+
+
+    // All ancestors of b — implements ≺b
+    /// The transitive closure of ← starting at b, NOT including b itself
+    fn ancestors(&self, id: &BlockIdentity) -> HashSet<Block> {
+        let mut visited = HashSet::new();
+        let mut queue: Vec<BlockIdentity> = vec![id.clone()];
+
+        while let Some(current_id) = queue.pop() {
+            if let Some(content) = self.content(&current_id) {
+                for pred_id in &content.predecessors {
+                    // only visit if not yet seen
+                    if visited.insert(pred_id.clone()) {
+                        queue.push(pred_id.clone());
+                    }
+                }
+            }
+        }
+
+        // return the full blocks for all visited ancestors
+        visited.iter()
+            .filter_map(|id| self.get(id))
+            .collect()
+    }
+
+    /// ⪯b — ancestors including b itself
+    /// This is the "downward closure" the paper uses heavily
+    fn ancestors_inclusive(&self, id: &BlockIdentity) -> HashSet<Block> {
+        let mut result = self.ancestors(id);
+        if let Some(block) = self.get(id) {
+            result.insert(block);
+        }
+        result
+    }
+
+
+    // ≺S — all ancestors of any block in a set
+    fn ancestors_of_set(&self, ids: &HashSet<BlockIdentity>) -> HashSet<Block> {
+        ids.iter()
+            .flat_map(|id| self.ancestors(id))
+            .collect()
+    }
+
+
+    /// Check if a precedes b — i.e. a ≺ b
+    /// a is somewhere in b's ancestry
+    fn precedes(&self, a: &BlockIdentity, b: &BlockIdentity) -> bool {
+        self.ancestors(b).iter().any(|block| &block.identity == a)
+    }
+
+    /// Check if a ⪯ b — precedes or equals
+    fn precedes_or_equals(&self, a: &BlockIdentity, b: &BlockIdentity) -> bool {
+        a == b || self.precedes(a, b)
+    }
+
+
+
     /// B(b) — get the content of a block by its identity
     fn content(&self, id: &BlockIdentity) -> Option<&BlockContent> {
         self.blocks.get(id)
