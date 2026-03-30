@@ -1,4 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+// blocklace itself
+struct Blocklace {
+    ///  The map view: identity → content (this is B as a function)
+    /// Closure axiom: every id in any predecessor set must be a key here
+    blocks: HashMap<BlockIdentity, BlockContent>,
+}
 
 /// The cryptographic identity of a block: hash(C) signed by its creator.
 /// From the paper: knowing `i` lets you recover `node(i) = p`.
@@ -50,6 +57,12 @@ impl Block {
     fn id(&self) -> &BlockIdentity {
         &self.identity
     }
+
+    /// Returns true if `self` is pointed from `other`
+    /// i.e., self ← other, i.e., id(self) ∈ P(other)
+    fn is_pointed_from(&self, other: &Block) -> bool {
+        other.content.predecessors.contains(&self.identity)
+    }
 }
 
 /// nodes(S) = { node(b) | b ∈ S } — all creators in a set of blocks
@@ -60,4 +73,60 @@ fn nodes(blocks: &[Block]) -> HashSet<&NodeId> {
 /// ids(S) = { id(b) | b ∈ S } — all identities in a set of blocks
 fn ids(blocks: &[Block]) -> HashSet<&BlockIdentity> {
     blocks.iter().map(|b| b.id()).collect()
+}
+
+
+impl Blocklace {
+    fn new() -> Self {
+        Self { blocks: HashMap::new() }
+    }
+
+    /// B(b) — get the content of a block by its identity
+    fn content(&self, id: &BlockIdentity) -> Option<&BlockContent> {
+        self.blocks.get(id)
+    }
+
+    /// B[b] — get the full block (identity + content) by identity
+    fn get(&self, id: &BlockIdentity) -> Option<Block> {
+        self.blocks.get(id).map(|content| Block {
+            identity: id.clone(),
+            content: content.clone(),
+        })
+    }
+
+    /// B[P] — get all blocks whose ids are in the set P
+    fn get_set(&self, ids: &HashSet<BlockIdentity>) -> HashSet<Block> {
+        ids.iter()
+            .filter_map(|id| self.get(id))
+            .collect()
+    }
+
+    /// dom(B) — the set of all known block identities
+    fn dom(&self) -> HashSet<&BlockIdentity> {
+        self.blocks.keys().collect()
+    }
+
+    /// Check the closure axiom: ∀(i, (v, P)) ∈ B · P ⊂ dom(B)
+    fn is_closed(&self) -> bool {
+        self.blocks.values().all(|content| {
+            content.predecessors.iter()
+                .all(|pred_id| self.blocks.contains_key(pred_id))
+        })
+    }
+
+    /// Add a block — enforcing the closure axiom at insert time
+    /// A block can only be added if all its predecessors are already present
+    fn insert(&mut self, block: Block) -> Result<(), String> {
+        // Check closure axiom before inserting
+        for pred_id in &block.content.predecessors {
+            if !self.blocks.contains_key(pred_id) {
+                return Err(format!(
+                    "Closure violation: predecessor {:?} not in blocklace",
+                    pred_id
+                ));
+            }
+        }
+        self.blocks.insert(block.identity, block.content);
+        Ok(())
+    }
 }
