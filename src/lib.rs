@@ -195,4 +195,202 @@ impl Blocklace {
         self.blocks.insert(block.identity, block.content);
         Ok(())
     }
+
+
+        /// Returns all blocks created by a given node
+    fn blocks_by(&self, node: &NodeId) -> Vec<Block> {
+        self.blocks
+            .iter()
+            .filter(|(id, _)| &id.creator == node)
+            .map(|(id, content)| Block {
+                identity: id.clone(),
+                content: content.clone(),
+            })
+            .collect()
+    }
+
+    /// Check the virtual chain axiom for a specific node p — (CHAIN)
+    /// Any two p-blocks must be comparable under ≺
+    fn satisfies_chain_axiom(&self, node: &NodeId) -> bool {
+        let p_blocks = self.blocks_by(node);
+
+        // check every pair (a, b) of distinct p-blocks
+        for i in 0..p_blocks.len() {
+            for j in (i + 1)..p_blocks.len() {
+                let a = &p_blocks[i].identity;
+                let b = &p_blocks[j].identity;
+
+                // at least one of a ≺ b or b ≺ a must hold
+                let comparable = self.precedes(a, b) || self.precedes(b, a);
+                if !comparable {
+                    return false; // Byzantine equivocator detected
+                }
+            }
+        }
+        true
+    }
+
+    /// Check chain axiom for ALL nodes in the blocklace
+    fn satisfies_chain_axiom_all(&self) -> bool {
+        let all_nodes: HashSet<NodeId> = self.blocks
+            .keys()
+            .map(|id| id.creator.clone())
+            .collect();
+
+        all_nodes.iter().all(|node| self.satisfies_chain_axiom(node))
+    }
+
+    /// Identify Byzantine equivocators — nodes that violate (CHAIN)
+    fn find_equivocators(&self) -> HashSet<NodeId> {
+        let all_nodes: HashSet<NodeId> = self.blocks
+            .keys()
+            .map(|id| id.creator.clone())
+            .collect();
+
+        all_nodes
+            .into_iter()
+            .filter(|node| !self.satisfies_chain_axiom(node))
+            .collect()
+    }
+
+    /// Get the latest block of node p — the one that precedes no other p-block
+    /// (the "tip" of p's virtual chain)
+    fn tip_of(&self, node: &NodeId) -> Option<Block> {
+        let p_blocks = self.blocks_by(node);
+
+        // the tip is the p-block that is NOT preceded by any other p-block
+        p_blocks.iter().find(|candidate| {
+            !p_blocks.iter().any(|other| {
+                other.identity != candidate.identity
+                    && self.precedes(&candidate.identity, &other.identity)
+            })
+        }).cloned()
+    }
+}
+
+
+/// Represents a node's full local state
+struct Node {
+    /// The node's identity (public key)
+    id: NodeId,
+    /// The node's private key — used for signing
+    private_key: Vec<u8>,
+    /// B — the validated, closed blocklace
+    blocklace: Blocklace,
+    /// D — buffered blocks waiting for their predecessors
+    buffer: Vec<Block>,
+}
+
+impl Node {
+    /// max≺(B) — maximal blocks in B under ≺
+    /// These are blocks that no other block in B points to.
+    /// i.e., they are not in any predecessor set of any block in B
+    fn maximal_blocks(&self) -> HashSet<Block> {
+        // collect all ids that ARE pointed to by someone
+        let pointed_to: HashSet<&BlockIdentity> = self.blocklace
+            .blocks
+            .values()
+            .flat_map(|content| content.predecessors.iter())
+            .collect();
+
+        // maximal = blocks whose id is NOT in pointed_to
+        self.blocklace
+            .blocks
+            .iter()
+            .filter(|(id, _)| !pointed_to.contains(id))
+            .map(|(id, content)| Block {
+                identity: id.clone(),
+                content: content.clone(),
+            })
+            .collect()
+    }
+
+    /// The core add(v) operation from the paper:
+    /// B' = B ∪ { new_p(B, v) }
+    fn add(&mut self, payload: Vec<u8>) -> Block {
+        // Step 1: P = ids(max≺(B)) — predecessor set is the current tips
+        let max_blocks = self.maximal_blocks();
+        let predecessors: HashSet<BlockIdentity> = max_blocks
+            .into_iter()
+            .map(|b| b.identity)
+            .collect();
+
+        // Step 2: C = (v, P)
+        let content = BlockContent {
+            payload,
+            predecessors,
+        };
+
+        // Step 3: i = signedhash((v, P), k_p)
+        let identity = self.sign_content(&content);
+
+        // Step 4: new block b = (i, C)
+        let block = Block { identity, content };
+
+        // Step 5: B' = B ∪ {b} — closure axiom holds trivially
+        // since P = ids(max(B)) and all of B is already closed
+        self.blocklace.insert(block.clone())
+            .expect("New block must satisfy closure by construction");
+
+        block
+    }
+
+    /// Simulate signedhash((v, P), k_p)
+    /// In production: serialize content, SHA-256, sign with private key
+    fn sign_content(&self, content: &BlockContent) -> BlockIdentity {
+        // placeholder — real impl would use ed25519 or similar
+        let content_hash = hash_content(content);
+        let signature = sign(&content_hash, &self.private_key);
+
+        BlockIdentity {
+            content_hash,
+            creator: self.id.clone(),
+            signature,
+        }
+    }
+
+    /// Receive a block from the network — either accept into B or buffer in D
+    fn receive(&mut self, block: Block) {
+        if self.can_accept(&block) {
+            self.accept(block);
+        } else {
+            // predecessors not yet in B — buffer it
+            self.buffer.push(block);
+        }
+    }
+
+    /// A block can be accepted into B iff all its predecessors are already in B
+    /// (this is exactly the closure axiom check)
+    fn can_accept(&self, block: &Block) -> bool {
+        block.content.predecessors.iter()
+            .all(|pred_id| self.blocklace.blocks.contains_key(pred_id))
+    }
+
+    /// Accept a block into B, then drain any buffered blocks that are now unblocked
+    fn accept(&mut self, block: Block) {
+        self.blocklace.insert(block)
+            .expect("Block passed can_accept so closure is guaranteed");
+
+        // try to drain the buffer — newly accepted block may unblock others
+        self.drain_buffer();
+    }
+
+    /// Repeatedly scan buffer until no more blocks can be promoted to B
+    fn drain_buffer(&mut self) {
+        loop {
+            // find the first buffered block that is now acceptable
+            let pos = self.buffer.iter()
+                .position(|b| self.can_accept(b));
+
+            match pos {
+                None => break, // nothing left to unblock
+                Some(i) => {
+                    let block = self.buffer.remove(i);
+                    self.blocklace.insert(block)
+                        .expect("Buffer block passed can_accept");
+                    // loop again — this might unblock more
+                }
+            }
+        }
+    }
 }
