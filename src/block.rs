@@ -31,3 +31,29 @@ impl Block {
         other.content.predecessors.contains(&self.identity)
     }
 }
+
+
+// Manual Hash + PartialEQ so block can live in Hashet
+impl PartialEq for Block {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity == other.identity
+    }
+}
+impl Eq for Block {}
+
+impl std::hash::Hash for Block {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.identity.hash(state);
+    }
+}
+
+
+/// nodes(S) = {node(b) | b ∈ S} -> The set of nodes that created blocks in S.
+pub fn nodes(blocks: &[Block]) -> HashSet<NodeId> {
+    blocks.iter().map(|b| b.node()).collect()
+}
+
+// id(S) = {id(b) | b ∈ S} -> The set of block identities in S.
+pub fn ids(blocks: &[Block]) -> HashSet<BlockIdentity> {
+    blocks.iter().map(|b| b.id()).collect()
+}
