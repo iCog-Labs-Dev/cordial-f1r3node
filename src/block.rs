@@ -1,14 +1,12 @@
 use std::collections::HashSet;
-use crate::types::{BlockIdentity, BlockContent, NodeId};
+use crate::types::{BlockContent, BlockIdentity, NodeId};
 
 #[derive (Debug, Clone)]
 pub struct Block {
     pub identity: BlockIdentity, /// i = signedhash((v, P), k_p)
-    pub content: BlockContent,  /// C = (v, P)
+    pub content: BlockContent,  // C = (v, P)
 }
 
-
-#[deive(Debug, Clone)]
 
 impl Block {
 
@@ -49,11 +47,11 @@ impl std::hash::Hash for Block {
 
 
 /// nodes(S) = {node(b) | b ∈ S} -> The set of nodes that created blocks in S.
-pub fn nodes(blocks: &[Block]) -> HashSet<NodeId> {
+pub fn nodes(blocks: &[Block]) -> HashSet<&NodeId> {
     blocks.iter().map(|b| b.node()).collect()
 }
 
 // id(S) = {id(b) | b ∈ S} -> The set of block identities in S.
-pub fn ids(blocks: &[Block]) -> HashSet<BlockIdentity> {
+pub fn ids(blocks: &[Block]) -> HashSet<&BlockIdentity> {
     blocks.iter().map(|b| b.id()).collect()
 }

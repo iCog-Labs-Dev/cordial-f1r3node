@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use super::identity::BlockIdentity;
+use super::identity_id::BlockIdentity;
 
 /// C = (v, P) — the block content that gets hashed to form the block identity.
 ///
