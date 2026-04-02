@@ -128,3 +128,39 @@ fn pointed_from_is_false_when_no_reference() {
     };
     assert!(!block_a.is_pointed_from(&block_b));
 }
+
+// Equality and hashing tests
+#[test]
+fn same_identity_means_equal_blocks(){
+    let blocka = Block {
+        identity: BlockIdentity {
+            content_hash: [0x01; 32],
+            creator: NodeId(vec![1]),
+            signature: vec![],
+        },
+        content: BlockContent { payload: vec![], predecessors: std::collections::HashSet::new() },
+    };
+    let blockb = blocka.clone();
+    assert_eq!(blocka, blockb);
+}
+
+#[test]
+fn different_tag_means_different_blocks(){
+    let blocka = Block {
+        identity: BlockIdentity {
+            content_hash: [0x01; 32],
+            creator: NodeId(vec![1]),
+            signature: vec![],
+        },
+        content: BlockContent { payload: vec![], predecessors: std::collections::HashSet::new() },
+    };
+    let blockb = Block {
+        identity: BlockIdentity {
+            content_hash: [0x02; 32],
+            creator: NodeId(vec![1]),
+            signature: vec![],
+        },
+        content: BlockContent { payload: vec![], predecessors: std::collections::HashSet::new() },
+    };
+    assert_ne!(blocka, blockb);
+}
