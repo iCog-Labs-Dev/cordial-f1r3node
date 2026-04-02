@@ -49,3 +49,39 @@ fn block_with_predecessors_is_not_initial() {
     };
     assert!(!block.is_initial());
 }
+
+
+// Test for Block::node() function to return the creator of the block.
+#[test]
+fn node_returns_creator() {
+    let block = Block {
+        identity: BlockIdentity {
+            content_hash: [0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+                0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+                0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+                0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89],
+            creator: NodeId(vec![1]),
+            signature: vec![],
+        },
+        content: BlockContent { payload: vec![], predecessors: std::collections::HashSet::new() },
+    };
+    assert_eq!(block.node(), &NodeId(vec![1]));
+}
+
+// Test for the Block::id() function to return the block's identity.
+#[test]
+fn id_returns_identity() {
+    let block_identity = BlockIdentity {
+        content_hash: [0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+            0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+            0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+            0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89],
+        creator: NodeId(vec![1]),
+        signature: vec![],
+    };
+    let block = Block {
+        identity: block_identity.clone(),
+        content: BlockContent { payload: vec![], predecessors: std::collections::HashSet::new() },
+    };
+    assert_eq!(block.id(), &block_identity);
+}
