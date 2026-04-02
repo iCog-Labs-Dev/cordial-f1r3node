@@ -164,3 +164,28 @@ fn different_tag_means_different_blocks(){
     };
     assert_ne!(blocka, blockb);
 }
+
+#[test]
+fn block_can_live_in_hashset() {
+    use std::collections::HashSet;
+    let blocka = Block {
+        identity: BlockIdentity {
+            content_hash: [0x01; 32],
+            creator: NodeId(vec![1]),
+            signature: vec![],
+        },
+        content: BlockContent { payload: vec![], predecessors: std::collections::HashSet::new() },
+    };
+    let blockb = Block {
+        identity: BlockIdentity {
+            content_hash: [0x02; 32],
+            creator: NodeId(vec![1]),
+            signature: vec![],
+        },
+        content: BlockContent { payload: vec![], predecessors: std::collections::HashSet::new() },
+    };
+    let mut set = HashSet::new();
+    set.insert(blocka.clone());
+    assert!(set.contains(&blocka));
+    assert!(!set.contains(&blockb));
+}
