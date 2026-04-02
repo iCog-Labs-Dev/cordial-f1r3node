@@ -85,3 +85,46 @@ fn id_returns_identity() {
     };
     assert_eq!(block.id(), &block_identity);
 }
+
+#[test]
+fn pointed_from_directs_direct_reference() {
+
+    let block_a = Block {
+        identity: BlockIdentity {
+            content_hash: [0x01; 32],
+            creator: NodeId(vec![1]),
+            signature: vec![],
+        },
+        content: BlockContent { payload: vec![], predecessors: std::collections::HashSet::new() },
+    };
+    let block_b = Block {
+        identity: BlockIdentity {
+            content_hash: [0x02; 32],
+            creator: NodeId(vec![2]),
+            signature: vec![],
+        },
+        content: BlockContent { payload: vec![], predecessors: std::collections::HashSet::from([block_a.id().clone()]) },
+    };
+    assert!(block_a.is_pointed_from(&block_b));
+}
+
+#[test]
+fn pointed_from_is_false_when_no_reference() {
+    let block_a = Block {
+        identity: BlockIdentity {
+            content_hash: [0x01; 32],
+            creator: NodeId(vec![1]),
+            signature: vec![],
+        },
+        content: BlockContent { payload: vec![], predecessors: std::collections::HashSet::new() },
+    };
+    let block_b = Block {
+        identity: BlockIdentity {
+            content_hash: [0x02; 32],
+            creator: NodeId(vec![2]),
+            signature: vec![],
+        },
+        content: BlockContent { payload: vec![], predecessors: std::collections::HashSet::new() },
+    };
+    assert!(!block_a.is_pointed_from(&block_b));
+}
