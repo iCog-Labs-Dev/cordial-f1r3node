@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::iter::FilterMap;
 use crate::block::Block;
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 
@@ -46,3 +45,17 @@ impl Blocklace {
         self.blocks.keys().collect()
     }
 }
+
+
+// Insertion and Closure axiom
+impl Blocklace {
+    /// Insert a block into the blocklace, enforcing the closure axiom.
+   pub fn insert(&mut self, block: Block) -> Result<(), String> {
+    for pred_id in &block.content.predecessors {
+        if !self.blocks.contains_key(pred_id) {
+            return Err(format!("Closure violation: predecessor {:?} not in blocklace", pred_id));
+        }
+    }
+    self.blocks.insert(block.identity.clone(), block.content);
+    Ok(())
+   }}
