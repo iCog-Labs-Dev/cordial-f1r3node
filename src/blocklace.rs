@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::iter::FilterMap;
 use crate::block::Block;
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 
@@ -12,4 +13,36 @@ use crate::types::{BlockContent, BlockIdentity, NodeId};
 ///  - CHAIN: all blocks from a correct node are totally ordered under  ≺
 pub struct Blocklace {
     pub(crate) blocks: HashMap<BlockIdentity, BlockContent>,
+}
+
+// Construction
+impl Blocklace {
+    pub fn new() -> Self {
+        Self {blocks: HashMap::new()}
+    }
+}
+
+// Map-view accessors based on definition 2.3
+impl Blocklace {
+    /// B(b) - get the content of a block by its identity.
+    pub fn content(&self, id: &BlockIdentity) -> Option<&BlockContent> {
+        self.blocks.get(id)
+    }
+
+    /// B[b] - get the full block (identity + content) by identity.
+    pub fn get(&self, id: &BlockIdentity) -> Option<Block> {
+        self.blocks.get(id).map(|content| Block {
+            identity: id.clone(),
+            content: content.clone(),
+        })
+    }
+    /// B[P] - get all blocks whose ids are in the set P>
+    pub fn get_set(&self, ids: &HashSet<BlockIdentity>) -> HashSet<Block> {
+        ids.iter().filter_map(|id| self.get(id)).collect()
+    }
+
+    /// dom(B) - the set of all known block identities
+    pub fn dom(&self) -> HashSet<&BlockIdentity> {
+        self.blocks.keys().collect()
+    }
 }
