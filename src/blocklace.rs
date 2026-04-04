@@ -58,4 +58,13 @@ impl Blocklace {
     }
     self.blocks.insert(block.identity.clone(), block.content);
     Ok(())
-   }}
+   }
+
+    pub fn is_closed(&self) -> bool {
+        self.blocks.values().all(|content| {
+            content.predecessors.iter()
+                .all(|pred_id| self.blocks.contains_key(pred_id))
+        })
+    }
+
+}
