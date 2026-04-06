@@ -68,3 +68,63 @@ impl Blocklace {
     }
 
 }
+
+
+// Pointed relation based on definition 2.2
+impl Blocklace {
+    /// <-b - direcet predecessors of block b
+    /// {a | a <- b} the blocks directly pointed to by b
+    pub fn predecessors(&self, id: &BlockIdentity) -> HashSet<Block> {
+        match self.content(id) {
+            None => HashSet::new(),
+            Some(content) => self.get_set(&content.predecessors),
+        }
+    }
+}
+
+impl Blocklace {
+    /// <b - all ancestors of b (transitive closure of <-) Not including b itself
+    /// Computed by iterative DFS over the prodecessor graph
+    /// Termination is guaranteed by the closure axiom, which ensures no cycles
+    pub fn ancestors(&self, id: BlockIdentity) -> HashSet<Block> {
+        let mut visited = HashSet::new();
+        let mut queue: Vec<BlockIdentity> = vec![id.clone()];
+
+        while let Some(current_id) = queue.pop() {
+            if let Some(content) = self.content(&current_id) {
+                for pred_id in &content.predecessors {
+                    if visited.insert(pred_id.clone()){
+                        queue.push(pred_id.clone());
+                    }
+                }
+            }
+        }
+        visited.iter().filter_map(|id| self.get(id)).collect()
+    }
+
+    /// ⪯b — ancestors of b including b itself
+    /// This is downward closure used heavly throughout the paper, so we provide a direct method for it.
+    pub fn ancestors_inclusive(&self, id: &BlockIdentity) -> HashSet<Block> {
+        let mut result = HashSet::new();
+        if let Some(block) = self.get(id) {
+            result.insert(block);
+        }
+        result
+    }
+
+    /// <S - all blocks that are ancestors of any block in S
+    pub fn ancestors_of_set(&self, ids: &HashSet<BlockIdentity>) -> HashSet<Block> {
+        ids.iter().flat_map(|id| self.ancestors(id.clone())).collect()
+    }
+
+    /// Check if a < b - a is somewhere in b's ancestry
+    pub fn precedes(&self, a: &BlockIdentity, b: &BlockIdentity) -> bool {
+        self.ancestors(b.clone()).iter().any(|block| &block.identity == a)
+    }
+
+    /// Check if a ⪯ b - a  preceeds b or is equal to b
+    pub fn preceedes_or_equals(&self, a:&BlockIdentity, b: &BlockIdentity) -> bool {
+        a == b || self.precedes(a, b)
+    }
+
+}
