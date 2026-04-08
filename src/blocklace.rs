@@ -159,4 +159,36 @@ impl Blocklace {
         }
         true
     }
-}
+
+    /// Check the chain axiom for every node in the blocklace
+    pub fn satisfies_chain_axiom_all(&self) -> bool {
+        self.all_nodes()
+            .iter()
+            .all(|node| self.satisfies_chain_axiom(node))
+    }
+
+    /// Returns the set of all byzantine equivocators - nodes violating (CHAIN).
+    pub fn find_equivacators(&self) -> HashSet<NodeId> {
+        self.all_nodes()
+            .into_iter()
+            .filter(|node| !self.satisfies_chain_axiom(node))
+            .collect()
+    }
+
+    /// Get The tip of node p's virtual chain - the p-block that no other
+    /// p-block precedes()i.e. p's most recent block in the blocklace
+    pub fn  tip_of(&self, node: &NodeId) -> Option<Block> {
+        let p_blocks = self.blocks_by(node);
+        p_blocks.iter().find(|candidate| {
+            !p_blocks.iter().any(|other| {
+                other.identity != candidate.identity
+                    && self.precedes(&candidate.identity, &other.identity )
+            })
+        }).cloned()
+    }
+
+    /// Helper - collect the set of all node ids present the blocklace
+    fn all_nodes(&self) -> HashSet<NodeId> {
+        self.blocks.keys().map(|id| id.creator.clone()).collect()
+    }
+}   
