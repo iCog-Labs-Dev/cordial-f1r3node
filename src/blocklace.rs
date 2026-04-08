@@ -128,3 +128,35 @@ impl Blocklace {
     }
 
 }
+
+impl Blocklace {
+    /// Returns all blocks created by a give node p
+    pub fn blocks_by(&self, node: &NodeId) -> Vec<Block> {
+        self.blocks
+            .iter()
+            .filter(|(id, _)| &id.creator == node)
+            .map(|(id, content)| Block {
+                identity: id.clone(),
+                content: content.clone(),
+            })
+            .collect()
+    }
+    /// Check the virtual chain axiom (CHAIN) for a specific node p.
+    /// Any two p-blocks must be comparable under ≺:
+    /// node(a) = node = p =>  a ≺ b ∨ b ≺ a
+    /// 
+    /// A node that violates this is a Byzantine equivocator.
+    pub fn satisfies_chain_axiom(&self, node: &NodeId) -> bool {
+        let p_blocks = self.blocks_by(node);
+        for i in 0..p_blocks.len(){
+            for j in (i+1) .. p_blocks.len() {
+                let a = &p_blocks[i].identity;
+                let b = &p_blocks[j].identity;
+                if !self.precedes(a, b) && !self.precedes(b, a){
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
