@@ -81,3 +81,24 @@ fn inserting_block_with_unknown_predecessor_fails() {
     let result = b1.insert(block_with_unknown_pred);
     assert!(result.is_err())
 }
+
+// Map-view accessors
+#[test]
+fn content_returns_none_for_unknown_id() {
+    unimplemented!()
+}
+
+#[test]
+fn get_returns_full_block_after_insert() {
+    unimplemented!()
+}
+
+#[test]
+fn get_set_returns_all_requested_blocks(){
+    unimplemented!()
+}
+
+#[test]
+fn dom_contains_all_inserted_identities() {
+    unimplemented!()
+}
