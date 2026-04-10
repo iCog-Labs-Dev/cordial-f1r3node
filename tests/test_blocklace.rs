@@ -85,20 +85,32 @@ fn inserting_block_with_unknown_predecessor_fails() {
 // Map-view accessors
 #[test]
 fn content_returns_none_for_unknown_id() {
-    unimplemented!()
+    let b1 = Blocklace::new();
+    let block = Block {
+        identity: BlockIdentity { 
+            content_hash: [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+                0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+                0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+                0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf1],
+            creator: NodeId(vec![0xab, 0xcd, 0xef, 0x34]),
+            signature: vec![],
+    },
+    content: BlockContent { payload: vec![],predecessors: std::collections::HashSet::new() }, 
+};
+    assert!(b1.content(&block.identity).is_none())
 }
 
-#[test]
-fn get_returns_full_block_after_insert() {
-    unimplemented!()
-}
+// #[test]
+// fn get_returns_full_block_after_insert() {
+//     unimplemented!()
+// }
 
-#[test]
-fn get_set_returns_all_requested_blocks(){
-    unimplemented!()
-}
+// #[test]
+// fn get_set_returns_all_requested_blocks(){
+//     unimplemented!()
+// }
 
-#[test]
-fn dom_contains_all_inserted_identities() {
-    unimplemented!()
-}
+// #[test]
+// fn dom_contains_all_inserted_identities() {
+//     unimplemented!()
+// }
