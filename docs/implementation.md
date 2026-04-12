@@ -201,4 +201,3 @@ Shared utilities to reduce boilerplate in tests:
 - **Persistence / serialization**: The blocklace is entirely in-memory with no disk storage.
 - **Networking**: No peer-to-peer communication or block propagation.
 - **Conflict resolution / consensus**: The structure detects Byzantine equivocators but does not implement a consensus protocol.
-- **`ancestors_inclusive()`**: Currently only returns the block itself without its ancestors (incomplete implementation).

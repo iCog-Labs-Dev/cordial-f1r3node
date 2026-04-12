@@ -105,7 +105,7 @@ impl Blocklace {
     /// ⪯b — ancestors of b including b itself
     /// This is downward closure used heavly throughout the paper, so we provide a direct method for it.
     pub fn ancestors_inclusive(&self, id: &BlockIdentity) -> HashSet<Block> {
-        let mut result = HashSet::new();
+        let mut result = self.ancestors(id.clone());
         if let Some(block) = self.get(id) {
             result.insert(block);
         }
