@@ -16,6 +16,7 @@ src/
   main.rs            -- Binary entry point (placeholder)
   block.rs           -- Block struct and free functions
   blocklace.rs       -- Blocklace struct (the core data structure)
+  crypto.rs          -- Crypto stubs: hash_content() and sign() (unimplemented)
   types/
     mod.rs           -- Re-exports NodeId, BlockIdentity, BlockContent
     node_id.rs       -- NodeId type
@@ -197,7 +198,7 @@ Shared utilities to reduce boilerplate in tests:
 
 ## What Is Not Yet Implemented
 
-- **Real cryptography**: Block identities use placeholder hashes and empty signatures. No actual signing or verification.
+- **Real cryptography**: A skeleton exists in `src/crypto.rs` with `hash_content()` (SHA-256) and `sign()` (ED25519) stubs, but both are `unimplemented!()`. No crypto dependencies in Cargo.toml yet.
 - **Persistence / serialization**: The blocklace is entirely in-memory with no disk storage.
 - **Networking**: No peer-to-peer communication or block propagation.
 - **Conflict resolution / consensus**: The structure detects Byzantine equivocators but does not implement a consensus protocol.
