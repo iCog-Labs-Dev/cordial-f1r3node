@@ -124,10 +124,44 @@ fn get_returns_full_block_after_insert() {
     assert_eq!(retrieved.content.predecessors, block.content.predecessors);
 }
 
-// #[test]
-// fn get_set_returns_all_requested_blocks(){
-//     unimplemented!()
-// }
+#[test]
+fn get_set_returns_all_requested_blocks() {
+    let mut b1 = Blocklace::new();
+
+    let g = Block {
+        identity: BlockIdentity {
+            content_hash: [0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+                0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+                0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+                0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89],
+            creator: NodeId(vec![0xab, 0xcd, 0xef, 0x12]),
+            signature: vec![],
+        },
+        content: BlockContent { payload: vec![], predecessors: std::collections::HashSet::new() },
+    };
+    insert(&mut b1, g.clone());
+
+    let b2 = Block {
+        identity: BlockIdentity {
+            content_hash: [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+                0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+                0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+                0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0],
+            creator: NodeId(vec![0xab, 0xcd, 0xef, 0x34]),
+            signature: vec![],
+        },
+        content: BlockContent { payload: vec![4, 5], predecessors: [g.identity.clone()].iter().cloned().collect() },
+    };
+    insert(&mut b1, b2.clone());
+
+    let ids: std::collections::HashSet<BlockIdentity> =
+        [g.identity.clone(), b2.identity.clone()].iter().cloned().collect();
+    let result = b1.get_set(&ids);
+
+    assert_eq!(result.len(), 2);
+    assert!(result.iter().any(|b| b.identity == g.identity));
+    assert!(result.iter().any(|b| b.identity == b2.identity));
+}
 
 // #[test]
 // fn dom_contains_all_inserted_identities() {
