@@ -100,10 +100,29 @@ fn content_returns_none_for_unknown_id() {
     assert!(b1.content(&block.identity).is_none())
 }
 
-// #[test]
-// fn get_returns_full_block_after_insert() {
-//     unimplemented!()
-// }
+#[test]
+fn get_returns_full_block_after_insert() {
+    let mut b1 = Blocklace::new();
+    let block = Block {
+        identity: BlockIdentity {
+            content_hash: [0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+                0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+                0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+                0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89],
+            creator: NodeId(vec![0xab, 0xcd, 0xef, 0x12]),
+            signature: vec![],
+        },
+        content: BlockContent { payload: vec![1, 2, 3], predecessors: std::collections::HashSet::new() },
+    };
+    insert(&mut b1, block.clone());
+
+    let retrieved = b1.get(&block.identity);
+    assert!(retrieved.is_some());
+    let retrieved = retrieved.unwrap();
+    assert_eq!(retrieved.identity, block.identity);
+    assert_eq!(retrieved.content.payload, block.content.payload);
+    assert_eq!(retrieved.content.predecessors, block.content.predecessors);
+}
 
 // #[test]
 // fn get_set_returns_all_requested_blocks(){
