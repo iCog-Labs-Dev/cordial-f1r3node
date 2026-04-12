@@ -16,7 +16,7 @@ src/
   main.rs            -- Binary entry point (placeholder)
   block.rs           -- Block struct and free functions
   blocklace.rs       -- Blocklace struct (the core data structure)
-  crypto.rs          -- Crypto stubs: hash_content() and sign() (unimplemented)
+  crypto.rs          -- SHA-256 hashing, ED25519 signing and verification
   types/
     mod.rs           -- Re-exports NodeId, BlockIdentity, BlockContent
     node_id.rs       -- NodeId type
@@ -26,6 +26,8 @@ tests/
   mod.rs             -- Shared test helpers (genesis, block_on, make_identity)
   test_block.rs      -- Unit tests for Block
   test_blocklace.rs  -- Unit tests for Blocklace
+  test_hash.rs       -- Unit tests for SHA-256 content hashing
+  test_sign.rs       -- Unit tests for ED25519 signing and verification
 ```
 
 ---
@@ -154,6 +156,40 @@ Two invariants are enforced at all times:
 
 ---
 
+## Cryptography (src/crypto.rs)
+
+Real cryptographic operations using `sha2` and `ed25519-dalek` crates.
+
+### Dependencies
+
+| Crate            | Version | Purpose                        |
+|------------------|---------|--------------------------------|
+| `sha2`           | 0.10    | SHA-256 content hashing        |
+| `ed25519-dalek`  | 2       | ED25519 signing & verification |
+| `rand`           | 0.8     | Key generation (tests)         |
+
+### Functions
+
+| Function         | Signature                                              | Description                                                       |
+|------------------|--------------------------------------------------------|-------------------------------------------------------------------|
+| `hash_content()` | `content: &BlockContent -> [u8; 32]`                   | Deterministic SHA-256 hash: length-prefixed payload + sorted predecessors |
+| `sign()`         | `hash: &[u8; 32], private_key: &[u8] -> Vec<u8>`      | ED25519 signature (64 bytes) over a content hash                  |
+| `verify()`       | `hash: &[u8; 32], public_key: &[u8], signature: &[u8] -> bool` | Verify an ED25519 signature against a public key         |
+
+### Hashing Serialization Format
+
+The hash is computed over a deterministic byte layout:
+1. `payload_len` (8 bytes, little-endian) + `payload` bytes
+2. `num_predecessors` (8 bytes, little-endian)
+3. For each predecessor (sorted by `content_hash`):
+   - `content_hash` (32 bytes)
+   - `creator_len` (8 bytes) + `creator` bytes
+   - `signature_len` (8 bytes) + `signature` bytes
+
+Sorting predecessors by `content_hash` ensures the hash is independent of `HashSet` iteration order.
+
+---
+
 ## Test Coverage
 
 ### Block Tests (tests/test_block.rs) -- 9 tests
@@ -182,6 +218,27 @@ Two invariants are enforced at all times:
 | `get_set_returns_all_requested_blocks`      | `get_set()` returns all blocks matching requested ids   |
 | `dom_contains_all_inserted_identities`      | `dom()` contains identities of all inserted blocks      |
 
+### Hash Tests (tests/test_hash.rs) -- 5 tests
+
+| Test                                          | What it verifies                                          |
+|-----------------------------------------------|-----------------------------------------------------------|
+| `hash_of_empty_genesis_is_deterministic`      | Same content always produces the same hash                |
+| `different_payloads_produce_different_hashes`  | Different payloads yield different hashes                 |
+| `different_predecessors_produce_different_hashes` | Different predecessor sets yield different hashes      |
+| `hash_is_independent_of_predecessor_insertion_order` | Hash is deterministic regardless of set ordering  |
+| `hash_output_is_32_bytes`                     | Output is always 32 bytes (SHA-256)                       |
+
+### Sign/Verify Tests (tests/test_sign.rs) -- 6 tests
+
+| Test                                          | What it verifies                                          |
+|-----------------------------------------------|-----------------------------------------------------------|
+| `sign_and_verify_roundtrip`                   | Sign then verify succeeds with correct keypair            |
+| `signature_is_64_bytes`                       | ED25519 signature output is 64 bytes                      |
+| `verify_fails_with_wrong_public_key`          | Verification rejects a different public key               |
+| `verify_fails_with_tampered_hash`             | Verification rejects a modified hash                      |
+| `verify_fails_with_tampered_signature`        | Verification rejects a modified signature                 |
+| `different_content_produces_different_signatures` | Different hashes produce different signatures         |
+
 ### Test Helpers (tests/mod.rs)
 
 Shared utilities to reduce boilerplate in tests:
@@ -198,7 +255,6 @@ Shared utilities to reduce boilerplate in tests:
 
 ## What Is Not Yet Implemented
 
-- **Real cryptography**: A skeleton exists in `src/crypto.rs` with `hash_content()` (SHA-256) and `sign()` (ED25519) stubs, but both are `unimplemented!()`. No crypto dependencies in Cargo.toml yet.
 - **Persistence / serialization**: The blocklace is entirely in-memory with no disk storage.
 - **Networking**: No peer-to-peer communication or block propagation.
 - **Conflict resolution / consensus**: The structure detects Byzantine equivocators but does not implement a consensus protocol.
