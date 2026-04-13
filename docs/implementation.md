@@ -17,6 +17,12 @@ src/
   block.rs           -- Block struct and free functions
   blocklace.rs       -- Blocklace struct (the core data structure)
   crypto.rs          -- SHA-256 hashing, ED25519 signing and verification
+  network/
+    mod.rs           -- Module root; re-exports Message, Peer, Node
+    message.rs       -- Wire protocol message types
+    peer.rs          -- TCP peer: bind, connect, handshake, send/recv
+    node.rs          -- Node: ties Peer + Blocklace for block propagation
+    NETWORK.md       -- Detailed networking documentation
   types/
     mod.rs           -- Re-exports NodeId, BlockIdentity, BlockContent
     node_id.rs       -- NodeId type
@@ -24,10 +30,14 @@ src/
     content_id.rs    -- BlockContent type
 tests/
   mod.rs             -- Shared test helpers (genesis, block_on, make_identity)
-  test_block.rs      -- Unit tests for Block
-  test_blocklace.rs  -- Unit tests for Blocklace
-  test_hash.rs       -- Unit tests for SHA-256 content hashing
-  test_sign.rs       -- Unit tests for ED25519 signing and verification
+  test_block.rs              -- Unit tests for Block
+  test_blocklace.rs          -- Unit tests for Blocklace
+  test_hash.rs               -- Unit tests for SHA-256 content hashing
+  test_sign.rs               -- Unit tests for ED25519 signing and verification
+  test_message.rs            -- Serialization tests for handshake/keepalive messages
+  test_message_propagation.rs -- Serialization tests for block propagation messages
+  test_peer.rs               -- TCP peer binding, handshake, and connection tests
+  test_node.rs               -- Node message handling and block propagation tests
 ```
 
 ---
@@ -190,7 +200,19 @@ Sorting predecessors by `content_hash` ensures the hash is independent of `HashS
 
 ---
 
-## Test Coverage
+## Networking (src/network/)
+
+P2P communication and block propagation over async TCP using tokio, serde, and bincode.
+
+- **Message** -- Wire protocol with handshake (`Hello`/`HelloAck`), keepalive (`Ping`/`Pong`), block propagation (`BroadcastBlock`, `RequestBlock`, `BlockResponse`), and sync (`SyncRequest`, `SyncResponse`)
+- **Peer** -- TCP peer with bind/connect, Hello/HelloAck handshake, length-prefixed bincode framing, and connection tracking
+- **Node** -- Integrates `Peer` + `Blocklace`: creates and broadcasts blocks, handles incoming messages, requests missing predecessors, and synchronizes state
+
+For detailed API reference, wire protocol diagrams, and flow charts, see [src/network/NETWORK.md](../src/network/NETWORK.md).
+
+---
+
+## Test Coverage (60 tests)
 
 ### Block Tests (tests/test_block.rs) -- 9 tests
 
@@ -256,5 +278,6 @@ Shared utilities to reduce boilerplate in tests:
 ## What Is Not Yet Implemented
 
 - **Persistence / serialization**: The blocklace is entirely in-memory with no disk storage.
-- **Networking**: No peer-to-peer communication or block propagation.
 - **Conflict resolution / consensus**: The structure detects Byzantine equivocators but does not implement a consensus protocol.
+- **Pending-block retry**: Blocks rejected for missing predecessors are dropped; no automatic re-attempt after predecessors arrive.
+- **Transitive sync**: Sync discovers missing block ids but doesn't recursively fetch their predecessors.
