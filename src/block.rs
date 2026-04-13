@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 
-#[derive (Debug, Clone)]
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub identity: BlockIdentity, /// i = signedhash((v, P), k_p)
     pub content: BlockContent,  // C = (v, P)

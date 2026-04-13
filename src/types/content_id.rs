@@ -7,7 +7,9 @@ use super::identity_id::BlockIdentity;
 ///   The block content is a pair C = (v, P) of an arbitrary value v
 ///   (the block payload) and a set P of the block identities of the
 ///   predecessors of b.
-#[derive(Debug, Clone)]
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockContent {
     /// The arbitrary payload 'v'.
     /// Can encode an operation, a list of operations, transactions, etc.
