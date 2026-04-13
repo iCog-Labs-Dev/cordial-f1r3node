@@ -159,6 +159,11 @@ impl Peer {
             .map(|c| c.node_id.clone())
             .collect()
     }
+
+    /// Returns the socket addresses of all connected peers.
+    pub async fn connected_peer_addrs(&self) -> Vec<SocketAddr> {
+        self.connections.lock().await.keys().cloned().collect()
+    }
 }
 
 /// Handle an inbound TCP connection: read Hello, send HelloAck, then loop reading messages.
