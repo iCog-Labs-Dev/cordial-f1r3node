@@ -20,9 +20,9 @@ Reference codebase: `f1r3node` at branch `rust/dev` (v0.4.11).
 |--------|----------------------|---------------------------|
 | **Data structure** | `BlockMessage` with separate `Header` (parents), `Body` (deploys/state), `justifications` (fork-choice map) | `Block` with `BlockIdentity` + `BlockContent` (payload + predecessors) |
 | **Parent model** | Explicit `parents_hash_list` (bounded by `max_number_of_parents`) + separate `justifications` list | Single `predecessors: HashSet<BlockIdentity>` encoding both parentage and what the creator saw |
-| **Fork choice** | LMD-GHOST via `Estimator`: score blocks by validator weight, walk children from LCA | Not yet implemented; paper defines fork choice via the cordial condition and blocklace tips |
-| **Finality** | Clique Oracle: find max-weight clique of agreeing validators, compare against fault tolerance threshold | Not yet implemented; paper defines finality via supermajority observable from blocklace structure |
-| **Equivocation** | Multi-step: `EquivocationDetector` + `InvalidBlock::AdmissibleEquivocation` / `IgnorableEquivocation` / `NeglectedEquivocation` | Structural: chain axiom violation detected by `satisfies_chain_axiom()` and `find_equivocators()` |
+| **Fork choice** | LMD-GHOST via `Estimator`: score blocks by validator weight, walk children from LCA | **Implemented**: `fork_choice()` with stake-weighted scoring + `is_cordial()` for paper-native cordial condition |
+| **Finality** | Clique Oracle: find max-weight clique of agreeing validators, compare against fault tolerance threshold | **Implemented**: `check_finality()` via supermajority (> 2/3 honest stake) observable from blocklace ancestry |
+| **Equivocation** | Multi-step: `EquivocationDetector` + `InvalidBlock::AdmissibleEquivocation` / `IgnorableEquivocation` / `NeglectedEquivocation` | **Implemented**: structural detection via `find_equivocators()` + rejection via `validate_block()` (`Equivocation` variant) |
 | **State model** | Pre/post state hashes over RSpace tuplespace, bonds map, block number | Generic `payload: Vec<u8>` with no state transition model |
 | **Cryptography** | Blake2b hashing, Secp256k1 signatures (primary), Ed25519 (secondary) | SHA-256 hashing, Ed25519 signatures |
 | **Storage** | LMDB-backed `KeyValueBlockStore` with indexed DAG (`height_map`, `child_map`, `main_parent_map`) | In-memory `HashMap<BlockIdentity, BlockContent>` |
@@ -46,7 +46,7 @@ Both protocols achieve BFT safety under < 1/3 Byzantine validators with mathemat
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Block structure (`Block`, `BlockIdentity`, `BlockContent`) | Complete | Faithful to paper Definition 2.2 |
+| Block structure (`Block`, `BlockIdentity`, `BlockContent`) | Complete | Faithful to paper Definition 2.2, with serde serialization |
 | Blocklace data structure | Complete | Map-view accessors, insertion with closure axiom |
 | Predecessor/ancestor traversal | Complete | `predecessors()`, `ancestors()`, `ancestors_inclusive()`, `precedes()` |
 | Chain axiom enforcement | Complete | `satisfies_chain_axiom()`, `find_equivocators()` |
@@ -54,18 +54,22 @@ Both protocols achieve BFT safety under < 1/3 Byzantine validators with mathemat
 | Cryptography (hash, sign, verify) | Complete | SHA-256 + Ed25519 via `sha2` and `ed25519-dalek` |
 | P2P networking | Complete | TCP with handshake, block broadcast, sync protocol |
 | Block propagation | Complete | `BroadcastBlock`, `RequestBlock`, `SyncRequest`/`SyncResponse` |
-| Test suite | Complete | 60 tests covering blocks, blocklace, crypto, networking |
+| **Global fork choice** | **Complete** | `fork_choice()`, `collect_validator_tips()`, `is_cordial()` — replaces LMD-GHOST |
+| **Finality detector** | **Complete** | `check_finality()`, `find_last_finalized()`, `can_be_finalized()` — replaces clique oracle |
+| **Block validation pipeline** | **Complete** | `validate_block()`, `validated_insert()` — content hash, signature, sender, closure, chain axiom, cordial condition |
+| **Multi-validator consensus tests** | **Complete** | 10 end-to-end simulation scenarios |
+| Test suite | Complete | **114 tests** covering blocks, blocklace, crypto, networking, consensus |
 
 ### 2.2 What Is Missing
 
 | Component | Priority | Required For |
 |-----------|----------|-------------|
-| Global fork choice | Critical | Replacing `Estimator` |
-| Finality detector | Critical | Replacing `Finalizer` + `CliqueOracle` |
+| ~~Global fork choice~~ | ~~Critical~~ | ~~Replacing `Estimator`~~ **DONE** |
+| ~~Finality detector~~ | ~~Critical~~ | ~~Replacing `Finalizer` + `CliqueOracle`~~ **DONE** |
+| ~~Block validation pipeline~~ | ~~High~~ | ~~Replacing `BlockProcessor` validation~~ **DONE** |
 | `Casper` trait implementation | Critical | Plugging into f1r3node |
 | Typed payload (deploys, state transitions) | Critical | Smart contract execution |
 | Persistent storage | High | Running beyond in-memory prototype |
-| Block validation pipeline | High | Replacing `BlockProcessor` validation |
 | Deploy pool / selection | High | Block creation with transactions |
 | `CasperSnapshot` equivalent | High | State management across the system |
 | Indexed DAG (child map, height map) | Medium | Performance at scale |
@@ -76,58 +80,37 @@ Both protocols achieve BFT safety under < 1/3 Byzantine validators with mathemat
 
 ## 3. Gap Analysis and Required Work
 
-### 3.1 Fork Choice (Critical)
+### 3.1 Fork Choice (Critical) -- COMPLETE
 
-**Current state**: `tip_of(node)` returns the latest block per validator. No global fork choice across validators.
+**Implemented in**: `src/consensus/fork_choice.rs` (239 lines)
 
-**What CBC Casper does** (f1r3node `casper/src/rust/estimator.rs`):
-1. Collect each validator's latest message hash
-2. Filter out invalid latest messages
-3. Compute Lowest Common Ancestor (LCA) across all validators
-4. Build a score map: for each validator, walk their supporting chain and add their stake weight
-5. Rank fork choices by score, walking children from LCA
-6. Filter out deep parents beyond `max_parent_depth`
-7. Return `ForkChoice { tips, lca }`
+**What was built**:
+- `fork_choice(blocklace, bonds)` -- collects validator tips, excludes equivocators, computes LCA via ancestor set intersection, builds stake-weighted score map, ranks tips by descending score
+- `collect_validator_tips(blocklace, bonds)` -- replaces CBC Casper's `latest_message_hashes()` map
+- `is_cordial(block, known_tips)` -- paper-native cordial condition check (no CBC Casper equivalent)
+- `ForkChoice { tips, lca, scores }` -- maps to f1r3node's `ForkChoice { tips, lca }`
 
-**What Cordial Miners needs**:
+**Note**: `fork_choice()` is primarily for f1r3node compatibility. The paper doesn't define a traditional fork choice rule -- validators reference ALL tips (cordial condition) rather than picking one fork. The paper-native functions are `is_cordial()` and `collect_validator_tips()`.
 
-```
-fn fork_choice(&self, bonds: &HashMap<NodeId, u64>) -> ForkChoice
-```
+**Tests**: 13 tests in `test_fork_choice.rs` covering single/multi-validator, diverging forks, equivocator exclusion, and cordial condition.
 
-The paper defines the cordial miners fork choice through the blocklace structure. Implement:
-1. Collect tips across all validators: extend `tip_of()` to return all validator tips
-2. Define "cordial" block: a block whose predecessors include all tips the creator knew about
-3. Weight tips by validator stake from the bonds map
-4. Compute LCA using existing `ancestors()` (but needs optimization, see 3.6)
-5. Return ordered tips and LCA
+### 3.2 Finality Detector (Critical) -- COMPLETE
 
-**Estimated scope**: New module `src/consensus/fork_choice.rs`, approximately 200-400 lines.
+**Implemented in**: `src/consensus/finality.rs` (200 lines)
 
-### 3.2 Finality Detector (Critical)
+**What was built**:
+- `check_finality(blocklace, block_id, bonds)` -- checks if > 2/3 of honest stake has the block in their ancestry. Returns `FinalityStatus::Finalized`, `Pending`, or `Unknown`
+- `find_last_finalized(blocklace, bonds)` -- scans all blocks, returns the highest finalized one
+- `can_be_finalized(blocklace, block_id, bonds)` -- orphan detection, analogous to CBC Casper's `cannot_be_orphaned` pre-filter
 
-**Current state**: No finality detection. Equivocation detection exists (`find_equivocators()`).
+**Key properties**:
+- Equivocator stake excluded from total honest stake (cleaner than CBC's three-tier classification)
+- Integer arithmetic (`supporting * 3 > total * 2`) avoids floating point precision issues
+- `can_be_finalized()` accounts for undecided validators (no tip yet)
 
-**What CBC Casper does** (f1r3node `casper/src/rust/finality/finalizer.rs` + `casper/src/rust/safety/clique_oracle.rs`):
-1. Finalizer scans blocks between current LFB and tips
-2. For each candidate, check if >50% of total stake agrees on it (`cannot_be_orphaned`)
-3. For blocks passing the pre-filter, run the Clique Oracle to compute exact fault tolerance
-4. First block exceeding the `fault_tolerance_threshold` becomes the new LFB
+**Replaces**: CBC Casper's `Finalizer` + `CliqueOracle` (NP-hard clique enumeration) with simple O(n) stake summation.
 
-**What Cordial Miners needs**:
-
-```
-fn check_finality(&self, block_id: &BlockIdentity, bonds: &HashMap<NodeId, u64>) -> FinalityStatus
-```
-
-The paper defines finality through supermajority agreement visible in the blocklace. Implement:
-1. For a candidate block `b`, find all validators whose tips have `b` in their ancestry (using `precedes()`)
-2. Sum the stake of agreeing validators
-3. If agreeing stake > 2/3 of total stake, the block is finalized
-4. Track `last_finalized_block` and advance it monotonically
-5. Handle equivocator stake: exclude `find_equivocators()` from the weight calculation
-
-**Estimated scope**: New module `src/consensus/finality.rs`, approximately 150-300 lines.
+**Tests**: 13 tests in `test_finality.rs` covering supermajority threshold, exact 2/3 boundary, equivocator exclusion, orphan detection, and monotonic finality advancement.
 
 ### 3.3 Casper Trait Implementation (Critical)
 
@@ -341,19 +324,24 @@ The following checks are grouped by what they protect against:
 - `InvalidBondsCache` -- bonds in the block don't match computed bonds
 - `InvalidRejectedDeploy` -- rejected deploy list doesn't match what actually failed
 
-**What Cordial Miners needs**:
+**What Cordial Miners needs** -- **COMPLETE**:
 
-Not all checks apply. The blocklace structure replaces some (parents/justifications are unified as predecessors, equivocation is detected by chain axiom). But these are still needed:
+**Implemented in**: `src/consensus/validation.rs` (249 lines)
 
-1. **Signature verification** -- block identity signature is valid
-2. **Closure check** -- all predecessors exist (already implemented)
-3. **Chain axiom check** -- creator hasn't equivocated (already implemented for detection, not for rejection)
-4. **Sender is a bonded validator** -- creator has stake
-5. **Deploy validity** -- deploys are signed, not expired, not duplicated
-6. **State transition** -- executing deploys produces the claimed post-state hash
-7. **Cordial condition** -- if the protocol requires it, verify the block references all tips the creator should have seen
+The blocklace structure replaces many of CBC Casper's 23+ checks. The validation pipeline implements the subset that applies:
 
-**Estimated scope**: New module `src/validation.rs`, approximately 300-500 lines.
+1. **Content hash verification** -- `InvalidContentHash` (`hash(content) != content_hash`)
+2. **Signature verification** -- `InvalidSignature` (ED25519 verify fails)
+3. **Sender is bonded** -- `UnknownSender` (creator not in bonds map)
+4. **Closure check** -- `MissingPredecessors` (predecessors not in blocklace)
+5. **Chain axiom enforcement** -- `Equivocation` (rejects blocks that would violate CHAIN, not just detects)
+6. **Cordial condition** -- `NotCordial` (block doesn't reference all known tips)
+
+Checks eliminated by blocklace structure: justification regression, separate parent/justification consistency, three-tier equivocation classification, block number/sequence checks.
+
+`ValidationConfig` allows toggling checks (e.g., skip crypto for self-created blocks, disable cordial for non-strict mode). `validated_insert()` combines validation and insertion.
+
+**Tests**: 18 tests in `test_validation.rs` + 10 end-to-end simulation tests in `test_consensus_simulation.rs`.
 
 ### 3.8 Cryptographic Alignment (Medium)
 
@@ -439,14 +427,14 @@ CBC Casper separates `parents_hash_list` (for state merging) from `justification
 
 Goal: A working Cordial Miners consensus that can be tested independently.
 
-| Task | Depends On | Estimated Effort |
-|------|-----------|-----------------|
-| 1.1 Global fork choice (`fork_choice.rs`) | -- | Medium |
-| 1.2 Finality detector (`finality.rs`) | 1.1 | Medium |
-| 1.3 Indexed storage (child map, height map, latest messages) | -- | Medium |
-| 1.4 Block validation pipeline (`validation.rs`) | 1.1 | Medium |
-| 1.5 Consensus test suite (multi-validator simulations) | 1.1, 1.2 | Medium |
-| 1.6 Property-based tests for safety invariants | 1.2 | Small |
+| Task | Depends On | Status |
+|------|-----------|--------|
+| 1.1 Global fork choice (`fork_choice.rs`) | -- | **COMPLETE** (239 lines, 13 tests) |
+| 1.2 Finality detector (`finality.rs`) | 1.1 | **COMPLETE** (200 lines, 13 tests) |
+| 1.3 Indexed storage (child map, height map, latest messages) | -- | Not started (optimization) |
+| 1.4 Block validation pipeline (`validation.rs`) | 1.1 | **COMPLETE** (249 lines, 18 tests) |
+| 1.5 Consensus test suite (multi-validator simulations) | 1.1, 1.2 | **COMPLETE** (10 scenarios) |
+| 1.6 Property-based tests for safety invariants | 1.2 | Not started (hardening) |
 
 ### Phase 2: Execution Layer Bridge
 
@@ -487,45 +475,57 @@ Goal: Production-ready alternative to CBC Casper.
 
 ---
 
-## 7. File Structure Proposal
+## 7. File Structure
+
+Items marked with checkmarks exist; unmarked items are planned for future phases.
 
 ```
 blocklace/
   src/
-    lib.rs
-    block.rs                    -- (existing)
-    blocklace.rs                -- (existing, extend with indexes)
-    crypto.rs                   -- (existing, extract trait)
-    types/                      -- (existing)
+    lib.rs                       -- [x] Crate root
+    block.rs                     -- [x] Block struct with serde
+    blocklace.rs                 -- [x] Core data structure
+    crypto.rs                    -- [x] SHA-256 + ED25519
+    types/                       -- [x] NodeId, BlockIdentity, BlockContent
     consensus/
-      mod.rs
-      fork_choice.rs            -- Global fork choice (Phase 1.1)
-      finality.rs               -- Finality detector (Phase 1.2)
-      cordial_condition.rs      -- Cordial block verification
-    validation/
-      mod.rs
-      block_validator.rs        -- Block validation pipeline (Phase 1.4)
-      deploy_validator.rs       -- Deploy-level checks
-    storage/
-      mod.rs
-      traits.rs                 -- BlocklaceStore trait
-      memory.rs                 -- In-memory backend (current)
-      lmdb.rs                   -- LMDB persistent backend (Phase 4.1)
-      indexes.rs                -- Child map, height map, latest messages (Phase 1.3)
-    execution/
-      mod.rs
-      payload.rs                -- CordialBlockPayload type (Phase 2.1)
-      deploy_pool.rs            -- Deploy pool and selection (Phase 2.2)
-    bridge/
-      mod.rs
-      casper_trait_impl.rs      -- Casper trait adapter (Phase 3.1)
-      block_translation.rs      -- Block <-> BlockMessage (Phase 3.5)
-      snapshot.rs               -- CasperSnapshot construction (Phase 3.3)
-    network/                    -- (existing)
-  tests/                        -- (existing, extend per phase)
+      mod.rs                     -- [x] Re-exports
+      fork_choice.rs             -- [x] Phase 1.1: fork choice, LCA, cordial condition
+      finality.rs                -- [x] Phase 1.2: supermajority finality detector
+      validation.rs              -- [x] Phase 1.4: block validation pipeline
+    network/
+      mod.rs                     -- [x] Re-exports
+      message.rs                 -- [x] Wire protocol (handshake + propagation + sync)
+      peer.rs                    -- [x] TCP peer with async handshake
+      node.rs                    -- [x] Node = Peer + Blocklace
+      NETWORK.md                 -- [x] Networking documentation
+    storage/                     -- [ ] Phase 1.3 / Phase 4
+      traits.rs                  -- [ ] BlocklaceStore trait
+      memory.rs                  -- [ ] In-memory backend (extract from blocklace.rs)
+      lmdb.rs                    -- [ ] LMDB persistent backend
+      indexes.rs                 -- [ ] Child map, height map, latest messages
+    execution/                   -- [ ] Phase 2
+      payload.rs                 -- [ ] CordialBlockPayload type
+      deploy_pool.rs             -- [ ] Deploy pool and selection
+    bridge/                      -- [ ] Phase 3
+      casper_trait_impl.rs       -- [ ] Casper trait adapter
+      block_translation.rs       -- [ ] Block <-> BlockMessage
+      snapshot.rs                -- [ ] CasperSnapshot construction
+  tests/
+    test_block.rs                -- [x] 9 tests
+    test_blocklace.rs            -- [x] 7 tests
+    test_hash.rs                 -- [x] 5 tests
+    test_sign.rs                 -- [x] 6 tests
+    test_message.rs              -- [x] 6 tests
+    test_message_propagation.rs  -- [x] 7 tests
+    test_peer.rs                 -- [x] 7 tests
+    test_node.rs                 -- [x] 13 tests
+    test_fork_choice.rs          -- [x] 13 tests
+    test_finality.rs             -- [x] 13 tests
+    test_validation.rs           -- [x] 18 tests
+    test_consensus_simulation.rs -- [x] 10 tests (114 total)
   docs/
-    implementation.md           -- (existing)
-    cordial-miners-vs-cbc-casper.md -- (this document)
+    implementation.md            -- [x] Implementation documentation
+    cordial-miners-vs-cbc-casper.md -- [x] This document
 ```
 
 ---
