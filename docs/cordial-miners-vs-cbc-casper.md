@@ -440,12 +440,14 @@ Goal: A working Cordial Miners consensus that can be tested independently.
 
 Goal: Cordial Miners can execute Rholang deploys and produce state transitions.
 
-| Task | Depends On | Estimated Effort |
-|------|-----------|-----------------|
-| 2.1 Typed payload (`CordialBlockPayload`) | Phase 1 | Small |
-| 2.2 Deploy pool and selection | 2.1 | Medium |
-| 2.3 RSpace runtime integration (pre/post state hashes) | 2.1 | Large |
-| 2.4 System deploy support (slash, close block) | 2.3 | Small |
+Branch: `phase2/execution-layer-bridge`
+
+| Task | Depends On | Status |
+|------|-----------|--------|
+| 2.1 Typed payload (`CordialBlockPayload`) | Phase 1 | **COMPLETE** (193 lines, 10 tests) |
+| 2.2 Deploy pool and selection | 2.1 | Not started |
+| 2.3 RSpace runtime integration (pre/post state hashes) | 2.1 | Not started |
+| 2.4 System deploy support (slash, close block) | 2.3 | Not started |
 
 ### Phase 3: f1r3node Integration
 
