@@ -22,6 +22,9 @@ src/
     fork_choice.rs   -- Global fork choice, validator tips, cordial condition
     finality.rs      -- Finality detector via supermajority agreement
     validation.rs    -- Block validation pipeline
+  execution/
+    mod.rs           -- Re-exports execution types
+    payload.rs       -- CordialBlockPayload and all deploy/state types
   network/
     mod.rs           -- Re-exports Message, Peer, Node
     message.rs       -- Wire protocol message types
@@ -47,6 +50,7 @@ tests/
   test_finality.rs             -- Finality detector tests (13 tests)
   test_validation.rs           -- Block validation pipeline tests (18 tests)
   test_consensus_simulation.rs -- Multi-validator simulation tests (10 tests)
+  test_payload.rs              -- Typed payload serialization tests (10 tests)
 ```
 
 ---
@@ -212,6 +216,32 @@ Block validation pipeline that checks blocks before insertion. Replaces CBC Casp
 
 ---
 
+## Execution Layer (src/execution/)
+
+Typed block payloads for carrying deploy execution data within the blocklace's generic `payload: Vec<u8>`.
+
+### CordialBlockPayload (payload.rs)
+
+Serialized into `BlockContent.payload` via bincode, keeping the blocklace protocol-agnostic while providing structured data for f1r3node integration.
+
+| Type | f1r3node equivalent | Description |
+|------|---------------------|-------------|
+| `CordialBlockPayload` | `Body` | Top-level: state + deploys + rejected + system deploys |
+| `BlockState` | `F1r3flyState` | Pre/post state hashes, bonds, block number |
+| `Bond` | `Bond` | Validator identity + stake amount |
+| `Deploy` | `DeployData` | Code, phlo price/limit, timestamps, shard id |
+| `SignedDeploy` | `Signed<DeployData>` | Deploy + deployer public key + signature |
+| `ProcessedDeploy` | `ProcessedDeploy` | Executed deploy with cost and failure flag |
+| `RejectedDeploy` | `RejectedDeploy` | Rejected deploy with reason enum |
+| `ProcessedSystemDeploy` | `ProcessedSystemDeploy` | Slash equivocator / CloseBlock |
+
+**Helpers**:
+- `CordialBlockPayload::genesis(bonds)` -- create empty genesis payload
+- `CordialBlockPayload::to_bytes()` / `from_bytes()` -- bincode serialization
+- `CordialBlockPayload::bonds_map()` -- extract `HashMap<NodeId, u64>` for consensus functions
+
+---
+
 ## Networking (src/network/)
 
 P2P communication and block propagation over async TCP using tokio, serde, and bincode.
@@ -224,7 +254,7 @@ For detailed API reference, wire protocol diagrams, and flow charts, see [src/ne
 
 ---
 
-## Test Coverage (114 tests)
+## Test Coverage (124 tests)
 
 | Test File | Count | What it covers |
 |-----------|-------|----------------|
@@ -240,12 +270,15 @@ For detailed API reference, wire protocol diagrams, and flow charts, see [src/ne
 | `test_finality.rs` | 13 | Supermajority finality, equivocator exclusion, orphan detection |
 | `test_validation.rs` | 18 | Content hash, signature, sender, closure, equivocation, cordial |
 | `test_consensus_simulation.rs` | 10 | Multi-validator end-to-end scenarios |
+| `test_payload.rs` | 10 | Typed payload serialization, block integration, bonds map |
 
 ---
 
-## Phase 1 Completion Status
+## Roadmap Status
 
 Based on the roadmap in [cordial-miners-vs-cbc-casper.md](cordial-miners-vs-cbc-casper.md):
+
+### Phase 1: Core Consensus (Standalone)
 
 | Task | Status |
 |------|--------|
@@ -255,6 +288,15 @@ Based on the roadmap in [cordial-miners-vs-cbc-casper.md](cordial-miners-vs-cbc-
 | 1.4 Block validation pipeline | Complete |
 | 1.5 Consensus test suite (multi-validator simulations) | Complete |
 | 1.6 Property-based tests for safety invariants | Not started (hardening) |
+
+### Phase 2: Execution Layer Bridge (branch: `phase2/execution-layer-bridge`)
+
+| Task | Status |
+|------|--------|
+| 2.1 Typed payload (`CordialBlockPayload`) | Complete |
+| 2.2 Deploy pool and selection | Not started |
+| 2.3 RSpace runtime integration | Not started |
+| 2.4 System deploy support | Not started |
 
 ## What Is Not Yet Implemented
 
@@ -267,7 +309,6 @@ Based on the roadmap in [cordial-miners-vs-cbc-casper.md](cordial-miners-vs-cbc-
 - Transitive sync: sync discovers missing block ids but doesn't recursively fetch their predecessors
 
 **f1r3node integration** (Phase 2-3):
-- Typed payload (`CordialBlockPayload`) for deploy execution
 - Deploy pool and selection
 - `Casper` trait adapter for f1r3node
 - Cryptographic alignment (Blake2b, Secp256k1 option)
