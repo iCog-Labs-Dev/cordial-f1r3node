@@ -12,6 +12,12 @@ sha2.workspace = true
 serde.workspace = true
 bincode.workspace = true
 
+# Phase 3.4 — crypto alignment with f1r3node.
+blake2.workspace = true
+k256.workspace = true
+ed25519-dalek.workspace = true
+rand.workspace = true
+
 # ---------------------------------------------------------------------------
 # f1r3node dependency (commented out until we wire a specific task in Phase 3)
 #
