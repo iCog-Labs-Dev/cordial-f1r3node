@@ -58,7 +58,10 @@ Both protocols achieve BFT safety under < 1/3 Byzantine validators with mathemat
 | **Finality detector** | **Complete** | `check_finality()`, `find_last_finalized()`, `can_be_finalized()` — replaces clique oracle |
 | **Block validation pipeline** | **Complete** | `validate_block()`, `validated_insert()` — content hash, signature, sender, closure, chain axiom, cordial condition |
 | **Multi-validator consensus tests** | **Complete** | 10 end-to-end simulation scenarios |
-| Test suite | Complete | **114 tests** covering blocks, blocklace, crypto, networking, consensus |
+| **Typed block payload** | **Complete** (Phase 2.1) | `CordialBlockPayload` maps to f1r3node's `Body` with `BlockState`, `Bond`, `Deploy`, `SignedDeploy`, `ProcessedDeploy`, `RejectedDeploy`, `ProcessedSystemDeploy` |
+| **Deploy pool & selection** | **Complete** (Phase 2.2) | `DeployPool`, `select_for_block()` with filters + oldest-plus-newest capping, `compute_deploys_in_scope()` for ancestor dedup |
+| **Runtime abstraction** | **Complete** (Phase 2.3) | `RuntimeManager` trait + `MockRuntime` deterministic stand-in. Real RSpace adapter deferred to Phase 3 as a separate crate to keep the core library free of RSpace/Rholang deps |
+| Test suite | Complete | **159 tests** covering blocks, blocklace, crypto, networking, consensus, execution |
 
 ### 2.2 What Is Missing
 
@@ -67,10 +70,12 @@ Both protocols achieve BFT safety under < 1/3 Byzantine validators with mathemat
 | ~~Global fork choice~~ | ~~Critical~~ | ~~Replacing `Estimator`~~ **DONE** |
 | ~~Finality detector~~ | ~~Critical~~ | ~~Replacing `Finalizer` + `CliqueOracle`~~ **DONE** |
 | ~~Block validation pipeline~~ | ~~High~~ | ~~Replacing `BlockProcessor` validation~~ **DONE** |
+| ~~Typed payload (deploys, state transitions)~~ | ~~Critical~~ | ~~Smart contract execution~~ **DONE (types; execution pending)** |
+| ~~Deploy pool / selection~~ | ~~High~~ | ~~Block creation with transactions~~ **DONE** |
+| ~~RSpace runtime integration~~ | ~~High~~ | ~~Execute deploys, produce post-state hash~~ **DONE (trait + mock; real RSpace adapter in Phase 3)** |
 | `Casper` trait implementation | Critical | Plugging into f1r3node |
-| Typed payload (deploys, state transitions) | Critical | Smart contract execution |
+| Real RSpace adapter crate | High | Execute Rholang against actual tuplespace |
 | Persistent storage | High | Running beyond in-memory prototype |
-| Deploy pool / selection | High | Block creation with transactions |
 | `CasperSnapshot` equivalent | High | State management across the system |
 | Indexed DAG (child map, height map) | Medium | Performance at scale |
 | Cryptographic alignment (Blake2b, Secp256k1) | Medium | Wire compatibility with f1r3node |
@@ -440,12 +445,14 @@ Goal: A working Cordial Miners consensus that can be tested independently.
 
 Goal: Cordial Miners can execute Rholang deploys and produce state transitions.
 
-| Task | Depends On | Estimated Effort |
-|------|-----------|-----------------|
-| 2.1 Typed payload (`CordialBlockPayload`) | Phase 1 | Small |
-| 2.2 Deploy pool and selection | 2.1 | Medium |
-| 2.3 RSpace runtime integration (pre/post state hashes) | 2.1 | Large |
-| 2.4 System deploy support (slash, close block) | 2.3 | Small |
+Branch: `phase2/execution-layer-bridge`
+
+| Task | Depends On | Status |
+|------|-----------|--------|
+| 2.1 Typed payload (`CordialBlockPayload`) | Phase 1 | **COMPLETE** (193 lines, 10 tests) |
+| 2.2 Deploy pool and selection | 2.1 | **COMPLETE** (295 lines, 18 tests) |
+| 2.3 RSpace runtime integration (pre/post state hashes) | 2.1 | **COMPLETE** — trait + `MockRuntime` (314 lines, 17 tests). Real RSpace adapter deferred to Phase 3 to keep core crate free of RSpace/Rholang deps |
+| 2.4 System deploy support (slash, close block) | 2.3 | **COMPLETE** (covered by 2.3 mock; Slash / CloseBlock variants modeled). Real RSpace-backed impl comes with the Phase 3 adapter crate |
 
 ### Phase 3: f1r3node Integration
 
@@ -503,13 +510,16 @@ blocklace/
       memory.rs                  -- [ ] In-memory backend (extract from blocklace.rs)
       lmdb.rs                    -- [ ] LMDB persistent backend
       indexes.rs                 -- [ ] Child map, height map, latest messages
-    execution/                   -- [ ] Phase 2
-      payload.rs                 -- [ ] CordialBlockPayload type
-      deploy_pool.rs             -- [ ] Deploy pool and selection
-    bridge/                      -- [ ] Phase 3
+    execution/                   -- [x] Phase 2
+      mod.rs                     -- [x] Re-exports
+      payload.rs                 -- [x] Phase 2.1: CordialBlockPayload + deploy types
+      deploy_pool.rs             -- [x] Phase 2.2: Deploy pool, selection, ancestor dedup
+      runtime.rs                 -- [x] Phase 2.3: RuntimeManager trait + MockRuntime
+    bridge/                      -- [ ] Phase 3 (likely a separate workspace crate)
       casper_trait_impl.rs       -- [ ] Casper trait adapter
       block_translation.rs       -- [ ] Block <-> BlockMessage
       snapshot.rs                -- [ ] CasperSnapshot construction
+      rspace_runtime.rs          -- [ ] Real RuntimeManager impl against f1r3node RSpace
   tests/
     test_block.rs                -- [x] 9 tests
     test_blocklace.rs            -- [x] 7 tests
@@ -522,7 +532,10 @@ blocklace/
     test_fork_choice.rs          -- [x] 13 tests
     test_finality.rs             -- [x] 13 tests
     test_validation.rs           -- [x] 18 tests
-    test_consensus_simulation.rs -- [x] 10 tests (114 total)
+    test_consensus_simulation.rs -- [x] 10 tests
+    test_payload.rs              -- [x] 10 tests
+    test_deploy_pool.rs          -- [x] 18 tests
+    test_runtime.rs              -- [x] 17 tests (159 total)
   docs/
     implementation.md            -- [x] Implementation documentation
     cordial-miners-vs-cbc-casper.md -- [x] This document
