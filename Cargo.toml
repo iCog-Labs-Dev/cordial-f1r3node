@@ -1,9 +1,16 @@
-[package]
-name = "blocklace"
+[workspace]
+resolver = "2"
+members = [
+    "crates/blocklace",
+    "crates/blocklace-f1r3node",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+# Shared dependency versions so all workspace crates stay aligned.
+[workspace.dependencies]
 sha2 = "0.10"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"

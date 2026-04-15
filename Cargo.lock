@@ -45,6 +45,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "blocklace-f1r3node"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "blocklace",
+ "serde",
+ "sha2",
+]
+
+[[package]]
 name = "bytes"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
