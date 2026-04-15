@@ -26,6 +26,7 @@ src/
     mod.rs           -- Re-exports execution types
     payload.rs       -- CordialBlockPayload and all deploy/state types
     deploy_pool.rs   -- Deploy pool, selection, and ancestor dedup
+    runtime.rs       -- RuntimeManager trait + MockRuntime implementation
   network/
     mod.rs           -- Re-exports Message, Peer, Node
     message.rs       -- Wire protocol message types
@@ -53,6 +54,7 @@ tests/
   test_consensus_simulation.rs -- Multi-validator simulation tests (10 tests)
   test_payload.rs              -- Typed payload serialization tests (10 tests)
   test_deploy_pool.rs          -- Deploy pool and selection tests (18 tests)
+  test_runtime.rs              -- RuntimeManager + MockRuntime tests (17 tests)
 ```
 
 ---
@@ -276,6 +278,37 @@ Manages pending user deploys and selects them for inclusion in new blocks. Adapt
 
 `compute_deploys_in_scope(blocklace, predecessors, current_block, lifespan)` walks the blocklace ancestry of the given predecessors, deserializing each block's `CordialBlockPayload` to extract deploy signatures. Blocks outside the lifespan window are skipped. Returns a `HashSet<Vec<u8>>` of signatures used to filter pending deploys against duplicates.
 
+### Runtime (runtime.rs)
+
+Abstract interface between consensus and execution. Defines what the blocklace needs from an execution engine without embedding f1r3node's RSpace/Rholang dependencies. Real RSpace integration is planned as a separate crate in Phase 3; this module ships the trait plus a deterministic mock.
+
+**Note**: Not a paper concept. This abstraction keeps the core crate protocol-agnostic and execution-engine-agnostic.
+
+| Type | Description |
+|------|-------------|
+| `RuntimeManager` | Trait: `execute_block()` and `validate_post_state()` |
+| `MockRuntime` | Deterministic in-memory implementation for tests |
+| `ExecutionRequest` | `{ pre_state_hash, deploys, system_deploys, bonds, block_number }` |
+| `ExecutionResult` | `{ post_state_hash, processed_deploys, rejected_deploys, system_deploys, new_bonds }` |
+| `SystemDeployRequest` | `Slash { validator }` \| `CloseBlock` |
+| `RuntimeError` | `UnknownPreState` \| `InternalError(String)` |
+
+**RuntimeManager trait**:
+
+| Method | Description |
+|--------|-------------|
+| `execute_block()` | Consume an `ExecutionRequest`, produce an `ExecutionResult`. Must be deterministic: same input → same output |
+| `validate_post_state()` | Default impl: re-run `execute_block` and compare against declared post-state. Replaces f1r3node's `InvalidTransaction` check |
+
+**MockRuntime semantics**:
+- **Cost**: `min(deploy.term.len(), phlo_limit)` -- 1 phlo per byte as a stand-in for phlogiston accounting
+- **Failure**: `is_failed = true` when natural cost exceeds `phlo_limit`
+- **Rejection**: deploys with empty signatures are rejected with `RejectReason::InvalidSignature`
+- **Slash**: removes the validator's bond entry; `succeeded = true` iff the bond existed
+- **CloseBlock**: always succeeds
+- **Post-state hash**: SHA-256 over `(pre_state, block_number, processed_deploys, system_deploys, sorted bonds)` — deterministic and bond-order-independent
+- **Modes**: `new()` chains pre/post states strictly (rejects unknown pre-states); `permissive()` accepts any pre-state for tests that don't care about chaining
+
 ---
 
 ## Networking (src/network/)
@@ -290,7 +323,7 @@ For detailed API reference, wire protocol diagrams, and flow charts, see [src/ne
 
 ---
 
-## Test Coverage (142 tests)
+## Test Coverage (159 tests)
 
 | Test File | Count | What it covers |
 |-----------|-------|----------------|
@@ -308,6 +341,7 @@ For detailed API reference, wire protocol diagrams, and flow charts, see [src/ne
 | `test_consensus_simulation.rs` | 10 | Multi-validator end-to-end scenarios |
 | `test_payload.rs` | 10 | Typed payload serialization, block integration, bonds map |
 | `test_deploy_pool.rs` | 18 | Add/remove, selection filters, capping, prune, ancestor dedup |
+| `test_runtime.rs` | 17 | Runtime trait, MockRuntime determinism, cost, slash, state chaining |
 
 ---
 
@@ -332,8 +366,8 @@ Based on the roadmap in [cordial-miners-vs-cbc-casper.md](cordial-miners-vs-cbc-
 |------|--------|
 | 2.1 Typed payload (`CordialBlockPayload`) | Complete |
 | 2.2 Deploy pool and selection | Complete |
-| 2.3 RSpace runtime integration | Not started |
-| 2.4 System deploy support | Not started |
+| 2.3 RSpace runtime integration | Complete (trait + `MockRuntime`; real RSpace adapter deferred to Phase 3) |
+| 2.4 System deploy support | Covered by 2.3 mock (Slash / CloseBlock); real impl with Phase 3 adapter |
 
 ## What Is Not Yet Implemented
 
@@ -345,9 +379,9 @@ Based on the roadmap in [cordial-miners-vs-cbc-casper.md](cordial-miners-vs-cbc-
 - Pending-block retry: blocks rejected for missing predecessors are dropped; no re-attempt after predecessors arrive
 - Transitive sync: sync discovers missing block ids but doesn't recursively fetch their predecessors
 
-**f1r3node integration** (Phase 2-3):
-- RSpace runtime integration (pre/post state hashes)
-- System deploy support (slash, close block)
+**f1r3node integration** (Phase 3):
+- Real RSpace adapter crate implementing `RuntimeManager` against f1r3node's RSpace / Rholang interpreter
+- Real system deploys (slash / close block) running against RSpace instead of the mock
 - `Casper` trait adapter for f1r3node
 - Cryptographic alignment (Blake2b, Secp256k1 option)
 - Time-based deploy expiration (`Option<expiration_timestamp>` on `Deploy`)

@@ -60,7 +60,8 @@ Both protocols achieve BFT safety under < 1/3 Byzantine validators with mathemat
 | **Multi-validator consensus tests** | **Complete** | 10 end-to-end simulation scenarios |
 | **Typed block payload** | **Complete** (Phase 2.1) | `CordialBlockPayload` maps to f1r3node's `Body` with `BlockState`, `Bond`, `Deploy`, `SignedDeploy`, `ProcessedDeploy`, `RejectedDeploy`, `ProcessedSystemDeploy` |
 | **Deploy pool & selection** | **Complete** (Phase 2.2) | `DeployPool`, `select_for_block()` with filters + oldest-plus-newest capping, `compute_deploys_in_scope()` for ancestor dedup |
-| Test suite | Complete | **142 tests** covering blocks, blocklace, crypto, networking, consensus, execution |
+| **Runtime abstraction** | **Complete** (Phase 2.3) | `RuntimeManager` trait + `MockRuntime` deterministic stand-in. Real RSpace adapter deferred to Phase 3 as a separate crate to keep the core library free of RSpace/Rholang deps |
+| Test suite | Complete | **159 tests** covering blocks, blocklace, crypto, networking, consensus, execution |
 
 ### 2.2 What Is Missing
 
@@ -71,8 +72,9 @@ Both protocols achieve BFT safety under < 1/3 Byzantine validators with mathemat
 | ~~Block validation pipeline~~ | ~~High~~ | ~~Replacing `BlockProcessor` validation~~ **DONE** |
 | ~~Typed payload (deploys, state transitions)~~ | ~~Critical~~ | ~~Smart contract execution~~ **DONE (types; execution pending)** |
 | ~~Deploy pool / selection~~ | ~~High~~ | ~~Block creation with transactions~~ **DONE** |
+| ~~RSpace runtime integration~~ | ~~High~~ | ~~Execute deploys, produce post-state hash~~ **DONE (trait + mock; real RSpace adapter in Phase 3)** |
 | `Casper` trait implementation | Critical | Plugging into f1r3node |
-| RSpace runtime integration | High | Execute deploys, produce post-state hash |
+| Real RSpace adapter crate | High | Execute Rholang against actual tuplespace |
 | Persistent storage | High | Running beyond in-memory prototype |
 | `CasperSnapshot` equivalent | High | State management across the system |
 | Indexed DAG (child map, height map) | Medium | Performance at scale |
@@ -449,8 +451,8 @@ Branch: `phase2/execution-layer-bridge`
 |------|-----------|--------|
 | 2.1 Typed payload (`CordialBlockPayload`) | Phase 1 | **COMPLETE** (193 lines, 10 tests) |
 | 2.2 Deploy pool and selection | 2.1 | **COMPLETE** (295 lines, 18 tests) |
-| 2.3 RSpace runtime integration (pre/post state hashes) | 2.1 | Not started |
-| 2.4 System deploy support (slash, close block) | 2.3 | Not started |
+| 2.3 RSpace runtime integration (pre/post state hashes) | 2.1 | **COMPLETE** — trait + `MockRuntime` (314 lines, 17 tests). Real RSpace adapter deferred to Phase 3 to keep core crate free of RSpace/Rholang deps |
+| 2.4 System deploy support (slash, close block) | 2.3 | **COMPLETE** (covered by 2.3 mock; Slash / CloseBlock variants modeled). Real RSpace-backed impl comes with the Phase 3 adapter crate |
 
 ### Phase 3: f1r3node Integration
 
@@ -512,10 +514,12 @@ blocklace/
       mod.rs                     -- [x] Re-exports
       payload.rs                 -- [x] Phase 2.1: CordialBlockPayload + deploy types
       deploy_pool.rs             -- [x] Phase 2.2: Deploy pool, selection, ancestor dedup
-    bridge/                      -- [ ] Phase 3
+      runtime.rs                 -- [x] Phase 2.3: RuntimeManager trait + MockRuntime
+    bridge/                      -- [ ] Phase 3 (likely a separate workspace crate)
       casper_trait_impl.rs       -- [ ] Casper trait adapter
       block_translation.rs       -- [ ] Block <-> BlockMessage
       snapshot.rs                -- [ ] CasperSnapshot construction
+      rspace_runtime.rs          -- [ ] Real RuntimeManager impl against f1r3node RSpace
   tests/
     test_block.rs                -- [x] 9 tests
     test_blocklace.rs            -- [x] 7 tests
@@ -530,7 +534,8 @@ blocklace/
     test_validation.rs           -- [x] 18 tests
     test_consensus_simulation.rs -- [x] 10 tests
     test_payload.rs              -- [x] 10 tests
-    test_deploy_pool.rs          -- [x] 18 tests (142 total)
+    test_deploy_pool.rs          -- [x] 18 tests
+    test_runtime.rs              -- [x] 17 tests (159 total)
   docs/
     implementation.md            -- [x] Implementation documentation
     cordial-miners-vs-cbc-casper.md -- [x] This document
