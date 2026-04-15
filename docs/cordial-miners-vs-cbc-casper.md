@@ -60,8 +60,14 @@ Both protocols achieve BFT safety under < 1/3 Byzantine validators with mathemat
 | **Multi-validator consensus tests** | **Complete** | 10 end-to-end simulation scenarios |
 | **Typed block payload** | **Complete** (Phase 2.1) | `CordialBlockPayload` maps to f1r3node's `Body` with `BlockState`, `Bond`, `Deploy`, `SignedDeploy`, `ProcessedDeploy`, `RejectedDeploy`, `ProcessedSystemDeploy` |
 | **Deploy pool & selection** | **Complete** (Phase 2.2) | `DeployPool`, `select_for_block()` with filters + oldest-plus-newest capping, `compute_deploys_in_scope()` for ancestor dedup |
-| **Runtime abstraction** | **Complete** (Phase 2.3) | `RuntimeManager` trait + `MockRuntime` deterministic stand-in. Real RSpace adapter deferred to Phase 3 as a separate crate to keep the core library free of RSpace/Rholang deps |
-| Test suite | Complete | **159 tests** covering blocks, blocklace, crypto, networking, consensus, execution |
+| **Runtime abstraction** | **Complete** (Phase 2.3) | `RuntimeManager` trait + `MockRuntime` deterministic stand-in. Real RSpace adapter deferred to a separate crate to keep the core library free of RSpace/Rholang deps |
+| **Workspace restructure** | **Complete** (Phase 3 setup) | Repo is a Cargo workspace: `crates/blocklace` (core) + `crates/blocklace-f1r3node` (adapter). Core crate still buildable standalone |
+| **Block format translation** | **Complete** (Phase 3.5) | `block_to_message` / `message_to_block` in `blocklace-f1r3node::block_translation`. Packs predecessors into both `parents_hash_list` and `justifications`; reverse takes union |
+| **CasperSnapshot construction** | **Complete** (Phase 3.3) | `build_snapshot(&Blocklace, &bonds, shard_conf, shard_id)` reuses every Phase 1/2 primitive to assemble the snapshot. Simplified `DagRepresentation` with plain `HashMap`/`HashSet`/`BTreeMap` |
+| **CasperShardConf mirror** | **Complete** (Phase 3.6) | Full 25-field `CasperShardConf` + nested `FinalizerConf`, defaults match f1r3node. `from_cordial(&DeployPoolConfig, name)` and `to_snapshot_conf()` |
+| **Crypto alignment** | **Complete** (Phase 3.4) | `Hasher`, `Signer`, `Verifier` traits. Blake2b-256 (pinned bytewise to f1r3node's `Blake2b::<U32>` output), Secp256k1 (k256 ECDSA), ED25519. `compute_block_hash` mixes sender into hash input |
+| **Casper trait adapter** | **Complete** (Phase 3.1 / 3.2) | `CordialCasper` + `CordialMultiParentCasper` local mirror traits; `CordialCasperAdapter` implements both. Method-for-method parity with f1r3node except RSpace-coupled methods (deferred) |
+| Test suite | Complete | **239 tests** — 159 in `blocklace` + 80 in `blocklace-f1r3node` |
 
 ### 2.2 What Is Missing
 
@@ -72,13 +78,15 @@ Both protocols achieve BFT safety under < 1/3 Byzantine validators with mathemat
 | ~~Block validation pipeline~~ | ~~High~~ | ~~Replacing `BlockProcessor` validation~~ **DONE** |
 | ~~Typed payload (deploys, state transitions)~~ | ~~Critical~~ | ~~Smart contract execution~~ **DONE (types; execution pending)** |
 | ~~Deploy pool / selection~~ | ~~High~~ | ~~Block creation with transactions~~ **DONE** |
-| ~~RSpace runtime integration~~ | ~~High~~ | ~~Execute deploys, produce post-state hash~~ **DONE (trait + mock; real RSpace adapter in Phase 3)** |
-| `Casper` trait implementation | Critical | Plugging into f1r3node |
-| Real RSpace adapter crate | High | Execute Rholang against actual tuplespace |
+| ~~RSpace runtime integration~~ | ~~High~~ | ~~Execute deploys, produce post-state hash~~ **DONE (trait + mock; real RSpace adapter in a separate crate)** |
+| ~~`Casper` trait implementation~~ | ~~Critical~~ | ~~Plugging into f1r3node~~ **DONE** (`CordialCasperAdapter` — local mirror traits; swap to real `casper::Casper` when path dep enabled) |
+| ~~`CasperSnapshot` equivalent~~ | ~~High~~ | ~~State management across the system~~ **DONE** (`build_snapshot`) |
+| ~~Cryptographic alignment (Blake2b, Secp256k1)~~ | ~~Medium~~ | ~~Wire compatibility with f1r3node~~ **DONE** (`Hasher`/`Signer`/`Verifier` + Blake2b-256 + k256 ECDSA) |
+| Real RSpace adapter crate | High | Execute Rholang against actual tuplespace (implements our `RuntimeManager` via f1r3node's `RuntimeManager`) |
+| Enable f1r3node path deps (`models`, `casper`, `block_storage`) | High | Swap local mirror types for real f1r3node types in `blocklace-f1r3node` |
+| Byte-for-byte block-hash parity with f1r3node's `hash_block` | Medium | Requires prost-encoded header/body bytes (needs `models` path dep) |
 | Persistent storage | High | Running beyond in-memory prototype |
-| `CasperSnapshot` equivalent | High | State management across the system |
 | Indexed DAG (child map, height map) | Medium | Performance at scale |
-| Cryptographic alignment (Blake2b, Secp256k1) | Medium | Wire compatibility with f1r3node |
 | TLS and gRPC network layer | Low | Can bridge via `TransportLayer` trait |
 
 ---
@@ -117,9 +125,11 @@ Both protocols achieve BFT safety under < 1/3 Byzantine validators with mathemat
 
 **Tests**: 13 tests in `test_finality.rs` covering supermajority threshold, exact 2/3 boundary, equivocator exclusion, orphan detection, and monotonic finality advancement.
 
-### 3.3 Casper Trait Implementation (Critical)
+### 3.3 Casper Trait Implementation (Critical) -- COMPLETE
 
-**Current state**: No interface compatible with f1r3node.
+**Implemented in**: `crates/blocklace-f1r3node/src/casper_adapter.rs` (Phase 3.1 / 3.2)
+
+Approach (A) — adapter pattern — chosen as recommended. Two local mirror traits `CordialCasper` and `CordialMultiParentCasper` with method signatures identical to f1r3node's; `CordialCasperAdapter` implements both. Swapping to the real `casper::Casper` trait is mechanical when the f1r3node `casper` path dep is enabled.
 
 The `Casper` trait (f1r3node `casper/src/rust/casper.rs:81-137`) is the single integration point. Every other system component (engine, proposer, block processor, API) calls through this trait. A Cordial Miners implementation must provide:
 
@@ -167,9 +177,13 @@ The extended `MultiParentCasper` trait adds:
 
 **Estimated scope**: New crate or module, approximately 500-800 lines for the adapter.
 
-### 3.4 Typed Payload and State Transitions (Critical)
+### 3.4 Typed Payload and State Transitions (Critical) -- COMPLETE
 
-**Current state**: `BlockContent.payload` is `Vec<u8>` with no structure.
+**Implemented in**: `crates/blocklace/src/execution/payload.rs` (Phase 2.1) plus `crates/blocklace/src/execution/runtime.rs` (Phase 2.3)
+
+Option 1 (adapter approach) was chosen: `CordialBlockPayload` mirrors f1r3node's `Body` and is bincode-serialized into `BlockContent.payload: Vec<u8>`, keeping the blocklace generic. Runtime execution is abstracted behind the `RuntimeManager` trait; a `MockRuntime` ships for testing, and a real RSpace-backed implementation is deferred to a separate adapter crate so the core library stays free of RSpace/Rholang dependencies.
+
+**Current state**: Was `BlockContent.payload` is `Vec<u8>` with no structure.
 
 **What CBC Casper uses** (f1r3node `models/src/rust/casper/protocol/casper_message.rs`):
 
@@ -221,9 +235,13 @@ This keeps the blocklace protocol-agnostic while allowing typed payloads for f1r
 
 **Estimated scope**: Type definitions ~100 lines, serialization ~100 lines, integration with RSpace runtime ~300 lines.
 
-### 3.5 Deploy Pool and Selection (High)
+### 3.5 Deploy Pool and Selection (High) -- COMPLETE
 
-**Current state**: No deploy handling.
+**Implemented in**: `crates/blocklace/src/execution/deploy_pool.rs` (Phase 2.2)
+
+`DeployPool` is signature-keyed storage with `add` / `remove` / `prune_expired`. `select_for_block` applies the full f1r3node filter chain (not future, not block-expired, not duplicated in ancestry) and caps at `max_user_deploys_per_block` using the oldest-plus-newest strategy. `compute_deploys_in_scope()` walks the blocklace ancestry within the lifespan window to build the dedup set.
+
+**Current state**: Was no deploy handling.
 
 **What CBC Casper does**:
 - `KeyValueDeployStorage` stores pending deploys
@@ -348,17 +366,23 @@ Checks eliminated by blocklace structure: justification regression, separate par
 
 **Tests**: 18 tests in `test_validation.rs` + 10 end-to-end simulation tests in `test_consensus_simulation.rs`.
 
-### 3.8 Cryptographic Alignment (Medium)
+### 3.8 Cryptographic Alignment (Medium) -- COMPLETE
 
-**Current state**: SHA-256 + Ed25519.
+**Implemented in**: `crates/blocklace-f1r3node/src/crypto_bridge.rs` (Phase 3.4)
+
+Option 1 (trait abstraction) was chosen. `Hasher`, `Signer`, and `Verifier` traits live in the adapter crate with `Sha256Hasher`, `Blake2b256Hasher`, `Ed25519`, and `Secp256k1` implementations. The core `blocklace` crate keeps SHA-256 + ED25519 as its native crypto; the adapter crate provides the f1r3node-compatible primitives. `compute_block_hash(&BlockMessage)` produces a Blake2b-256 hash mixing the sender into the input — this resolves the content-hash collision flagged in `snapshot.rs` where blocks with identical `BlockContent` but different creators would collapse.
+
+Deferred: byte-for-byte parity with f1r3node's `hash_block` requires prost-encoded header/body bytes, which requires enabling the `models` path dependency. Our implementation is logically equivalent but not byte-equal.
+
+**Current state**: Was SHA-256 + Ed25519 only.
 
 **f1r3node uses**: Blake2b-256 for block hashing, Secp256k1 for primary signatures (validator identities), Ed25519 as secondary.
 
-**Options**:
+**Options** (historical; kept for design record):
 1. **Abstract over crypto**: Define traits for `Hasher` and `Signer`/`Verifier`. Let the blocklace library be crypto-agnostic. Provide implementations for both SHA-256/Ed25519 (standalone) and Blake2b/Secp256k1 (f1r3node integration).
 2. **Switch to f1r3node's crypto**: Use `crypto::rust::signatures` from f1r3node directly. Simpler but couples the library.
 
-**Recommended**: Option 1. The blocklace should remain a general-purpose library.
+**Chose**: Option 1. The blocklace remains a general-purpose library; f1r3node-specific crypto lives in the adapter crate.
 
 **Estimated scope**: Trait definitions ~50 lines, Blake2b/Secp256k1 impl ~100 lines.
 
@@ -458,14 +482,18 @@ Branch: `phase2/execution-layer-bridge`
 
 Goal: Cordial Miners can run as an alternative consensus in f1r3node.
 
-| Task | Depends On | Estimated Effort |
-|------|-----------|-----------------|
-| 3.1 `Casper` trait implementation (adapter) | Phase 1, Phase 2 | Large |
-| 3.2 `MultiParentCasper` trait implementation | 3.1 | Medium |
-| 3.3 `CasperSnapshot` construction from blocklace state | 3.1 | Medium |
-| 3.4 Cryptographic alignment (Blake2b, Secp256k1 option) | -- | Small |
-| 3.5 Block format translation (`Block` <-> `BlockMessage`) | 3.1 | Medium |
-| 3.6 Configuration (`CasperShardConf` equivalent) | 3.1 | Small |
+Branch: `phase3/f1r3node-integration`. Repo reorganized into a Cargo workspace with `crates/blocklace` (core) + `crates/blocklace-f1r3node` (adapter).
+
+| Task | Depends On | Status |
+|------|-----------|--------|
+| 3.1 `Casper` trait implementation (adapter) | Phase 1, Phase 2 | **COMPLETE** (`CordialCasper` trait + `CordialCasperAdapter`) |
+| 3.2 `MultiParentCasper` trait implementation | 3.1 | **COMPLETE** (`CordialMultiParentCasper` trait; same adapter impls it) |
+| 3.3 `CasperSnapshot` construction from blocklace state | 3.1 | **COMPLETE** (`build_snapshot`, 341 lines, 16 tests) |
+| 3.4 Cryptographic alignment (Blake2b, Secp256k1 option) | -- | **COMPLETE** (`Hasher`/`Signer`/`Verifier` traits + `compute_block_hash`, 22 tests) |
+| 3.5 Block format translation (`Block` <-> `BlockMessage`) | 3.1 | **COMPLETE** (`block_to_message` / `message_to_block`, 538 lines, 13 tests) |
+| 3.6 Configuration (`CasperShardConf` equivalent) | 3.1 | **COMPLETE** (`CasperShardConf` + `FinalizerConf`, 239 lines, 8 tests) |
+
+**Total Phase 3**: ~1,850 lines of adapter code, 80 tests. Not yet landed: the real RSpace-backed `RuntimeManager` implementation (belongs in a separate crate that depends on f1r3node's RSpace) and enabling the f1r3node `models` / `casper` / `block_storage` path dependencies to swap local mirror types for real ones.
 
 ### Phase 4: Production Hardening
 
@@ -484,62 +512,81 @@ Goal: Production-ready alternative to CBC Casper.
 
 ## 7. File Structure
 
-Items marked with checkmarks exist; unmarked items are planned for future phases.
+Items marked with checkmarks exist; unmarked items are planned for future phases. Phase 3 reorganized the repo into a Cargo workspace.
 
 ```
-blocklace/
-  src/
-    lib.rs                       -- [x] Crate root
-    block.rs                     -- [x] Block struct with serde
-    blocklace.rs                 -- [x] Core data structure
-    crypto.rs                    -- [x] SHA-256 + ED25519
-    types/                       -- [x] NodeId, BlockIdentity, BlockContent
-    consensus/
-      mod.rs                     -- [x] Re-exports
-      fork_choice.rs             -- [x] Phase 1.1: fork choice, LCA, cordial condition
-      finality.rs                -- [x] Phase 1.2: supermajority finality detector
-      validation.rs              -- [x] Phase 1.4: block validation pipeline
-    network/
-      mod.rs                     -- [x] Re-exports
-      message.rs                 -- [x] Wire protocol (handshake + propagation + sync)
-      peer.rs                    -- [x] TCP peer with async handshake
-      node.rs                    -- [x] Node = Peer + Blocklace
-      NETWORK.md                 -- [x] Networking documentation
-    storage/                     -- [ ] Phase 1.3 / Phase 4
-      traits.rs                  -- [ ] BlocklaceStore trait
-      memory.rs                  -- [ ] In-memory backend (extract from blocklace.rs)
-      lmdb.rs                    -- [ ] LMDB persistent backend
-      indexes.rs                 -- [ ] Child map, height map, latest messages
-    execution/                   -- [x] Phase 2
-      mod.rs                     -- [x] Re-exports
-      payload.rs                 -- [x] Phase 2.1: CordialBlockPayload + deploy types
-      deploy_pool.rs             -- [x] Phase 2.2: Deploy pool, selection, ancestor dedup
-      runtime.rs                 -- [x] Phase 2.3: RuntimeManager trait + MockRuntime
-    bridge/                      -- [ ] Phase 3 (likely a separate workspace crate)
-      casper_trait_impl.rs       -- [ ] Casper trait adapter
-      block_translation.rs       -- [ ] Block <-> BlockMessage
-      snapshot.rs                -- [ ] CasperSnapshot construction
-      rspace_runtime.rs          -- [ ] Real RuntimeManager impl against f1r3node RSpace
-  tests/
-    test_block.rs                -- [x] 9 tests
-    test_blocklace.rs            -- [x] 7 tests
-    test_hash.rs                 -- [x] 5 tests
-    test_sign.rs                 -- [x] 6 tests
-    test_message.rs              -- [x] 6 tests
-    test_message_propagation.rs  -- [x] 7 tests
-    test_peer.rs                 -- [x] 7 tests
-    test_node.rs                 -- [x] 13 tests
-    test_fork_choice.rs          -- [x] 13 tests
-    test_finality.rs             -- [x] 13 tests
-    test_validation.rs           -- [x] 18 tests
-    test_consensus_simulation.rs -- [x] 10 tests
-    test_payload.rs              -- [x] 10 tests
-    test_deploy_pool.rs          -- [x] 18 tests
-    test_runtime.rs              -- [x] 17 tests (159 total)
+blocklace/                        -- [x] Workspace root
+  Cargo.toml                      -- [x] Workspace manifest with [workspace.dependencies]
+  crates/
+    blocklace/                    -- [x] Core crate (SHA-256 + ED25519, no f1r3node deps)
+      Cargo.toml
+      src/
+        lib.rs                    -- [x] Crate root
+        block.rs                  -- [x] Block struct with serde
+        blocklace.rs              -- [x] Core data structure
+        crypto.rs                 -- [x] SHA-256 + ED25519
+        types/                    -- [x] NodeId, BlockIdentity, BlockContent
+        consensus/
+          fork_choice.rs          -- [x] Phase 1.1: fork choice, LCA, cordial condition
+          finality.rs             -- [x] Phase 1.2: supermajority finality detector
+          validation.rs           -- [x] Phase 1.4: block validation pipeline
+        network/
+          message.rs              -- [x] Wire protocol (handshake + propagation + sync)
+          peer.rs                 -- [x] TCP peer with async handshake
+          node.rs                 -- [x] Node = Peer + Blocklace
+          NETWORK.md              -- [x] Networking documentation
+        execution/                -- [x] Phase 2
+          payload.rs              -- [x] Phase 2.1: CordialBlockPayload + deploy types
+          deploy_pool.rs          -- [x] Phase 2.2: Deploy pool, selection, ancestor dedup
+          runtime.rs              -- [x] Phase 2.3: RuntimeManager trait + MockRuntime
+        storage/                  -- [ ] Phase 1.3 / Phase 4 (optimization)
+          traits.rs               -- [ ] BlocklaceStore trait
+          memory.rs               -- [ ] In-memory backend (extract from blocklace.rs)
+          lmdb.rs                 -- [ ] LMDB persistent backend
+          indexes.rs              -- [ ] Child map, height map, latest messages
+      tests/
+        test_block.rs             -- [x] 9 tests
+        test_blocklace.rs         -- [x] 7 tests
+        test_hash.rs              -- [x] 5 tests
+        test_sign.rs              -- [x] 6 tests
+        test_message.rs           -- [x] 6 tests
+        test_message_propagation.rs -- [x] 7 tests
+        test_peer.rs              -- [x] 7 tests
+        test_node.rs              -- [x] 13 tests
+        test_fork_choice.rs       -- [x] 13 tests
+        test_finality.rs          -- [x] 13 tests
+        test_validation.rs        -- [x] 18 tests
+        test_consensus_simulation.rs -- [x] 10 tests
+        test_payload.rs           -- [x] 10 tests
+        test_deploy_pool.rs       -- [x] 18 tests
+        test_runtime.rs           -- [x] 17 tests (core subtotal: 159)
+
+    blocklace-f1r3node/           -- [x] Phase 3 adapter crate
+      Cargo.toml                  -- depends on `blocklace` via path
+      src/
+        lib.rs                    -- [x] Crate root
+        block_translation.rs      -- [x] Phase 3.5: Block <-> BlockMessage mirrors
+        snapshot.rs               -- [x] Phase 3.3: CasperSnapshot construction
+        shard_conf.rs             -- [x] Phase 3.6: CasperShardConf + FinalizerConf mirror
+        crypto_bridge.rs          -- [x] Phase 3.4: Blake2b, Secp256k1, ED25519 + block hash
+        casper_adapter.rs         -- [x] Phase 3.1/3.2: CordialCasper + CordialMultiParentCasper + CordialCasperAdapter
+        rspace_runtime.rs         -- [ ] Placeholder for real RuntimeManager via f1r3node RSpace
+      tests/
+        test_block_translation.rs -- [x] 13 tests
+        test_snapshot.rs          -- [x] 16 tests
+        test_shard_conf.rs        -- [x] 8 tests
+        test_crypto_bridge.rs     -- [x] 22 tests
+        test_casper_adapter.rs    -- [x] 21 tests (adapter subtotal: 80)
+
+    (future) blocklace-f1r3rspace/ -- [ ] Separate crate depending on f1r3node's RSpace.
+                                      Implements RuntimeManager against real Rholang execution.
+
   docs/
-    implementation.md            -- [x] Implementation documentation
+    implementation.md             -- [x] Implementation documentation
     cordial-miners-vs-cbc-casper.md -- [x] This document
 ```
+
+Workspace totals: **239 tests** across 2 crates.
 
 ---
 
