@@ -1,3 +1,21 @@
+//! Fork choice and cordial condition.
+//!
+//! This module contains two kinds of functions:
+//!
+//! **Paper-native** (used by the Cordial Miners protocol):
+//! - `is_cordial()` — the cordial condition from the paper
+//! - `collect_validator_tips()` — per-validator latest block
+//!
+//! **f1r3node compatibility shim** (NOT used by the protocol):
+//! - `fork_choice()` and `ForkChoice` — LMD-GHOST-style ranked tips
+//! - `compute_lca()`, `walk_to_lca()` — helpers for the shim
+//!
+//! The Cordial Miners paper does not define a traditional fork choice rule.
+//! Validators reference ALL known tips (cordial condition) instead of picking
+//! one "preferred" fork. The `fork_choice()` function exists only to satisfy
+//! f1r3node's `Casper::estimator()` trait method when we build the adapter
+//! in Phase 3. It will likely move to `src/bridge/` at that point.
+
 use std::collections::{HashMap, HashSet};
 
 use crate::block::Block;
