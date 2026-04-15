@@ -1,0 +1,29 @@
+[package]
+name = "blocklace-f1r3node"
+description = "f1r3node integration adapter for the blocklace crate: Casper trait, block translation, and real RSpace runtime binding"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+blocklace = { path = "../blocklace" }
+
+# Shared deps we use internally for translation, hashing, etc.
+sha2.workspace = true
+serde.workspace = true
+bincode.workspace = true
+
+# ---------------------------------------------------------------------------
+# f1r3node dependency (commented out until we wire a specific task in Phase 3)
+#
+# Uses a local path pointing to the cloned f1r3node repo. If you don't have
+# it checked out at the expected location, this adapter crate's RSpace
+# integration won't compile — but the core `blocklace` crate remains usable
+# on its own.
+#
+# Switch to a git or crates.io source later if f1r3node publishes.
+#
+# casper = { path = "../../../f1r3node/casper" }
+# models = { path = "../../../f1r3node/models" }
+# block_storage = { path = "../../../f1r3node/block-storage" }
+# crypto = { path = "../../../f1r3node/crypto" }
+# ---------------------------------------------------------------------------
