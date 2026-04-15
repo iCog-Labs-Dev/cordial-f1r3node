@@ -18,6 +18,11 @@ k256.workspace = true
 ed25519-dalek.workspace = true
 rand.workspace = true
 
+# Phase 3.1 — Casper trait adapter
+async-trait.workspace = true
+either.workspace = true
+tokio.workspace = true
+
 # ---------------------------------------------------------------------------
 # f1r3node dependency (commented out until we wire a specific task in Phase 3)
 #
