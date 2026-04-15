@@ -25,6 +25,7 @@ src/
   execution/
     mod.rs           -- Re-exports execution types
     payload.rs       -- CordialBlockPayload and all deploy/state types
+    deploy_pool.rs   -- Deploy pool, selection, and ancestor dedup
   network/
     mod.rs           -- Re-exports Message, Peer, Node
     message.rs       -- Wire protocol message types
@@ -51,6 +52,7 @@ tests/
   test_validation.rs           -- Block validation pipeline tests (18 tests)
   test_consensus_simulation.rs -- Multi-validator simulation tests (10 tests)
   test_payload.rs              -- Typed payload serialization tests (10 tests)
+  test_deploy_pool.rs          -- Deploy pool and selection tests (18 tests)
 ```
 
 ---
@@ -240,6 +242,40 @@ Serialized into `BlockContent.payload` via bincode, keeping the blocklace protoc
 - `CordialBlockPayload::to_bytes()` / `from_bytes()` -- bincode serialization
 - `CordialBlockPayload::bonds_map()` -- extract `HashMap<NodeId, u64>` for consensus functions
 
+### Deploy Pool (deploy_pool.rs)
+
+Manages pending user deploys and selects them for inclusion in new blocks. Adapts f1r3node's `KeyValueDeployStorage` + `BlockCreator::prepare_user_deploys()` to the blocklace.
+
+**Note**: The Cordial Miners paper does not define a deploy pool -- this is an engineering layer above the consensus protocol.
+
+| Type | Description |
+|------|-------------|
+| `DeployPool` | Signature-keyed storage for pending deploys |
+| `DeployPoolConfig` | `max_user_deploys_per_block`, `deploy_lifespan`, `min_phlo_price` |
+| `PoolError` | `Duplicate`, `InsufficientPhloPrice`, `InvalidSignature` |
+| `SelectedDeploys` | Result: `deploys: Vec<SignedDeploy>` + `cap_hit: bool` |
+
+**DeployPool API**:
+
+| Method | Description |
+|--------|-------------|
+| `add()` | Add a deploy; dedup by signature, validate phlo price |
+| `remove()` | Remove by signature |
+| `len()` / `is_empty()` / `iter()` | Standard collection accessors |
+| `prune_expired()` | Remove block-expired deploys; returns removed signatures |
+| `select_for_block()` | Apply filters, cap, return selected deploys |
+
+**Selection filters (applied in order)**:
+1. Not future: `valid_after_block_number <= current_block`
+2. Not block-expired: within `deploy_lifespan` window (handles u64 underflow)
+3. Not duplicated in ancestry: not in `deploys_in_scope` set
+
+**Capping strategy** (`oldest-plus-newest`): when more valid deploys exist than `max_user_deploys_per_block`, select `(cap - 1)` oldest + 1 newest. Prevents head-of-line blocking under stress. Special case `cap == 1` selects just the newest.
+
+**Ancestor dedup**:
+
+`compute_deploys_in_scope(blocklace, predecessors, current_block, lifespan)` walks the blocklace ancestry of the given predecessors, deserializing each block's `CordialBlockPayload` to extract deploy signatures. Blocks outside the lifespan window are skipped. Returns a `HashSet<Vec<u8>>` of signatures used to filter pending deploys against duplicates.
+
 ---
 
 ## Networking (src/network/)
@@ -254,7 +290,7 @@ For detailed API reference, wire protocol diagrams, and flow charts, see [src/ne
 
 ---
 
-## Test Coverage (124 tests)
+## Test Coverage (142 tests)
 
 | Test File | Count | What it covers |
 |-----------|-------|----------------|
@@ -271,6 +307,7 @@ For detailed API reference, wire protocol diagrams, and flow charts, see [src/ne
 | `test_validation.rs` | 18 | Content hash, signature, sender, closure, equivocation, cordial |
 | `test_consensus_simulation.rs` | 10 | Multi-validator end-to-end scenarios |
 | `test_payload.rs` | 10 | Typed payload serialization, block integration, bonds map |
+| `test_deploy_pool.rs` | 18 | Add/remove, selection filters, capping, prune, ancestor dedup |
 
 ---
 
@@ -294,7 +331,7 @@ Based on the roadmap in [cordial-miners-vs-cbc-casper.md](cordial-miners-vs-cbc-
 | Task | Status |
 |------|--------|
 | 2.1 Typed payload (`CordialBlockPayload`) | Complete |
-| 2.2 Deploy pool and selection | Not started |
+| 2.2 Deploy pool and selection | Complete |
 | 2.3 RSpace runtime integration | Not started |
 | 2.4 System deploy support | Not started |
 
@@ -309,6 +346,8 @@ Based on the roadmap in [cordial-miners-vs-cbc-casper.md](cordial-miners-vs-cbc-
 - Transitive sync: sync discovers missing block ids but doesn't recursively fetch their predecessors
 
 **f1r3node integration** (Phase 2-3):
-- Deploy pool and selection
+- RSpace runtime integration (pre/post state hashes)
+- System deploy support (slash, close block)
 - `Casper` trait adapter for f1r3node
 - Cryptographic alignment (Blake2b, Secp256k1 option)
+- Time-based deploy expiration (`Option<expiration_timestamp>` on `Deploy`)
