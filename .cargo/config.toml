@@ -1,0 +1,30 @@
+# Workspace cargo configuration.
+#
+# These settings are required when `blocklace-f1r3rspace` is a workspace
+# member, because f1r3node's crates (which that crate path-depends on)
+# transitively use `gxhash` and the Rholang interpreter's deep async
+# recursion. Without these, the build fails on gxhash and tests stack-
+# overflow.
+#
+# Mirrors /home/john/Desktop/rust/f1r3node/.cargo/config.toml so the
+# two projects can share the same build expectations.
+
+[env]
+# Rholang's interpreter recurses deeply via Box::pin across async state
+# machines. 2 MB (the default) overflows in debug test builds. f1r3node
+# runs with 8 MB.
+RUST_MIN_STACK = "8388608"
+
+[build]
+# gxhash (transitive dep of f1r3node's `shared` crate) requires AES and
+# SSE2 CPU intrinsics. `target-cpu=native` enables whatever the host
+# machine supports, which on x86_64 includes these.
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-feature=+aes,+sse2"]
+
+# Suppress the future-incompat noise from f1r3node's transitive `hocon`
+# dep. Harmless and can't be fixed on our side.
+[future-incompat-report]
+frequency = "never"
