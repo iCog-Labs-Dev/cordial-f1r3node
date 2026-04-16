@@ -1,12 +1,26 @@
-[package]
-name = "blocklace"
+[workspace]
+resolver = "2"
+members = [
+    "crates/blocklace",
+    "crates/blocklace-f1r3node",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+# Shared dependency versions so all workspace crates stay aligned.
+[workspace.dependencies]
 sha2 = "0.10"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
+
+# Used only by the blocklace-f1r3node adapter crate for crypto alignment
+# with f1r3node (Blake2b-256 block hashing, Secp256k1 validator signatures).
+blake2 = "0.10.6"
+k256 = { version = "0.13", features = ["ecdsa"] }
+async-trait = "0.1"
+either = "1"
