@@ -21,4 +21,9 @@ rspace_plus_plus = { path = "../../../f1r3node/rspace++" }
 crypto = { path = "../../../f1r3node/crypto" }
 shared = { path = "../../../f1r3node/shared" }
 
+# Direct deps we use in translation code. All come transitively via
+# f1r3node anyway; listing them explicitly keeps the imports working.
+prost = "0.14"
+tokio.workspace = true
+
 [dev-dependencies]

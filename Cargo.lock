@@ -479,9 +479,11 @@ dependencies = [
  "casper",
  "crypto",
  "models",
+ "prost",
  "rholang",
  "rspace_plus_plus",
  "shared",
+ "tokio",
 ]
 
 [[package]]
