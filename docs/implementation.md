@@ -10,15 +10,19 @@ The blocklace is a DAG-based data structure used in Byzantine fault-tolerant dis
 
 ## Project Structure
 
-As of Phase 3 the repo is a Cargo workspace with two crates:
+The repo is a Cargo workspace with three crates, layered from bottom to top:
 
-- **`crates/blocklace/`** — the standalone consensus library (SHA-256 + ED25519, no f1r3node deps).
-- **`crates/blocklace-f1r3node/`** — f1r3node integration adapter (Blake2b + Secp256k1, Casper trait, block translation, CasperSnapshot).
+- **`crates/blocklace/`** — the standalone consensus library. No f1r3node dependencies. SHA-256 + ED25519.
+- **`crates/blocklace-f1r3node/`** — f1r3node integration adapter: Casper trait mirror, block translation, snapshot construction, crypto bridge. Also no f1r3node dependencies — uses mirror types so the translation layer builds standalone.
+- **`crates/blocklace-f1r3rspace/`** — real RSpace-backed `RuntimeManager` adapter. Depends on f1r3node's `casper`, `models`, `rholang`, `rspace_plus_plus`, `crypto`, `shared` path dependencies. Requires `protoc` on PATH to build.
 
 ```
 Cargo.toml               -- Workspace manifest with [workspace.dependencies]
+.cargo/
+  config.toml            -- RUST_MIN_STACK=8MB + target-feature=+aes,+sse2
+                            (mirrors f1r3node; required by Rholang interpreter + gxhash)
 crates/
-  blocklace/             -- Core library (cargo add blocklace)
+  blocklace/             -- Core library
     Cargo.toml
     src/
       lib.rs             -- Crate root; re-exports public types
@@ -59,13 +63,21 @@ crates/
       shard_conf.rs      -- Phase 3.6: CasperShardConf + FinalizerConf mirror
       crypto_bridge.rs   -- Phase 3.4: Blake2b, Secp256k1, ED25519 + block hash
       casper_adapter.rs  -- Phase 3.1/3.2: CordialCasper + CordialMultiParentCasper
-      rspace_runtime.rs  -- (placeholder) real RuntimeManager impl via RSpace
+      rspace_runtime.rs  -- Deprecated placeholder (moved to blocklace-f1r3rspace)
     tests/
       test_block_translation.rs  -- 13 tests
       test_snapshot.rs           -- 16 tests
       test_shard_conf.rs         -- 8 tests
       test_crypto_bridge.rs      -- 22 tests
       test_casper_adapter.rs     -- 21 tests
+
+  blocklace-f1r3rspace/  -- Real RSpace-backed RuntimeManager adapter
+    Cargo.toml           -- Path deps: f1r3node casper, models, rholang,
+                             rspace_plus_plus, crypto, shared
+    src/
+      lib.rs             -- F1r3RspaceRuntime<'a> + translation helpers
+    tests/
+      test_translation.rs -- 13 tests (pure translation; no RSpace setup)
 ```
 
 ---
@@ -423,7 +435,67 @@ Method mapping:
 
 ---
 
-## Test Coverage (239 tests)
+## Real RSpace Runtime (crates/blocklace-f1r3rspace/)
+
+Phase 3 extension. The previous adapter crate (`blocklace-f1r3node`) stays free of f1r3node's real crates by using mirror types. When you want blocks to actually execute Rholang against a real RSpace tuplespace, you add `blocklace-f1r3rspace` to your build.
+
+**This is the only crate in the workspace that pulls in f1r3node's heavy dependencies.** The core `blocklace` and `blocklace-f1r3node` crates stay lightweight regardless.
+
+### Build requirements
+
+Because `blocklace-f1r3rspace` path-depends on f1r3node's `casper`, `models`, `rholang`, `rspace_plus_plus`, `crypto`, and `shared`, the workspace now inherits f1r3node's build requirements:
+
+- **`protoc` on PATH** — `models/build.rs` invokes `tonic_prost_build` to compile `.proto` files.
+- **`.cargo/config.toml` at the workspace root** mirrors f1r3node's:
+  - `RUST_MIN_STACK = "8388608"` — Rholang's deep async recursion overflows the default 2 MB stack in debug test builds.
+  - `rustflags = ["-C", "target-cpu=native"]` and `target-feature=+aes,+sse2` — gxhash (transitive f1r3node dep) requires AES+SSE2 CPU intrinsics.
+  - `[future-incompat-report] frequency = "never"` — silences the HOCON warning f1r3node has no workaround for.
+- **f1r3node checked out at `../../../f1r3node`** relative to `crates/blocklace-f1r3rspace/Cargo.toml` — the path deps expect it at that location.
+
+Clean build ≈ 5 minutes the first time (compiles f1r3node's full Rholang interpreter and RSpace). Incremental builds are fast.
+
+### Design: A-lite — caller supplies the RuntimeManager
+
+Constructing a real RSpace requires LMDB storage, Rholang interpreter setup, history repository initialization, and bond/genesis bootstrapping — f1r3node's node-binary-sized setup. This crate **does not duplicate that**. Instead it wraps a `&mut f1r3node::RuntimeManager` supplied by the caller (f1r3node's node binary, or a dedicated integration harness), and handles the translation from our `ExecutionRequest` / `ExecutionResult` to f1r3node's types.
+
+```rust
+use blocklace::execution::{ExecutionRequest, RuntimeManager as _};
+use blocklace_f1r3rspace::F1r3RspaceRuntime;
+
+let mut f1r3_rt: casper::rust::util::rholang::runtime_manager::RuntimeManager =
+    /* caller constructs */;
+let mut adapter = F1r3RspaceRuntime::new(&mut f1r3_rt);
+let result = adapter.execute_block(request)?;
+```
+
+### Translation surface
+
+Five public helper functions, each unit-tested:
+
+| Helper | Direction | Notes |
+|--------|-----------|-------|
+| `signed_deploy_to_f1r3node` | `SignedDeploy` → `Signed<DeployData>` | Constructs `Signed` directly via public fields. Hardcodes `sig_algorithm = Secp256k1` — see caveat below |
+| `system_deploy_to_f1r3node` | `SystemDeployRequest` → `SystemDeployEnum` | Slash + CloseBlock mapped to f1r3node's struct variants. `initial_rand` derived from pre-state hash |
+| `build_block_data` | `ExecutionRequest` → `BlockData` | Sender picked from first bond; zero-pubkey fallback if bonds is empty. `u64 → i64` overflows surface as `RuntimeError` |
+| `processed_deploy_from_f1r3node` | `ProcessedDeploy` (f1r3node) → `ProcessedDeploy` (core) | Cost + is_failed + term + signature preserved |
+| `system_deploy_from_f1r3node` | `ProcessedSystemDeploy` (f1r3node) → core equivalent | Succeeded variants mapped to `Slash` or `CloseBlock`; `Failed` surfaces as `CloseBlock { succeeded: false }` (documented info loss) |
+
+### execute_block flow
+
+1. Translate `ExecutionRequest` → f1r3node inputs (terms, system_deploys, block_data, invalid_blocks)
+2. Call `f1r3_rt.compute_state(...)` — async, blocked on the current Tokio handle
+3. Translate f1r3node outputs (`StateHash`, `Vec<ProcessedDeploy>`, `Vec<ProcessedSystemDeploy>`) back into `ExecutionResult`
+
+### Known caveats
+
+- **Signature algorithm mismatch.** f1r3node's `SignaturesAlgFactory` explicitly disables ed25519, registering only `secp256k1` and `secp256k1-eth`. The adapter hardcodes `Secp256k1` as the algorithm for every translated deploy. Ed25519-signed deploys (our core-crate default) will round-trip by shape but will not verify on f1r3node's side. Adapter callers need to feed secp256k1-signed deploys for verification to pass downstream.
+- **`new_bonds` is unchanged.** `execute_block` returns the request's bonds verbatim. Bonds in f1r3node are addressable by post-state hash and read via `RuntimeManager::compute_bonds(post_hash)`. Adding that call is follow-up work.
+- **Slash uses validator bytes as the `invalid_block_hash` placeholder.** Real slashes need the actual invalid-block hash; our `SystemDeployRequest::Slash` only carries a validator NodeId. Callers needing tighter semantics should construct a richer request type.
+- **No end-to-end tests** in this crate. Unit tests cover pure translation; exercising `execute_block` against a real RuntimeManager requires LMDB + Rholang bootstrap. Belongs in a Phase 4 integration harness.
+
+---
+
+## Test Coverage (252 tests)
 
 | Test File | Count | What it covers |
 |-----------|-------|----------------|
@@ -453,6 +525,12 @@ Method mapping:
 | `test_crypto_bridge.rs` | 22 | SHA-256 and Blake2b-256 known vectors, ED25519 and Secp256k1 roundtrip + tamper detection, compute_block_hash determinism and sender-differentiation |
 | `test_casper_adapter.rs` | 21 | Adapter construction, contains / dag_contains / buffer, deploy acceptance + rejection, estimator, get_snapshot, validate (accept / missing / invalid sender), handle_valid / handle_invalid, last_finalized, normalized_initial_fault |
 
+### `crates/blocklace-f1r3rspace/tests/` — 13 tests
+
+| Test File | Count | What it covers |
+|-----------|-------|----------------|
+| `test_translation.rs` | 13 | signed_deploy_to_f1r3node (signature preserved, non-UTF-8 term handling), system_deploy_to_f1r3node (Slash + Close), build_block_data (sender from bonds, overflow error), processed_deploy round-trip, system_deploy_from_f1r3node (Succeeded / Failed / Empty variants). No `execute_block` tests here — see caveats above |
+
 ---
 
 ## Roadmap Status
@@ -479,7 +557,7 @@ Based on the roadmap in [cordial-miners-vs-cbc-casper.md](cordial-miners-vs-cbc-
 | 2.3 RSpace runtime integration | Complete (trait + `MockRuntime`; real RSpace adapter deferred to a separate crate) |
 | 2.4 System deploy support | Covered by 2.3 mock (Slash / CloseBlock); real impl with RSpace adapter |
 
-### Phase 3: f1r3node Integration (branch: `phase3/f1r3node-integration`)
+### Phase 3: f1r3node Integration (branch: `phase3/f1r3node-integration`, merged)
 
 | Task | Status |
 |------|--------|
@@ -489,6 +567,14 @@ Based on the roadmap in [cordial-miners-vs-cbc-casper.md](cordial-miners-vs-cbc-
 | 3.4 Cryptographic alignment (Blake2b, Secp256k1) | Complete |
 | 3.5 Block format translation (`Block` ↔ `BlockMessage`) | Complete |
 | 3.6 `CasperShardConf` equivalent | Complete |
+
+### Phase 3 extension: RSpace runtime (branch: `phase3-extension/rspace-adapter`)
+
+| Task | Status |
+|------|--------|
+| Third workspace crate scaffolding + f1r3node path deps | Complete |
+| `F1r3RspaceRuntime` adapter translating `RuntimeManager` calls | Complete (compiles; unit tests on translation only) |
+| End-to-end Rholang execution test (needs LMDB + Rholang bootstrap) | Not started — Phase 4 integration harness |
 
 ## What Is Not Yet Implemented
 
@@ -501,8 +587,13 @@ Based on the roadmap in [cordial-miners-vs-cbc-casper.md](cordial-miners-vs-cbc-
 - Transitive sync: sync discovers missing block ids but doesn't recursively fetch their predecessors
 
 **f1r3node integration — deferred follow-ups**:
-- Real RSpace adapter crate implementing `RuntimeManager` against f1r3node's RSpace / Rholang interpreter (`blocklace-f1r3node::rspace_runtime` is currently a placeholder)
-- Enabling the `models` / `casper` / `block_storage` path dependencies in `blocklace-f1r3node/Cargo.toml`; at that point the local mirror types get swapped for `use models::...` / `use casper::...` imports
+- Enabling the `models` / `casper` / `block_storage` path dependencies in `blocklace-f1r3node/Cargo.toml`; at that point the local mirror types get swapped for `use models::...` / `use casper::...` imports. (Note: the `blocklace-f1r3rspace` crate already path-depends on these for the RSpace adapter; enabling them in `blocklace-f1r3node` too is consolidation work.)
 - Byte-for-byte block-hash parity via prost-encoded header/body (our `compute_block_hash` is logically equivalent but not byte-for-byte compatible with f1r3node's `hash_block`)
-- RSpace-coupled `MultiParentCasper` methods (`runtime_manager`, `block_store`, `get_history_exporter`) — live with the RSpace adapter crate
+- RSpace-coupled `MultiParentCasper` methods (`runtime_manager`, `block_store`, `get_history_exporter`) — live with `blocklace-f1r3rspace`
 - Time-based deploy expiration (`Option<expiration_timestamp>` on `Deploy`)
+
+**RSpace adapter follow-ups** (in `blocklace-f1r3rspace`):
+- `F1r3RspaceRuntime::execute_block` should call `RuntimeManager::compute_bonds(post_hash)` and return updated bonds rather than echoing the caller's input
+- Richer `SystemDeployRequest::Slash` carrying the invalid-block hash, not just the validator id
+- Secp256k1 test-key setup so signed deploys can be end-to-end verified through f1r3node's signature path
+- Integration test harness that brings up a real `RuntimeManager` (LMDB + Rholang bootstrap) and exercises `execute_block` end-to-end

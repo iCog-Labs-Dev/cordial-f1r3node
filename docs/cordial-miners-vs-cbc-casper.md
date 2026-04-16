@@ -66,8 +66,9 @@ Both protocols achieve BFT safety under < 1/3 Byzantine validators with mathemat
 | **CasperSnapshot construction** | **Complete** (Phase 3.3) | `build_snapshot(&Blocklace, &bonds, shard_conf, shard_id)` reuses every Phase 1/2 primitive to assemble the snapshot. Simplified `DagRepresentation` with plain `HashMap`/`HashSet`/`BTreeMap` |
 | **CasperShardConf mirror** | **Complete** (Phase 3.6) | Full 25-field `CasperShardConf` + nested `FinalizerConf`, defaults match f1r3node. `from_cordial(&DeployPoolConfig, name)` and `to_snapshot_conf()` |
 | **Crypto alignment** | **Complete** (Phase 3.4) | `Hasher`, `Signer`, `Verifier` traits. Blake2b-256 (pinned bytewise to f1r3node's `Blake2b::<U32>` output), Secp256k1 (k256 ECDSA), ED25519. `compute_block_hash` mixes sender into hash input |
-| **Casper trait adapter** | **Complete** (Phase 3.1 / 3.2) | `CordialCasper` + `CordialMultiParentCasper` local mirror traits; `CordialCasperAdapter` implements both. Method-for-method parity with f1r3node except RSpace-coupled methods (deferred) |
-| Test suite | Complete | **239 tests** — 159 in `blocklace` + 80 in `blocklace-f1r3node` |
+| **Casper trait adapter** | **Complete** (Phase 3.1 / 3.2) | `CordialCasper` + `CordialMultiParentCasper` local mirror traits; `CordialCasperAdapter` implements both. Method-for-method parity with f1r3node except RSpace-coupled methods (handled by Phase 3 extension) |
+| **Real RSpace runtime adapter** | **Complete** (Phase 3 extension) | Third workspace crate `blocklace-f1r3rspace` delegates `RuntimeManager::execute_block` to f1r3node's real `RuntimeManager::compute_state`. Path-depends on f1r3node's `casper`, `models`, `rholang`, `rspace_plus_plus`, `crypto`, `shared`. Requires `protoc` and workspace `.cargo/config.toml` for gxhash + Rholang stack size |
+| Test suite | Complete | **252 tests** — 159 in `blocklace` + 80 in `blocklace-f1r3node` + 13 in `blocklace-f1r3rspace` |
 
 ### 2.2 What Is Missing
 
@@ -78,12 +79,15 @@ Both protocols achieve BFT safety under < 1/3 Byzantine validators with mathemat
 | ~~Block validation pipeline~~ | ~~High~~ | ~~Replacing `BlockProcessor` validation~~ **DONE** |
 | ~~Typed payload (deploys, state transitions)~~ | ~~Critical~~ | ~~Smart contract execution~~ **DONE (types; execution pending)** |
 | ~~Deploy pool / selection~~ | ~~High~~ | ~~Block creation with transactions~~ **DONE** |
-| ~~RSpace runtime integration~~ | ~~High~~ | ~~Execute deploys, produce post-state hash~~ **DONE (trait + mock; real RSpace adapter in a separate crate)** |
+| ~~RSpace runtime integration~~ | ~~High~~ | ~~Execute deploys, produce post-state hash~~ **DONE (trait + mock in Phase 2.3; real RSpace adapter in `blocklace-f1r3rspace`)** |
 | ~~`Casper` trait implementation~~ | ~~Critical~~ | ~~Plugging into f1r3node~~ **DONE** (`CordialCasperAdapter` — local mirror traits; swap to real `casper::Casper` when path dep enabled) |
 | ~~`CasperSnapshot` equivalent~~ | ~~High~~ | ~~State management across the system~~ **DONE** (`build_snapshot`) |
 | ~~Cryptographic alignment (Blake2b, Secp256k1)~~ | ~~Medium~~ | ~~Wire compatibility with f1r3node~~ **DONE** (`Hasher`/`Signer`/`Verifier` + Blake2b-256 + k256 ECDSA) |
-| Real RSpace adapter crate | High | Execute Rholang against actual tuplespace (implements our `RuntimeManager` via f1r3node's `RuntimeManager`) |
-| Enable f1r3node path deps (`models`, `casper`, `block_storage`) | High | Swap local mirror types for real f1r3node types in `blocklace-f1r3node` |
+| ~~Real RSpace adapter crate~~ | ~~High~~ | ~~Execute Rholang against actual tuplespace~~ **DONE** (`blocklace-f1r3rspace::F1r3RspaceRuntime` delegating to f1r3node's `RuntimeManager::compute_state`) |
+| End-to-end RSpace test harness | High | Integration tests that bring up a real `RuntimeManager` (LMDB + Rholang bootstrap) and exercise `execute_block`. Only unit tests on translation helpers exist today |
+| `compute_bonds` follow-up | Medium | `F1r3RspaceRuntime::execute_block` echoes the caller's input bonds; should call `RuntimeManager::compute_bonds(post_hash)` instead |
+| Secp256k1 deploy signing in tests | Medium | f1r3node's `SignaturesAlgFactory` disables ed25519 for deploys; exercising the full verification path requires secp256k1-signed test deploys |
+| Enable f1r3node path deps in `blocklace-f1r3node` | Medium | Already enabled in `blocklace-f1r3rspace`; consolidating would let `blocklace-f1r3node` swap its mirror types for real ones too. Currently kept separate to keep the mirror-types-only crate lightweight |
 | Byte-for-byte block-hash parity with f1r3node's `hash_block` | Medium | Requires prost-encoded header/body bytes (needs `models` path dep) |
 | Persistent storage | High | Running beyond in-memory prototype |
 | Indexed DAG (child map, height map) | Medium | Performance at scale |
@@ -493,7 +497,23 @@ Branch: `phase3/f1r3node-integration`. Repo reorganized into a Cargo workspace w
 | 3.5 Block format translation (`Block` <-> `BlockMessage`) | 3.1 | **COMPLETE** (`block_to_message` / `message_to_block`, 538 lines, 13 tests) |
 | 3.6 Configuration (`CasperShardConf` equivalent) | 3.1 | **COMPLETE** (`CasperShardConf` + `FinalizerConf`, 239 lines, 8 tests) |
 
-**Total Phase 3**: ~1,850 lines of adapter code, 80 tests. Not yet landed: the real RSpace-backed `RuntimeManager` implementation (belongs in a separate crate that depends on f1r3node's RSpace) and enabling the f1r3node `models` / `casper` / `block_storage` path dependencies to swap local mirror types for real ones.
+**Total Phase 3**: ~1,850 lines of adapter code, 80 tests.
+
+### Phase 3 extension: RSpace runtime adapter (branch: `phase3-extension/rspace-adapter`)
+
+A third workspace crate, `blocklace-f1r3rspace`, lands the real RSpace-backed `RuntimeManager` deferred during Phase 3.
+
+| Task | Status |
+|------|--------|
+| Workspace scaffold + f1r3node path deps + `.cargo/config.toml` | **COMPLETE** |
+| `F1r3RspaceRuntime<'a>` adapter (delegates `execute_block` to `RuntimeManager::compute_state`) | **COMPLETE** (~325 lines) |
+| Translation helpers + 13 unit tests | **COMPLETE** |
+| End-to-end Rholang execution test (LMDB + Rholang bootstrap) | **NOT STARTED** — Phase 4 integration harness |
+| `compute_bonds` follow-up call so `new_bonds` is accurate | NOT STARTED |
+| Richer `SystemDeployRequest::Slash` carrying invalid-block hash | NOT STARTED |
+| Secp256k1-signed deploy test fixtures | NOT STARTED |
+
+**Phase 3 + extension totals**: ~2,175 lines of adapter code across two crates, 93 tests, full workspace at 252 tests.
 
 ### Phase 4: Production Hardening
 
@@ -570,7 +590,7 @@ blocklace/                        -- [x] Workspace root
         shard_conf.rs             -- [x] Phase 3.6: CasperShardConf + FinalizerConf mirror
         crypto_bridge.rs          -- [x] Phase 3.4: Blake2b, Secp256k1, ED25519 + block hash
         casper_adapter.rs         -- [x] Phase 3.1/3.2: CordialCasper + CordialMultiParentCasper + CordialCasperAdapter
-        rspace_runtime.rs         -- [ ] Placeholder for real RuntimeManager via f1r3node RSpace
+        rspace_runtime.rs         -- [~] Stub left in place; real impl now lives in blocklace-f1r3rspace
       tests/
         test_block_translation.rs -- [x] 13 tests
         test_snapshot.rs          -- [x] 16 tests
@@ -578,15 +598,29 @@ blocklace/                        -- [x] Workspace root
         test_crypto_bridge.rs     -- [x] 22 tests
         test_casper_adapter.rs    -- [x] 21 tests (adapter subtotal: 80)
 
-    (future) blocklace-f1r3rspace/ -- [ ] Separate crate depending on f1r3node's RSpace.
-                                      Implements RuntimeManager against real Rholang execution.
+    blocklace-f1r3rspace/         -- [x] Phase 3 extension: real RSpace adapter
+      Cargo.toml                  -- depends on blocklace + blocklace-f1r3node + 6 f1r3node crates
+      src/
+        lib.rs                    -- [x] F1r3RspaceRuntime<'a> + 5 translation helpers
+      tests/
+        test_translation.rs       -- [x] 13 tests (rspace subtotal: 13)
+
+  .cargo/
+    config.toml                   -- [x] RUST_MIN_STACK=8MB + target-feature=+aes,+sse2
 
   docs/
     implementation.md             -- [x] Implementation documentation
     cordial-miners-vs-cbc-casper.md -- [x] This document
 ```
 
-Workspace totals: **239 tests** across 2 crates.
+Workspace totals: **252 tests** across 3 crates.
+
+**Build requirements** introduced by `blocklace-f1r3rspace`:
+
+- `protoc` on PATH (f1r3node's `models` crate compiles `.proto` files via `tonic_prost_build`).
+- `.cargo/config.toml` mirrors f1r3node's: 8 MB minimum stack (Rholang's deep async recursion overflows the default 2 MB in debug builds), `target-feature=+aes,+sse2` for `gxhash`, `[future-incompat-report] frequency = "never"` to silence f1r3node's HOCON warning.
+- f1r3node checked out at `../../../f1r3node` relative to the rspace crate (path deps expect that location).
+- Clean build of the rspace crate ≈ 5 minutes the first time. Incremental builds are fast.
 
 ---
 
