@@ -11,12 +11,24 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout blocklace
+      uses: actions/checkout@v4
+      with:
+        path: blocklace
+
+    - name: Checkout f1r3node
+      uses: actions/checkout@v4
+      with:
+        repository: F1R3FLY-io/f1r3node
+        path: f1r3node
+
     - name: Build
+      working-directory: blocklace
       run: cargo build --verbose
+
     - name: Run tests
+      working-directory: blocklace
       run: cargo test --verbose
