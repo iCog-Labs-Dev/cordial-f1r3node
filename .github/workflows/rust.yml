@@ -25,6 +25,9 @@ jobs:
         repository: F1R3FLY-io/f1r3node
         path: f1r3node
 
+    - name: Install nightly toolchain
+      uses: dtolnay/rust-toolchain@nightly
+
     - name: Build
       working-directory: blocklace
       run: cargo build --verbose
