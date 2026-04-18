@@ -3,7 +3,11 @@ resolver = "2"
 members = [
     "crates/blocklace",
     "crates/blocklace-f1r3node",
+    "crates/blocklace-f1r3rspace",
 ]
+# Exclude f1r3node's own crates — we path-depend on them from
+# blocklace-f1r3rspace/Cargo.toml, but they're f1r3node's workspace,
+# not ours. Cargo treats path deps as "borrowed" crates, not members.
 
 [workspace.package]
 version = "0.1.0"

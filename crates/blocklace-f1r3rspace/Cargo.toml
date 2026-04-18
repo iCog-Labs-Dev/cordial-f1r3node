@@ -1,0 +1,29 @@
+[package]
+name = "blocklace-f1r3rspace"
+description = "Real RSpace-backed RuntimeManager adapter: delegates blocklace::execution::RuntimeManager to f1r3node's RuntimeManager for actual Rholang execution"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+blocklace = { path = "../blocklace" }
+blocklace-f1r3node = { path = "../blocklace-f1r3node" }
+
+# ───────────────────────────────────────────────────────────────────────
+# f1r3node path dependencies — the whole point of this crate.
+# These assume f1r3node is checked out at /home/john/Desktop/rust/f1r3node
+# (three directories up from this Cargo.toml). If not, cargo build will
+# fail with a "file not found" on these paths.
+# ───────────────────────────────────────────────────────────────────────
+models = { path = "../../../f1r3node/models" }
+casper = { path = "../../../f1r3node/casper" }
+rholang = { path = "../../../f1r3node/rholang" }
+rspace_plus_plus = { path = "../../../f1r3node/rspace++" }
+crypto = { path = "../../../f1r3node/crypto" }
+shared = { path = "../../../f1r3node/shared" }
+
+# Direct deps we use in translation code. All come transitively via
+# f1r3node anyway; listing them explicitly keeps the imports working.
+prost = "0.14"
+tokio.workspace = true
+
+[dev-dependencies]
