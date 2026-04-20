@@ -7,20 +7,20 @@
 
 use std::collections::{HashMap, HashSet};
 
-use blocklace::crypto::hash_content;
-use blocklace::execution::{
+use cordial_miners_core::crypto::hash_content;
+use cordial_miners_core::execution::{
     BlockState, Bond as CmBond, CordialBlockPayload, DeployPoolConfig,
 };
-use blocklace::types::{BlockContent, BlockIdentity, NodeId};
-use blocklace::Block;
+use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::Block;
 use either::Either;
 
-use blocklace_f1r3node::block_translation::{block_to_message, DeployData, SignedDeployData};
-use blocklace_f1r3node::casper_adapter::{
+use cordial_f1r3node_adapter::block_translation::{block_to_message, DeployData, SignedDeployData};
+use cordial_f1r3node_adapter::casper_adapter::{
     CordialCasper, CordialCasperAdapter, CordialMultiParentCasper, BlockError, DeployError,
     InvalidBlock, ValidBlock,
 };
-use blocklace_f1r3node::shard_conf::CasperShardConf;
+use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -112,7 +112,7 @@ async fn adapter_constructs_with_defaults() {
 
 #[tokio::test]
 async fn approved_block_is_returned() {
-    let bl = blocklace::blocklace::Blocklace::new();
+    let bl = cordial_miners_core::blocklace::Blocklace::new();
     let _ = bl; // just for namespacing
     let genesis = make_block(node(1), simple_payload(0), HashSet::new(), 1);
     let genesis_msg = block_to_message(&genesis, "root").unwrap();
@@ -285,7 +285,7 @@ async fn validate_accepts_well_formed_genesis() {
     let msg = block_to_message(&g, "root").unwrap();
 
     // Skip crypto checks: our test signature is just [1;64], not a real ed25519 sig.
-    let adapter = adapter.with_validation_config(blocklace::consensus::ValidationConfig {
+    let adapter = adapter.with_validation_config(cordial_miners_core::consensus::ValidationConfig {
         check_content_hash: false,
         check_signature: false,
         check_sender: true,
@@ -307,7 +307,7 @@ async fn validate_missing_predecessor_returns_missing_blocks() {
         DeployPoolConfig::default(),
         None,
     )
-    .with_validation_config(blocklace::consensus::ValidationConfig {
+    .with_validation_config(cordial_miners_core::consensus::ValidationConfig {
         check_content_hash: false,
         check_signature: false,
         check_sender: true,
@@ -336,7 +336,7 @@ async fn validate_unbonded_sender_returns_invalid_sender() {
         DeployPoolConfig::default(),
         None,
     )
-    .with_validation_config(blocklace::consensus::ValidationConfig {
+    .with_validation_config(cordial_miners_core::consensus::ValidationConfig {
         check_content_hash: false,
         check_signature: false,
         check_sender: true,

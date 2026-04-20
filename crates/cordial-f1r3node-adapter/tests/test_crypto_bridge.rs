@@ -1,10 +1,10 @@
 //! Tests for `crypto_bridge` — Blake2b-256, Secp256k1, ED25519, and the
 //! f1r3node-style block hash that mixes the sender into the input.
 
-use blocklace_f1r3node::block_translation::{
+use cordial_f1r3node_adapter::block_translation::{
     Body, F1r3flyState, Header, BlockMessage, ProcessedSystemDeploy,
 };
-use blocklace_f1r3node::crypto_bridge::{
+use cordial_f1r3node_adapter::crypto_bridge::{
     compute_block_hash, Blake2b256Hasher, CryptoError, Ed25519, Hasher, Secp256k1, Sha256Hasher,
     SigAlgorithm, Signer, Verifier,
 };
@@ -268,7 +268,7 @@ fn different_shard_ids_produce_different_block_hashes() {
 
 #[test]
 fn block_hash_is_independent_of_bond_ordering() {
-    use blocklace_f1r3node::block_translation::Bond as MirrorBond;
+    use cordial_f1r3node_adapter::block_translation::Bond as MirrorBond;
     let mut a = empty_msg(vec![1]);
     let mut b = empty_msg(vec![1]);
     a.body.state.bonds = vec![
@@ -284,8 +284,8 @@ fn block_hash_is_independent_of_bond_ordering() {
 
 #[test]
 fn block_hash_changes_when_bond_stake_changes() {
-    use blocklace_f1r3node::block_translation::Bond as MirrorBond;
-    let mut a = empty_msg(vec![1]);
+    use cordial_f1r3node_adapter::block_translation::Bond as MirrorBond;
+    let mut a: BlockMessage = empty_msg(vec![1]);
     let mut b = empty_msg(vec![1]);
     a.body.state.bonds = vec![MirrorBond { validator: vec![10], stake: 100 }];
     b.body.state.bonds = vec![MirrorBond { validator: vec![10], stake: 101 }];

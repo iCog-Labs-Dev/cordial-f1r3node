@@ -2,15 +2,15 @@
 
 use std::collections::HashSet;
 
-use blocklace::crypto::hash_content;
-use blocklace::execution::{
+use cordial_miners_core::crypto::hash_content;
+use cordial_miners_core::execution::{
     Bond as CmBond, BlockState, CordialBlockPayload, Deploy as CmDeploy, ProcessedDeploy as CmProcessed,
     ProcessedSystemDeploy as CmSystem, SignedDeploy as CmSignedDeploy,
 };
-use blocklace::types::{BlockContent, BlockIdentity, NodeId};
-use blocklace::Block;
+use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::Block;
 
-use blocklace_f1r3node::block_translation::{
+use cordial_f1r3node_adapter::block_translation::{
     block_to_message, message_to_block, BlockMessage, Body, F1r3flyState, Header,
     ProcessedSystemDeploy, TranslationError,
 };
@@ -211,12 +211,12 @@ fn message_to_block_takes_union_of_parents_and_justifications() {
             extra_bytes: vec![],
         },
         justifications: vec![
-            blocklace_f1r3node::block_translation::Justification {
+            cordial_f1r3node_adapter::block_translation::Justification {
                 validator: vec![3],
                 latest_block_hash: [0xbb; 32].to_vec(),
             },
             // Justification for the parent hash too — should dedupe
-            blocklace_f1r3node::block_translation::Justification {
+            cordial_f1r3node_adapter::block_translation::Justification {
                 validator: vec![2],
                 latest_block_hash: [0xaa; 32].to_vec(),
             },
@@ -398,7 +398,7 @@ fn negative_i64_fails_to_u64_translation() {
 
     // Also test bond stake overflow
     msg.body.state.block_number = 0;
-    msg.body.state.bonds = vec![blocklace_f1r3node::block_translation::Bond {
+    msg.body.state.bonds = vec![cordial_f1r3node_adapter::block_translation::Bond {
         validator: vec![1],
         stake: -5,
     }];
