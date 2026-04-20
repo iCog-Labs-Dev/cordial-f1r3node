@@ -8,13 +8,13 @@
 //! bootstrapping, which is f1r3node's node-binary-sized setup. Those live
 //! outside this crate (Phase 4 integration harness).
 
-use blocklace::execution::{
+use cordial_miners_core::execution::{
     Bond, Deploy, ExecutionRequest, ProcessedDeploy, ProcessedSystemDeploy, SignedDeploy,
     SystemDeployRequest,
 };
-use blocklace::types::NodeId;
+use cordial_miners_core::types::NodeId;
 
-use blocklace_f1r3rspace::{
+use cordial_f1r3space_adapter::{
     build_block_data, processed_deploy_from_f1r3node, signed_deploy_to_f1r3node,
     system_deploy_from_f1r3node, system_deploy_to_f1r3node,
 };
