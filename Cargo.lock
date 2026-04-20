@@ -442,22 +442,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blocklace-f1r3rspace"
-version = "0.1.0"
-dependencies = [
- "casper",
- "cordial-f1r3node-adapter",
- "cordial-miners-core",
- "crypto",
- "models",
- "prost",
- "rholang",
- "rspace_plus_plus",
- "shared",
- "tokio",
-]
-
-[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -692,6 +676,22 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "sha2",
+ "tokio",
+]
+
+[[package]]
+name = "cordial-f1r3space-adapter"
+version = "0.1.0"
+dependencies = [
+ "casper",
+ "cordial-f1r3node-adapter",
+ "cordial-miners-core",
+ "crypto",
+ "models",
+ "prost",
+ "rholang",
+ "rspace_plus_plus",
+ "shared",
  "tokio",
 ]
 
