@@ -36,7 +36,7 @@
 
 use std::time::Duration;
 
-use blocklace::execution::DeployPoolConfig;
+use cordial_miners_core::execution::DeployPoolConfig;
 
 /// Finalizer timing / budget configuration. Mirror of f1r3node's
 /// `casper_conf::FinalizerConf`.

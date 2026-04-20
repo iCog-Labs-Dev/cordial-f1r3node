@@ -58,12 +58,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use blocklace::blocklace::Blocklace;
-use blocklace::consensus::{
+use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::consensus::{
     collect_validator_tips, find_last_finalized, fork_choice,
 };
-use blocklace::execution::{compute_deploys_in_scope, CordialBlockPayload};
-use blocklace::types::{BlockIdentity, NodeId};
+use cordial_miners_core::execution::{compute_deploys_in_scope, CordialBlockPayload};
+use cordial_miners_core::types::{BlockIdentity, NodeId};
 
 use crate::block_translation::{block_to_message, BlockMessage, Justification, TranslationError};
 

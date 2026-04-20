@@ -34,14 +34,14 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use blocklace::block::Block;
-use blocklace::crypto::hash_content;
-use blocklace::execution::{
+use cordial_miners_core::block::Block;
+use cordial_miners_core::crypto::hash_content;
+use cordial_miners_core::execution::{
     Bond as CmBond, CordialBlockPayload, Deploy as CmDeploy, ProcessedDeploy as CmProcessedDeploy,
     ProcessedSystemDeploy as CmSystemDeploy, RejectedDeploy as CmRejectedDeploy,
     RejectReason as CmRejectReason, SignedDeploy as CmSignedDeploy,
 };
-use blocklace::types::{BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Mirror of f1r3node wire types
@@ -335,7 +335,7 @@ pub fn message_to_block(msg: &BlockMessage) -> Result<Block, TranslationError> {
 
     // Rebuild the payload from Body
     let payload = CordialBlockPayload {
-        state: blocklace::execution::BlockState {
+        state: cordial_miners_core::execution::BlockState {
             pre_state_hash: msg.body.state.pre_state_hash.clone(),
             post_state_hash: msg.body.state.post_state_hash.clone(),
             bonds: msg

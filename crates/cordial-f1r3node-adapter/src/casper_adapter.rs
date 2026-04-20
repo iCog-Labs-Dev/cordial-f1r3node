@@ -63,16 +63,16 @@ use std::collections::{HashMap, HashSet};
 use async_trait::async_trait;
 use either::Either;
 
-use blocklace::block::Block;
-use blocklace::blocklace::Blocklace;
-use blocklace::consensus::{
+use cordial_miners_core::block::Block;
+use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::consensus::{
     fork_choice, find_last_finalized, validate_block as core_validate_block,
     InvalidBlock as CoreInvalidBlock, ValidationConfig, ValidationResult,
 };
-use blocklace::execution::{
+use cordial_miners_core::execution::{
     DeployPool, DeployPoolConfig, PoolError, SignedDeploy as CmSignedDeploy,
 };
-use blocklace::types::{BlockIdentity, NodeId};
+use cordial_miners_core::types::{BlockIdentity, NodeId};
 
 use crate::block_translation::{
     block_to_message, message_to_block, BlockMessage, SignedDeployData, TranslationError,
@@ -391,7 +391,7 @@ impl CordialCasper for CordialCasperAdapter {
     ) -> Result<Either<DeployError, DeployId>, CasperError> {
         // Translate the wire deploy into our core type
         let cm_signed = CmSignedDeploy {
-            deploy: blocklace::execution::Deploy {
+            deploy: cordial_miners_core::execution::Deploy {
                 term: deploy.data.term.as_bytes().to_vec(),
                 timestamp: u64::try_from(deploy.data.time_stamp).unwrap_or(0),
                 phlo_price: u64::try_from(deploy.data.phlo_price).unwrap_or(0),
