@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
-use blocklace::execution::DeployPoolConfig;
+use cordial_miners_core::execution::DeployPoolConfig;
 
-use blocklace_f1r3node::shard_conf::{CasperShardConf, FinalizerConf};
+use cordial_f1r3node_adapter::shard_conf::{CasperShardConf, FinalizerConf};
 
 // ── FinalizerConf defaults ──────────────────────────────────────────────
 

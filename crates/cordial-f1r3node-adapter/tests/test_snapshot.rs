@@ -2,15 +2,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use blocklace::blocklace::Blocklace;
-use blocklace::crypto::hash_content;
-use blocklace::execution::{
+use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::crypto::hash_content;
+use cordial_miners_core::execution::{
     BlockState, Bond as CmBond, CordialBlockPayload, Deploy, ProcessedDeploy, SignedDeploy,
 };
-use blocklace::types::{BlockContent, BlockIdentity, NodeId};
-use blocklace::Block;
+use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::Block;
 
-use blocklace_f1r3node::snapshot::{
+use cordial_f1r3node_adapter::snapshot::{
     build_snapshot, CasperShardConf, SnapshotError,
 };
 
