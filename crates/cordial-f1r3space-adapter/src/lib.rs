@@ -55,13 +55,13 @@
 
 use std::collections::HashMap;
 
-use blocklace::execution::{
+use cordial_miners_core::execution::{
     Bond, ExecutionRequest, ExecutionResult, ProcessedDeploy as CmProcessedDeploy,
     ProcessedSystemDeploy as CmProcessedSystemDeploy, RejectReason, RejectedDeploy,
     RuntimeError, RuntimeManager as CoreRuntimeManager, SignedDeploy as CmSignedDeploy,
     SystemDeployRequest,
 };
-use blocklace::types::NodeId;
+use cordial_miners_core::types::NodeId;
 
 use casper::rust::util::rholang::runtime_manager::RuntimeManager as F1r3RuntimeManager;
 use casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum;
@@ -247,7 +247,7 @@ pub fn processed_deploy_from_f1r3node(
     pd: &ProcessedDeploy,
 ) -> Result<CmProcessedDeploy, RuntimeError> {
     let signed = CmSignedDeploy {
-        deploy: blocklace::execution::Deploy {
+        deploy: cordial_miners_core::execution::Deploy {
             term: pd.deploy.data.term.as_bytes().to_vec(),
             timestamp: u64::try_from(pd.deploy.data.time_stamp).unwrap_or(0),
             phlo_price: u64::try_from(pd.deploy.data.phlo_price).unwrap_or(0),
@@ -303,7 +303,7 @@ pub fn term_string_to_bytes(term: &str) -> Vec<u8> {
 fn rejected_deploy_placeholder(sig: Vec<u8>) -> RejectedDeploy {
     RejectedDeploy {
         deploy: CmSignedDeploy {
-            deploy: blocklace::execution::Deploy {
+            deploy: cordial_miners_core::execution::Deploy {
                 term: vec![],
                 timestamp: 0,
                 phlo_price: 0,
