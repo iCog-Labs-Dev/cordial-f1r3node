@@ -1,5 +1,5 @@
 [package]
-name = "blocklace-f1r3node"
+name = "cordial-f1r3node-adapter"
 description = "f1r3node integration adapter for the blocklace crate: Casper trait, block translation, and real RSpace runtime binding"
 version.workspace = true
 edition.workspace = true

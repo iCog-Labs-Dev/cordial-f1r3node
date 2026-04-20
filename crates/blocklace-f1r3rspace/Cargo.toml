@@ -6,7 +6,7 @@ edition.workspace = true
 
 [dependencies]
 'cordial-miners-core' = { path = "../cordial-miners-core" }
-blocklace-f1r3node = { path = "../blocklace-f1r3node" }
+'cordial-f1r3node-adapter' = { path = "../cordial-f1r3node-adapter" }
 
 # ───────────────────────────────────────────────────────────────────────
 # f1r3node path dependencies — the whole point of this crate.

@@ -442,28 +442,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "blocklace-f1r3node"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bincode",
- "blake2",
- "cordial-miners-core",
- "ed25519-dalek",
- "either",
- "k256",
- "rand 0.8.5",
- "serde",
- "sha2",
- "tokio",
-]
-
-[[package]]
 name = "blocklace-f1r3rspace"
 version = "0.1.0"
 dependencies = [
- "blocklace-f1r3node",
  "casper",
+ "cordial-f1r3node-adapter",
  "cordial-miners-core",
  "crypto",
  "models",
@@ -694,6 +677,23 @@ name = "constant_time_eq"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
+
+[[package]]
+name = "cordial-f1r3node-adapter"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bincode",
+ "blake2",
+ "cordial-miners-core",
+ "ed25519-dalek",
+ "either",
+ "k256",
+ "rand 0.8.5",
+ "serde",
+ "sha2",
+ "tokio",
+]
 
 [[package]]
 name = "cordial-miners-core"

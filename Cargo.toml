@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "crates/cordial-miners-core",
-    "crates/blocklace-f1r3node",
+    "crates/cordial-f1r3node-adapter",
     "crates/blocklace-f1r3rspace",
 ]
 # Exclude f1r3node's own crates — we path-depend on them from
