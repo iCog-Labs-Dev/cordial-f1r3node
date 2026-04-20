@@ -1,5 +1,5 @@
 [package]
-name = "blocklace-f1r3rspace"
+name = "cordial-f1r3space-adapter"
 description = "Real RSpace-backed RuntimeManager adapter: delegates blocklace::execution::RuntimeManager to f1r3node's RuntimeManager for actual Rholang execution"
 version.workspace = true
 edition.workspace = true

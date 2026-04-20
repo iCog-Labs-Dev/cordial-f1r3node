@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "crates/cordial-miners-core",
     "crates/cordial-f1r3node-adapter",
-    "crates/blocklace-f1r3rspace",
+    "crates/cordial-f1r3space-adapter",
 ]
 # Exclude f1r3node's own crates — we path-depend on them from
 # blocklace-f1r3rspace/Cargo.toml, but they're f1r3node's workspace,
