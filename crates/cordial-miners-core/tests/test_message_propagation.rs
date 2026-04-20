@@ -1,5 +1,5 @@
-use blocklace::network::Message;
-use blocklace::{Block, BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::network::Message;
+use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
 
 fn make_genesis() -> Block {

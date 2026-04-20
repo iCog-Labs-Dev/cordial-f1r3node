@@ -1,4 +1,4 @@
-use blocklace::network::{Message, Peer};
+use cordial_miners_core::network::{Message, Peer};
 
 #[tokio::test]
 async fn peer_binds_and_reports_listen_addr() {

@@ -5,12 +5,12 @@
 //! and convergence.
 
 use std::collections::HashMap;
-use blocklace::blocklace::Blocklace;
-use blocklace::consensus::{
+use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::consensus::{
     fork_choice, check_finality, find_last_finalized, collect_validator_tips,
     is_cordial, validated_insert, ValidationConfig,
 };
-use blocklace::{Block, BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
 
 // ── Helpers ──

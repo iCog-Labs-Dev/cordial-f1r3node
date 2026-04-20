@@ -1,7 +1,7 @@
 use std::collections::HashMap;
-use blocklace::blocklace::Blocklace;
-use blocklace::consensus::{check_finality, find_last_finalized, can_be_finalized, FinalityStatus};
-use blocklace::{Block, BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::consensus::{check_finality, find_last_finalized, can_be_finalized, FinalityStatus};
+use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
 
 // ── Helpers ──

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
-use blocklace::blocklace::Blocklace;
-use blocklace::consensus::{fork_choice, collect_validator_tips, is_cordial};
-use blocklace::{Block, BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::consensus::{fork_choice, collect_validator_tips, is_cordial};
+use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
 
 // ── Helpers ──

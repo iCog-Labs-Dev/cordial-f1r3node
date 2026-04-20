@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-blocklace = { path = "../blocklace" }
+cordial-miners-core = { path = "../cordial-miners-core" }
 
 # Shared deps we use internally for translation, hashing, etc.
 sha2.workspace = true

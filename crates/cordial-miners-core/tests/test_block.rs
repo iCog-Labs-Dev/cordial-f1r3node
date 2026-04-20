@@ -1,4 +1,4 @@
-use blocklace::{Block, BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 
 
 // Tests for Block struct and related functions.

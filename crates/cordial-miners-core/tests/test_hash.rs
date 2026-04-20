@@ -1,5 +1,5 @@
-use blocklace::crypto::hash_content;
-use blocklace::{BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::crypto::hash_content;
+use cordial_miners_core::{BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
 
 #[test]

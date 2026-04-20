@@ -1,8 +1,8 @@
-use blocklace::execution::{
+use cordial_miners_core::execution::{
     Bond, Deploy, ExecutionRequest, ExecutionResult, MockRuntime, ProcessedSystemDeploy,
     RejectReason, RuntimeError, RuntimeManager, SignedDeploy, SystemDeployRequest,
 };
-use blocklace::types::NodeId;
+use cordial_miners_core::types::NodeId;
 
 // ── Helpers ──
 

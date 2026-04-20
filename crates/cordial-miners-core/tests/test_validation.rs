@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use blocklace::blocklace::Blocklace;
-use blocklace::consensus::{
+use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::consensus::{
     validate_block, validated_insert, InvalidBlock, ValidationConfig, ValidationResult,
 };
-use blocklace::crypto::{hash_content, sign};
-use blocklace::{Block, BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::crypto::{hash_content, sign};
+use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
 use std::collections::HashSet;

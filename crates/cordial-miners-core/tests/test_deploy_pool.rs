@@ -1,12 +1,12 @@
 use std::collections::HashSet;
-use blocklace::blocklace::Blocklace;
-use blocklace::crypto::hash_content;
-use blocklace::execution::{
+use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::crypto::hash_content;
+use cordial_miners_core::execution::{
     DeployPool, DeployPoolConfig, PoolError, compute_deploys_in_scope,
     CordialBlockPayload, BlockState, Bond, Deploy, SignedDeploy,
     ProcessedDeploy,
 };
-use blocklace::{Block, BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 
 // ── Helpers ──
 

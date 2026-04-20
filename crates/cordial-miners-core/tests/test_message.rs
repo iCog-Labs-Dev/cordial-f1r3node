@@ -1,4 +1,4 @@
-use blocklace::network::Message;
+use cordial_miners_core::network::Message;
 
 #[test]
 fn hello_serializes_and_deserializes() {

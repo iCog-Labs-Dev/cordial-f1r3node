@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-blocklace = { path = "../blocklace" }
+'cordial-miners-core' = { path = "../cordial-miners-core" }
 blocklace-f1r3node = { path = "../blocklace-f1r3node" }
 
 # ───────────────────────────────────────────────────────────────────────

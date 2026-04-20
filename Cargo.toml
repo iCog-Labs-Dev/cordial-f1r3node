@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/blocklace",
+    "crates/cordial-miners-core",
     "crates/blocklace-f1r3node",
     "crates/blocklace-f1r3rspace",
 ]

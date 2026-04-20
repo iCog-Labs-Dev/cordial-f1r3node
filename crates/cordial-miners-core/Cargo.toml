@@ -1,5 +1,5 @@
 [package]
-name = "blocklace"
+name = "cordial-miners-core"
 description = "Cordial Miners consensus on a blocklace DAG"
 version.workspace = true
 edition.workspace = true

@@ -1,15 +1,15 @@
-use blocklace::{Block, BlockContent, BlockIdentity, NodeId};
-use blocklace::blocklace::Blocklace;
+use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::blocklace::Blocklace;
 // Helpers test
 
-fn insert(b1: &mut Blocklace, block: blocklace::Block) {
+fn insert(b1: &mut Blocklace, block: cordial_miners_core::Block) {
     b1.insert(block).expect("insert failed");
 }
 
 // closure axiom test: inserting a block with unknown predecessor should fail
 #[test]
 fn genesis_can_be_inserted_into_empty_blocklace() {
-    let block = blocklace::Block {
+    let block = cordial_miners_core::Block {
         identity: BlockIdentity {
             content_hash: [0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
                 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
@@ -29,7 +29,7 @@ fn genesis_can_be_inserted_into_empty_blocklace() {
 fn block_with_known_predecessor_can_be_inserted() {
     let mut b1 = Blocklace::new();
 
-    let g = blocklace::Block {
+    let g = cordial_miners_core::Block {
         identity: BlockIdentity {
             content_hash: [0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
                 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
@@ -42,7 +42,7 @@ fn block_with_known_predecessor_can_be_inserted() {
     };
     insert(&mut b1, g.clone());
 
-    let b2 = blocklace::Block {
+    let b2 = cordial_miners_core::Block {
         identity: BlockIdentity {
             content_hash: [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
                 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,

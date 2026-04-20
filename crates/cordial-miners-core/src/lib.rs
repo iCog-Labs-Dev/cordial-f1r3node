@@ -7,4 +7,5 @@ pub mod consensus;
 pub mod execution;
 
 pub use types::{NodeId, BlockContent, BlockIdentity};
+pub use blocklace::{Blocklace};
 pub use block::Block;

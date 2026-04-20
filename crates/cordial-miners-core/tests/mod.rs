@@ -1,6 +1,6 @@
 use std::collections::HashSet;
-use blocklace::types::{BlockContent, BlockIdentity, NodeId};
-use blocklace::block::Block;
+use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::block::Block;
 
 /// Build a NodeId from a single byte — keeps tests readable: node(1), node(2) …
 pub fn node(byte: u8) -> NodeId {

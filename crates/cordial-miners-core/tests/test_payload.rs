@@ -1,8 +1,8 @@
-use blocklace::execution::{
+use cordial_miners_core::execution::{
     CordialBlockPayload, BlockState, Bond, Deploy, SignedDeploy,
     ProcessedDeploy, RejectedDeploy, RejectReason, ProcessedSystemDeploy,
 };
-use blocklace::{Block, BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
 
 fn node(id: u8) -> NodeId {
@@ -199,8 +199,8 @@ fn genesis_has_block_number_zero() {
 
 #[test]
 fn chain_of_typed_blocks() {
-    use blocklace::blocklace::Blocklace;
-    use blocklace::crypto::hash_content;
+    use cordial_miners_core::blocklace::Blocklace;
+    use cordial_miners_core::crypto::hash_content;
 
     let mut bl = Blocklace::new();
     let bonds = sample_bonds();
