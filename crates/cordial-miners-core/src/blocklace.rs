@@ -1,7 +1,6 @@
-use std::collections::{HashMap, HashSet};
 use crate::block::Block;
 use crate::types::{BlockContent, BlockIdentity, NodeId};
-
+use std::collections::{HashMap, HashSet};
 
 // The blocklace B - a set of blocks satisfying the closure and axioms
 // From definition 2.3, A blocklace B is a set of blocks subject to some invariants.
@@ -17,7 +16,15 @@ pub struct Blocklace {
 // Construction
 impl Blocklace {
     pub fn new() -> Self {
-        Self {blocks: HashMap::new()}
+        Self {
+            blocks: HashMap::new(),
+        }
+    }
+}
+
+impl Default for Blocklace {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -46,29 +53,30 @@ impl Blocklace {
     }
 }
 
-
 // Insertion and Closure axiom
 impl Blocklace {
     /// Insert a block into the blocklace, enforcing the closure axiom.
-   pub fn insert(&mut self, block: Block) -> Result<(), String> {
-    for pred_id in &block.content.predecessors {
-        if !self.blocks.contains_key(pred_id) {
-            return Err(format!("Closure violation: predecessor {:?} not in blocklace", pred_id));
+    pub fn insert(&mut self, block: Block) -> Result<(), String> {
+        for pred_id in &block.content.predecessors {
+            if !self.blocks.contains_key(pred_id) {
+                return Err(format!(
+                    "Closure violation: predecessor {pred_id:?} not in blocklace"
+                ));
+            }
         }
+        self.blocks.insert(block.identity.clone(), block.content);
+        Ok(())
     }
-    self.blocks.insert(block.identity.clone(), block.content);
-    Ok(())
-   }
 
     pub fn is_closed(&self) -> bool {
         self.blocks.values().all(|content| {
-            content.predecessors.iter()
+            content
+                .predecessors
+                .iter()
                 .all(|pred_id| self.blocks.contains_key(pred_id))
         })
     }
-
 }
-
 
 // Pointed relation based on definition 2.2
 impl Blocklace {
@@ -93,7 +101,7 @@ impl Blocklace {
         while let Some(current_id) = queue.pop() {
             if let Some(content) = self.content(&current_id) {
                 for pred_id in &content.predecessors {
-                    if visited.insert(pred_id.clone()){
+                    if visited.insert(pred_id.clone()) {
                         queue.push(pred_id.clone());
                     }
                 }
@@ -114,19 +122,22 @@ impl Blocklace {
 
     /// <S - all blocks that are ancestors of any block in S
     pub fn ancestors_of_set(&self, ids: &HashSet<BlockIdentity>) -> HashSet<Block> {
-        ids.iter().flat_map(|id| self.ancestors(id.clone())).collect()
+        ids.iter()
+            .flat_map(|id| self.ancestors(id.clone()))
+            .collect()
     }
 
     /// Check if a < b - a is somewhere in b's ancestry
     pub fn precedes(&self, a: &BlockIdentity, b: &BlockIdentity) -> bool {
-        self.ancestors(b.clone()).iter().any(|block| &block.identity == a)
+        self.ancestors(b.clone())
+            .iter()
+            .any(|block| &block.identity == a)
     }
 
     /// Check if a ⪯ b - a  preceeds b or is equal to b
-    pub fn preceedes_or_equals(&self, a:&BlockIdentity, b: &BlockIdentity) -> bool {
+    pub fn preceedes_or_equals(&self, a: &BlockIdentity, b: &BlockIdentity) -> bool {
         a == b || self.precedes(a, b)
     }
-
 }
 
 impl Blocklace {
@@ -144,15 +155,15 @@ impl Blocklace {
     /// Check the virtual chain axiom (CHAIN) for a specific node p.
     /// Any two p-blocks must be comparable under ≺:
     /// node(a) = node = p =>  a ≺ b ∨ b ≺ a
-    /// 
+    ///
     /// A node that violates this is a Byzantine equivocator.
     pub fn satisfies_chain_axiom(&self, node: &NodeId) -> bool {
         let p_blocks = self.blocks_by(node);
-        for i in 0..p_blocks.len(){
-            for j in (i+1) .. p_blocks.len() {
+        for i in 0..p_blocks.len() {
+            for j in (i + 1)..p_blocks.len() {
                 let a = &p_blocks[i].identity;
                 let b = &p_blocks[j].identity;
-                if !self.precedes(a, b) && !self.precedes(b, a){
+                if !self.precedes(a, b) && !self.precedes(b, a) {
                     return false;
                 }
             }
@@ -177,18 +188,21 @@ impl Blocklace {
 
     /// Get The tip of node p's virtual chain - the p-block that no other
     /// p-block precedes()i.e. p's most recent block in the blocklace
-    pub fn  tip_of(&self, node: &NodeId) -> Option<Block> {
+    pub fn tip_of(&self, node: &NodeId) -> Option<Block> {
         let p_blocks = self.blocks_by(node);
-        p_blocks.iter().find(|candidate| {
-            !p_blocks.iter().any(|other| {
-                other.identity != candidate.identity
-                    && self.precedes(&candidate.identity, &other.identity )
+        p_blocks
+            .iter()
+            .find(|candidate| {
+                !p_blocks.iter().any(|other| {
+                    other.identity != candidate.identity
+                        && self.precedes(&candidate.identity, &other.identity)
+                })
             })
-        }).cloned()
+            .cloned()
     }
 
     /// Helper - collect the set of all node ids present the blocklace
     fn all_nodes(&self) -> HashSet<NodeId> {
         self.blocks.keys().map(|id| id.creator.clone()).collect()
     }
-}   
+}

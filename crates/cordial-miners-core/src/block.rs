@@ -1,17 +1,16 @@
-use std::collections::HashSet;
 use crate::types::{BlockContent, BlockIdentity, NodeId};
+use std::collections::HashSet;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
-    pub identity: BlockIdentity, /// i = signedhash((v, P), k_p)
-    pub content: BlockContent,  // C = (v, P)
+    pub identity: BlockIdentity,
+    /// i = signedhash((v, P), k_p)
+    pub content: BlockContent, // C = (v, P)
 }
 
-
 impl Block {
-
     // Check if the block is an initial (genesis) block, i.e., has no predecessors.
     pub fn is_initial(&self) -> bool {
         self.content.predecessors.is_empty()
@@ -32,7 +31,6 @@ impl Block {
     }
 }
 
-
 // Manual Hash + PartialEQ so block can live in Hashet
 impl PartialEq for Block {
     fn eq(&self, other: &Self) -> bool {
@@ -46,7 +44,6 @@ impl std::hash::Hash for Block {
         self.identity.hash(state);
     }
 }
-
 
 /// nodes(S) = {node(b) | b ∈ S} -> The set of nodes that created blocks in S.
 pub fn nodes(blocks: &[Block]) -> HashSet<&NodeId> {

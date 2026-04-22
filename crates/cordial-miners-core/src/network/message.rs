@@ -1,6 +1,6 @@
-use serde::{Serialize, Deserialize};
 use crate::block::Block;
 use crate::types::BlockIdentity;
+use serde::{Deserialize, Serialize};
 
 /// Messages exchanged between peers over TCP.
 ///
@@ -9,7 +9,6 @@ use crate::types::BlockIdentity;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Message {
     // ── Handshake ──
-
     /// Initial handshake: a peer announces its identity and listening port.
     Hello { node_id: Vec<u8>, listen_port: u16 },
 
@@ -17,7 +16,6 @@ pub enum Message {
     HelloAck { node_id: Vec<u8> },
 
     // ── Keepalive ──
-
     /// Heartbeat to keep the connection alive and detect failures.
     Ping,
 
@@ -25,7 +23,6 @@ pub enum Message {
     Pong,
 
     // ── Block propagation ──
-
     /// Broadcast a newly created block to peers.
     BroadcastBlock { block: Block },
 
@@ -36,7 +33,6 @@ pub enum Message {
     BlockResponse { block: Option<Block> },
 
     // ── Sync ──
-
     /// Request the peer's full set of block identities for synchronization.
     SyncRequest,
 

@@ -1,15 +1,15 @@
-pub mod payload;
 pub mod deploy_pool;
+pub mod payload;
 pub mod runtime;
 
-pub use payload::{
-    CordialBlockPayload, BlockState, Bond, Deploy, SignedDeploy,
-    ProcessedDeploy, RejectedDeploy, RejectReason, ProcessedSystemDeploy,
-};
 pub use deploy_pool::{
     DeployPool, DeployPoolConfig, PoolError, SelectedDeploys, compute_deploys_in_scope,
 };
+pub use payload::{
+    BlockState, Bond, CordialBlockPayload, Deploy, ProcessedDeploy, ProcessedSystemDeploy,
+    RejectReason, RejectedDeploy, SignedDeploy,
+};
 pub use runtime::{
-    RuntimeManager, MockRuntime, ExecutionRequest, ExecutionResult,
-    SystemDeployRequest, RuntimeError,
+    ExecutionRequest, ExecutionResult, MockRuntime, RuntimeError, RuntimeManager,
+    SystemDeployRequest,
 };

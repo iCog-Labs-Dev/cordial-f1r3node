@@ -42,7 +42,9 @@ impl Node {
         // Broadcast to all connected peers
         let peers = self.peer.connected_peer_addrs().await;
         for addr in peers {
-            let msg = Message::BroadcastBlock { block: block.clone() };
+            let msg = Message::BroadcastBlock {
+                block: block.clone(),
+            };
             let _ = self.peer.send(addr, &msg).await;
         }
         Ok(())
@@ -50,11 +52,7 @@ impl Node {
 
     /// Handle an incoming message from a peer.
     /// Returns an optional response message to send back.
-    pub async fn handle_message(
-        &self,
-        from: SocketAddr,
-        msg: Message,
-    ) -> Option<Message> {
+    pub async fn handle_message(&self, from: SocketAddr, msg: Message) -> Option<Message> {
         match msg {
             Message::Ping => Some(Message::Pong),
 

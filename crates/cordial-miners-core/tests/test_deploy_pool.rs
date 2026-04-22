@@ -1,12 +1,11 @@
-use std::collections::HashSet;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::crypto::hash_content;
 use cordial_miners_core::execution::{
-    DeployPool, DeployPoolConfig, PoolError, compute_deploys_in_scope,
-    CordialBlockPayload, BlockState, Bond, Deploy, SignedDeploy,
-    ProcessedDeploy,
+    BlockState, Bond, CordialBlockPayload, Deploy, DeployPool, DeployPoolConfig, PoolError,
+    ProcessedDeploy, SignedDeploy, compute_deploys_in_scope,
 };
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
+use std::collections::HashSet;
 
 // ── Helpers ──
 
@@ -17,7 +16,7 @@ fn node(id: u8) -> NodeId {
 fn make_deploy(sig_byte: u8, valid_after: u64, timestamp: u64, phlo_price: u64) -> SignedDeploy {
     SignedDeploy {
         deploy: Deploy {
-            term: format!("term-{}", sig_byte).into_bytes(),
+            term: format!("term-{sig_byte}").into_bytes(),
             timestamp,
             phlo_price,
             phlo_limit: 10_000,
@@ -70,7 +69,10 @@ fn add_below_min_phlo_price_fails() {
     let d = make_deploy(1, 0, 1000, 5); // below min
     assert!(matches!(
         pool.add(d),
-        Err(PoolError::InsufficientPhloPrice { required: 10, actual: 5 })
+        Err(PoolError::InsufficientPhloPrice {
+            required: 10,
+            actual: 5
+        })
     ));
 }
 
@@ -170,7 +172,11 @@ fn cap_selects_oldest_plus_newest() {
     assert_eq!(selected.deploys.len(), 3);
 
     // Should contain the two oldest (timestamps 1000, 2000) + the newest (5000)
-    let timestamps: HashSet<u64> = selected.deploys.iter().map(|d| d.deploy.timestamp).collect();
+    let timestamps: HashSet<u64> = selected
+        .deploys
+        .iter()
+        .map(|d| d.deploy.timestamp)
+        .collect();
     assert!(timestamps.contains(&1000));
     assert!(timestamps.contains(&2000));
     assert!(timestamps.contains(&5000));
@@ -233,14 +239,20 @@ fn make_block_with_real_hash(
         state: BlockState {
             pre_state_hash: vec![tag_sig; 32],
             post_state_hash: vec![tag_sig; 32],
-            bonds: vec![Bond { validator: creator.clone(), stake: 100 }],
+            bonds: vec![Bond {
+                validator: creator.clone(),
+                stake: 100,
+            }],
             block_number,
         },
-        deploys: deploys.into_iter().map(|d| ProcessedDeploy {
-            deploy: d,
-            cost: 100,
-            is_failed: false,
-        }).collect(),
+        deploys: deploys
+            .into_iter()
+            .map(|d| ProcessedDeploy {
+                deploy: d,
+                cost: 100,
+                is_failed: false,
+            })
+            .collect(),
         rejected_deploys: vec![],
         system_deploys: vec![],
     };
@@ -278,7 +290,13 @@ fn compute_deploys_in_scope_collects_ancestor_deploys() {
     bl.insert(g.clone()).unwrap();
 
     // Block 2 with deploy_b, pointing to genesis
-    let b2 = make_block_with_real_hash(v1.clone(), 2, 1, [g.identity.clone()].into_iter().collect(), vec![deploy_b.clone()]);
+    let b2 = make_block_with_real_hash(
+        v1.clone(),
+        2,
+        1,
+        [g.identity.clone()].into_iter().collect(),
+        vec![deploy_b.clone()],
+    );
     bl.insert(b2.clone()).unwrap();
 
     // Compute scope for a new block building on b2
@@ -303,7 +321,13 @@ fn compute_deploys_in_scope_respects_lifespan_window() {
     bl.insert(g.clone()).unwrap();
 
     // Block at block_number 100 with deploy_new
-    let b2 = make_block_with_real_hash(v1.clone(), 2, 100, [g.identity.clone()].into_iter().collect(), vec![deploy_new.clone()]);
+    let b2 = make_block_with_real_hash(
+        v1.clone(),
+        2,
+        100,
+        [g.identity.clone()].into_iter().collect(),
+        vec![deploy_new.clone()],
+    );
     bl.insert(b2.clone()).unwrap();
 
     // At current block 110, lifespan 50 => earliest = 60
@@ -326,7 +350,13 @@ fn select_excludes_deploys_in_ancestry() {
     let deploy_pending = make_deploy(20, 0, 2000, 1);
 
     // Build a genesis block that already contains deploy_in_chain
-    let g = make_block_with_real_hash(v1.clone(), 1, 0, HashSet::new(), vec![deploy_in_chain.clone()]);
+    let g = make_block_with_real_hash(
+        v1.clone(),
+        1,
+        0,
+        HashSet::new(),
+        vec![deploy_in_chain.clone()],
+    );
     bl.insert(g.clone()).unwrap();
 
     // Pool has both deploys

@@ -4,13 +4,13 @@
 //! in realistic scenarios with multiple validators, forks, equivocators,
 //! and convergence.
 
-use std::collections::HashMap;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    fork_choice, check_finality, find_last_finalized, collect_validator_tips,
-    is_cordial, validated_insert, ValidationConfig,
+    ValidationConfig, check_finality, collect_validator_tips, find_last_finalized, fork_choice,
+    is_cordial, validated_insert,
 };
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 // ── Helpers ──
@@ -56,7 +56,10 @@ fn insert(bl: &mut Blocklace, block: &Block) {
 }
 
 fn bonds(entries: &[(u8, u64)]) -> HashMap<NodeId, u64> {
-    entries.iter().map(|(id, stake)| (node(*id), *stake)).collect()
+    entries
+        .iter()
+        .map(|(id, stake)| (node(*id), *stake))
+        .collect()
 }
 
 fn no_crypto() -> ValidationConfig {

@@ -9,7 +9,10 @@ fn make_genesis(tag: u8) -> Block {
             creator: NodeId(vec![tag]),
             signature: vec![],
         },
-        content: BlockContent { payload: vec![tag], predecessors: HashSet::new() },
+        content: BlockContent {
+            payload: vec![tag],
+            predecessors: HashSet::new(),
+        },
     }
 }
 
@@ -87,16 +90,20 @@ async fn handle_request_block_returns_known_block() {
     node.create_block(genesis.clone()).await.unwrap();
 
     let fake_addr = "127.0.0.1:9999".parse().unwrap();
-    let response = node.handle_message(
-        fake_addr,
-        Message::RequestBlock { id: genesis.identity.clone() },
-    ).await;
+    let response = node
+        .handle_message(
+            fake_addr,
+            Message::RequestBlock {
+                id: genesis.identity.clone(),
+            },
+        )
+        .await;
 
     match response {
         Some(Message::BlockResponse { block: Some(b) }) => {
             assert_eq!(b.identity, genesis.identity);
         }
-        other => panic!("expected BlockResponse with block, got {:?}", other),
+        other => panic!("expected BlockResponse with block, got {other:?}"),
     }
 }
 
@@ -110,14 +117,13 @@ async fn handle_request_block_returns_none_for_unknown() {
     };
     let fake_addr = "127.0.0.1:9999".parse().unwrap();
 
-    let response = node.handle_message(
-        fake_addr,
-        Message::RequestBlock { id: unknown_id },
-    ).await;
+    let response = node
+        .handle_message(fake_addr, Message::RequestBlock { id: unknown_id })
+        .await;
 
     match response {
         Some(Message::BlockResponse { block: None }) => {}
-        other => panic!("expected BlockResponse with None, got {:?}", other),
+        other => panic!("expected BlockResponse with None, got {other:?}"),
     }
 }
 
@@ -138,7 +144,7 @@ async fn handle_sync_request_returns_dom() {
             assert!(block_ids.contains(&g1.identity));
             assert!(block_ids.contains(&g2.identity));
         }
-        other => panic!("expected SyncResponse, got {:?}", other),
+        other => panic!("expected SyncResponse, got {other:?}"),
     }
 }
 
@@ -148,10 +154,14 @@ async fn handle_broadcast_block_inserts_genesis() {
     let genesis = make_genesis(1);
     let fake_addr = "127.0.0.1:9999".parse().unwrap();
 
-    let response = node.handle_message(
-        fake_addr,
-        Message::BroadcastBlock { block: genesis.clone() },
-    ).await;
+    let response = node
+        .handle_message(
+            fake_addr,
+            Message::BroadcastBlock {
+                block: genesis.clone(),
+            },
+        )
+        .await;
 
     // BroadcastBlock returns no response
     assert!(response.is_none());
@@ -169,8 +179,11 @@ async fn handle_block_response_inserts_block() {
 
     node.handle_message(
         fake_addr,
-        Message::BlockResponse { block: Some(genesis.clone()) },
-    ).await;
+        Message::BlockResponse {
+            block: Some(genesis.clone()),
+        },
+    )
+    .await;
 
     let bl = node.blocklace.lock().await;
     assert!(bl.get(&genesis.identity).is_some());
@@ -181,10 +194,9 @@ async fn handle_block_response_none_is_noop() {
     let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
     let fake_addr = "127.0.0.1:9999".parse().unwrap();
 
-    let response = node.handle_message(
-        fake_addr,
-        Message::BlockResponse { block: None },
-    ).await;
+    let response = node
+        .handle_message(fake_addr, Message::BlockResponse { block: None })
+        .await;
 
     assert!(response.is_none());
     let bl = node.blocklace.lock().await;
@@ -196,10 +208,15 @@ async fn handle_hello_is_noop() {
     let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
     let fake_addr = "127.0.0.1:9999".parse().unwrap();
 
-    let response = node.handle_message(
-        fake_addr,
-        Message::Hello { node_id: vec![2], listen_port: 8080 },
-    ).await;
+    let response = node
+        .handle_message(
+            fake_addr,
+            Message::Hello {
+                node_id: vec![2],
+                listen_port: 8080,
+            },
+        )
+        .await;
     assert!(response.is_none());
 }
 
@@ -214,6 +231,6 @@ async fn sync_request_on_empty_returns_empty() {
         Some(Message::SyncResponse { block_ids }) => {
             assert!(block_ids.is_empty());
         }
-        other => panic!("expected empty SyncResponse, got {:?}", other),
+        other => panic!("expected empty SyncResponse, got {other:?}"),
     }
 }
