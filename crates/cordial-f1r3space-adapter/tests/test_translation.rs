@@ -90,9 +90,7 @@ fn close_block_translates_to_close_variant() {
 fn slash_translates_to_slash_variant_with_validator_pk() {
     let pre_state = [0x42u8; 32];
     let f1 = system_deploy_to_f1r3node(
-        &SystemDeployRequest::Slash {
-            validator: node(7),
-        },
+        &SystemDeployRequest::Slash { validator: node(7) },
         &pre_state,
     );
     match f1 {
@@ -114,8 +112,14 @@ fn block_data_picks_first_bond_as_sender() {
         deploys: vec![],
         system_deploys: vec![],
         bonds: vec![
-            Bond { validator: node(1), stake: 100 },
-            Bond { validator: node(2), stake: 200 },
+            Bond {
+                validator: node(1),
+                stake: 100,
+            },
+            Bond {
+                validator: node(2),
+                stake: 200,
+            },
         ],
         block_number: 5,
     };
@@ -203,10 +207,7 @@ fn succeeded_close_block_translates_correctly() {
         system_deploy: SystemDeployData::CloseBlockSystemDeployData,
     };
     let ours = system_deploy_from_f1r3node(&f1);
-    assert_eq!(
-        ours,
-        ProcessedSystemDeploy::CloseBlock { succeeded: true }
-    );
+    assert_eq!(ours, ProcessedSystemDeploy::CloseBlock { succeeded: true });
 }
 
 #[test]
@@ -222,7 +223,10 @@ fn succeeded_slash_translates_with_validator() {
     };
     let ours = system_deploy_from_f1r3node(&f1);
     match ours {
-        ProcessedSystemDeploy::Slash { validator, succeeded } => {
+        ProcessedSystemDeploy::Slash {
+            validator,
+            succeeded,
+        } => {
             assert_eq!(validator.0, validator_bytes);
             assert!(succeeded);
         }
@@ -239,10 +243,7 @@ fn failed_system_deploy_reports_not_succeeded() {
     let ours = system_deploy_from_f1r3node(&f1);
     // Failed variant lacks the original discriminant; we surface it as a
     // failed CloseBlock (documented in the adapter's module-level docs).
-    assert_eq!(
-        ours,
-        ProcessedSystemDeploy::CloseBlock { succeeded: false }
-    );
+    assert_eq!(ours, ProcessedSystemDeploy::CloseBlock { succeeded: false });
 }
 
 #[test]
@@ -255,8 +256,5 @@ fn empty_system_deploy_data_translates_as_succeeded_close_block() {
         system_deploy: SystemDeployData::Empty,
     };
     let ours = system_deploy_from_f1r3node(&f1);
-    assert_eq!(
-        ours,
-        ProcessedSystemDeploy::CloseBlock { succeeded: true }
-    );
+    assert_eq!(ours, ProcessedSystemDeploy::CloseBlock { succeeded: true });
 }
