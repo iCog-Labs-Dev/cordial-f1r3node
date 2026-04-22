@@ -2,17 +2,15 @@
 
 use std::collections::{HashMap, HashSet};
 
+use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::crypto::hash_content;
 use cordial_miners_core::execution::{
     BlockState, Bond as CmBond, CordialBlockPayload, Deploy, ProcessedDeploy, SignedDeploy,
 };
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
-use cordial_miners_core::Block;
 
-use cordial_f1r3node_adapter::snapshot::{
-    build_snapshot, CasperShardConf, SnapshotError,
-};
+use cordial_f1r3node_adapter::snapshot::{CasperShardConf, SnapshotError, build_snapshot};
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -109,8 +107,16 @@ fn dag_set_contains_all_block_hashes() {
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
 
     assert_eq!(snap.dag.dag_set.len(), 2);
-    assert!(snap.dag.dag_set.contains(&g.identity.content_hash.to_vec()));
-    assert!(snap.dag.dag_set.contains(&b2.identity.content_hash.to_vec()));
+    assert!(
+        snap.dag
+            .dag_set
+            .contains(g.identity.content_hash.as_slice())
+    );
+    assert!(
+        snap.dag
+            .dag_set
+            .contains(b2.identity.content_hash.as_slice())
+    );
 
     // block_number_map should reflect per-block block_number
     assert_eq!(
@@ -168,11 +174,20 @@ fn child_map_inverts_predecessor_relation() {
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
 
     // g should have b2 as a child
-    let children_of_g = snap.dag.child_map.get(&g.identity.content_hash.to_vec()).unwrap();
+    let children_of_g = snap
+        .dag
+        .child_map
+        .get(g.identity.content_hash.as_slice())
+        .unwrap();
     assert!(children_of_g.contains(&b2.identity.content_hash.to_vec()));
 
     // b2 has no children
-    assert!(!snap.dag.child_map.contains_key(&b2.identity.content_hash.to_vec()));
+    assert!(
+        !snap
+            .dag
+            .child_map
+            .contains_key(b2.identity.content_hash.as_slice())
+    );
 }
 
 // ── latest_messages_map ──────────────────────────────────────────────────
@@ -251,13 +266,20 @@ fn last_finalized_block_matches_finality_detector() {
 
     // Last finalized block should be non-empty (some block is finalized)
     assert!(!snap.dag.last_finalized_block_hash.is_empty());
-    assert_eq!(snap.last_finalized_block, snap.dag.last_finalized_block_hash);
+    assert_eq!(
+        snap.last_finalized_block,
+        snap.dag.last_finalized_block_hash
+    );
 
     // The LFB must be a real block in the lace
     assert!(snap.dag.dag_set.contains(&snap.last_finalized_block));
 
     // finalized_blocks_set includes the LFB and its ancestors
-    assert!(snap.dag.finalized_blocks_set.contains(&snap.last_finalized_block));
+    assert!(
+        snap.dag
+            .finalized_blocks_set
+            .contains(&snap.last_finalized_block)
+    );
 }
 
 #[test]
@@ -324,8 +346,11 @@ fn justifications_contain_one_entry_per_validator_tip() {
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
 
     assert_eq!(snap.justifications.len(), 2);
-    let validators: HashSet<Vec<u8>> =
-        snap.justifications.iter().map(|j| j.validator.clone()).collect();
+    let validators: HashSet<Vec<u8>> = snap
+        .justifications
+        .iter()
+        .map(|j| j.validator.clone())
+        .collect();
     assert!(validators.contains(&vec![1u8]));
     assert!(validators.contains(&vec![2u8]));
 }

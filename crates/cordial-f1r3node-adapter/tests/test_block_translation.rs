@@ -2,17 +2,18 @@
 
 use std::collections::HashSet;
 
+use cordial_miners_core::Block;
 use cordial_miners_core::crypto::hash_content;
 use cordial_miners_core::execution::{
-    Bond as CmBond, BlockState, CordialBlockPayload, Deploy as CmDeploy, ProcessedDeploy as CmProcessed,
-    ProcessedSystemDeploy as CmSystem, SignedDeploy as CmSignedDeploy,
+    BlockState, Bond as CmBond, CordialBlockPayload, Deploy as CmDeploy,
+    ProcessedDeploy as CmProcessed, ProcessedSystemDeploy as CmSystem,
+    SignedDeploy as CmSignedDeploy,
 };
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
-use cordial_miners_core::Block;
 
 use cordial_f1r3node_adapter::block_translation::{
-    block_to_message, message_to_block, BlockMessage, Body, F1r3flyState, Header,
-    ProcessedSystemDeploy, TranslationError,
+    BlockMessage, Body, F1r3flyState, Header, ProcessedSystemDeploy, TranslationError,
+    block_to_message, message_to_block,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -47,8 +48,14 @@ fn sample_payload() -> CordialBlockPayload {
             pre_state_hash: vec![0x11; 32],
             post_state_hash: vec![0x22; 32],
             bonds: vec![
-                CmBond { validator: node(1), stake: 100 },
-                CmBond { validator: node(2), stake: 200 },
+                CmBond {
+                    validator: node(1),
+                    stake: 100,
+                },
+                CmBond {
+                    validator: node(2),
+                    stake: 200,
+                },
             ],
             block_number: 5,
         },
@@ -77,12 +84,7 @@ fn sample_payload() -> CordialBlockPayload {
 
 #[test]
 fn genesis_block_translates_with_empty_parents_and_justifications() {
-    let block = build_block(
-        node(1),
-        sample_payload(),
-        HashSet::new(),
-        vec![0xff; 64],
-    );
+    let block = build_block(node(1), sample_payload(), HashSet::new(), vec![0xff; 64]);
 
     let msg = block_to_message(&block, "root").unwrap();
     assert!(msg.header.parents_hash_list.is_empty());
@@ -107,11 +109,17 @@ fn block_with_predecessors_packs_into_parents_and_justifications() {
     let msg = block_to_message(&child, "root").unwrap();
 
     assert_eq!(msg.header.parents_hash_list.len(), 1);
-    assert_eq!(msg.header.parents_hash_list[0], parent.identity.content_hash.to_vec());
+    assert_eq!(
+        msg.header.parents_hash_list[0],
+        parent.identity.content_hash.to_vec()
+    );
 
     assert_eq!(msg.justifications.len(), 1);
     assert_eq!(msg.justifications[0].validator, vec![1]); // parent's creator
-    assert_eq!(msg.justifications[0].latest_block_hash, parent.identity.content_hash.to_vec());
+    assert_eq!(
+        msg.justifications[0].latest_block_hash,
+        parent.identity.content_hash.to_vec()
+    );
 }
 
 #[test]
@@ -340,7 +348,10 @@ fn wrong_predecessor_hash_length_fails_translation() {
     };
 
     let err = message_to_block(&msg).unwrap_err();
-    assert!(matches!(err, TranslationError::InvalidPredecessorHash { got: 2, .. }));
+    assert!(matches!(
+        err,
+        TranslationError::InvalidPredecessorHash { got: 2, .. }
+    ));
 }
 
 // ── Numeric edge cases ───────────────────────────────────────────────────
@@ -360,7 +371,10 @@ fn u64_overflowing_i64_fails_translation() {
     payload.state.block_number = u64::MAX; // doesn't fit in i64
     let block = build_block(node(1), payload, HashSet::new(), vec![0x00; 64]);
     let err = block_to_message(&block, "root").unwrap_err();
-    assert!(matches!(err, TranslationError::NumericOverflow("block_number")));
+    assert!(matches!(
+        err,
+        TranslationError::NumericOverflow("block_number")
+    ));
 }
 
 #[test]
@@ -431,6 +445,9 @@ fn translation_is_deterministic_across_predecessor_insertion_order() {
     let msg_b = block_to_message(&block_b, "root").unwrap();
 
     // Sorted output → same parents_hash_list and justifications regardless of order
-    assert_eq!(msg_a.header.parents_hash_list, msg_b.header.parents_hash_list);
+    assert_eq!(
+        msg_a.header.parents_hash_list,
+        msg_b.header.parents_hash_list
+    );
     assert_eq!(msg_a.justifications, msg_b.justifications);
 }

@@ -7,17 +7,17 @@
 
 use std::collections::{HashMap, HashSet};
 
+use cordial_miners_core::Block;
 use cordial_miners_core::crypto::hash_content;
 use cordial_miners_core::execution::{
     BlockState, Bond as CmBond, CordialBlockPayload, DeployPoolConfig,
 };
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
-use cordial_miners_core::Block;
 use either::Either;
 
-use cordial_f1r3node_adapter::block_translation::{block_to_message, DeployData, SignedDeployData};
+use cordial_f1r3node_adapter::block_translation::{DeployData, SignedDeployData, block_to_message};
 use cordial_f1r3node_adapter::casper_adapter::{
-    CordialCasper, CordialCasperAdapter, CordialMultiParentCasper, BlockError, DeployError,
+    BlockError, CordialCasper, CordialCasperAdapter, CordialMultiParentCasper, DeployError,
     InvalidBlock, ValidBlock,
 };
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
@@ -61,7 +61,10 @@ fn simple_payload(block_number: u64) -> CordialBlockPayload {
         state: BlockState {
             pre_state_hash: vec![0u8; 32],
             post_state_hash: vec![block_number as u8; 32],
-            bonds: vec![CmBond { validator: node(1), stake: 100 }],
+            bonds: vec![CmBond {
+                validator: node(1),
+                stake: 100,
+            }],
             block_number,
         },
         deploys: vec![],
@@ -73,7 +76,7 @@ fn simple_payload(block_number: u64) -> CordialBlockPayload {
 fn sample_deploy(sig_byte: u8) -> SignedDeployData {
     SignedDeployData {
         data: DeployData {
-            term: format!("tx-{}", sig_byte),
+            term: format!("tx-{sig_byte}"),
             time_stamp: 1000 + sig_byte as i64,
             phlo_price: 1,
             phlo_limit: 10_000,
@@ -87,10 +90,7 @@ fn sample_deploy(sig_byte: u8) -> SignedDeployData {
     }
 }
 
-async fn insert_through_adapter(
-    adapter: &CordialCasperAdapter,
-    block: Block,
-) {
+async fn insert_through_adapter(adapter: &CordialCasperAdapter, block: Block) {
     let mut bl = adapter.blocklace().lock().await;
     bl.insert(block).unwrap();
 }
@@ -165,7 +165,7 @@ async fn deploy_accepts_valid_signed_deploy() {
     let res = adapter.deploy(deploy).unwrap();
     match res {
         Either::Right(deploy_id) => assert_eq!(deploy_id, expected_sig),
-        Either::Left(e) => panic!("expected acceptance, got {:?}", e),
+        Either::Left(e) => panic!("expected acceptance, got {e:?}"),
     }
 }
 
@@ -185,7 +185,7 @@ async fn deploy_rejects_duplicate_signature() {
         Either::Left(DeployError::PoolRejected(msg)) => {
             assert!(msg.contains("duplicate"));
         }
-        other => panic!("expected PoolRejected duplicate, got {:?}", other),
+        other => panic!("expected PoolRejected duplicate, got {other:?}"),
     }
 }
 
@@ -285,14 +285,15 @@ async fn validate_accepts_well_formed_genesis() {
     let msg = block_to_message(&g, "root").unwrap();
 
     // Skip crypto checks: our test signature is just [1;64], not a real ed25519 sig.
-    let adapter = adapter.with_validation_config(cordial_miners_core::consensus::ValidationConfig {
-        check_content_hash: false,
-        check_signature: false,
-        check_sender: true,
-        check_closure: true,
-        check_chain_axiom: true,
-        check_cordial: false,
-    });
+    let adapter =
+        adapter.with_validation_config(cordial_miners_core::consensus::ValidationConfig {
+            check_content_hash: false,
+            check_signature: false,
+            check_sender: true,
+            check_closure: true,
+            check_chain_axiom: true,
+            check_cordial: false,
+        });
 
     let res = adapter.validate(&msg).await.unwrap();
     assert!(matches!(res, Either::Right(ValidBlock::Valid)));
@@ -349,7 +350,7 @@ async fn validate_unbonded_sender_returns_invalid_sender() {
     let res = adapter.validate(&msg).await.unwrap();
     match res {
         Either::Left(BlockError::Invalid(InvalidBlock::InvalidSender)) => {}
-        other => panic!("expected InvalidSender, got {:?}", other),
+        other => panic!("expected InvalidSender, got {other:?}"),
     }
 }
 
@@ -403,7 +404,12 @@ async fn buffer_starts_empty() {
         None,
     );
     assert!(adapter.get_all_from_buffer().unwrap().is_empty());
-    assert!(adapter.get_dependency_free_from_buffer().unwrap().is_empty());
+    assert!(
+        adapter
+            .get_dependency_free_from_buffer()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 // ── last_finalized_block ─────────────────────────────────────────────────
