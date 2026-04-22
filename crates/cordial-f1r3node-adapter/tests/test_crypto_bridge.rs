@@ -2,11 +2,11 @@
 //! f1r3node-style block hash that mixes the sender into the input.
 
 use cordial_f1r3node_adapter::block_translation::{
-    Body, F1r3flyState, Header, BlockMessage, ProcessedSystemDeploy,
+    BlockMessage, Body, F1r3flyState, Header, ProcessedSystemDeploy,
 };
 use cordial_f1r3node_adapter::crypto_bridge::{
-    compute_block_hash, Blake2b256Hasher, CryptoError, Ed25519, Hasher, Secp256k1, Sha256Hasher,
-    SigAlgorithm, Signer, Verifier,
+    Blake2b256Hasher, CryptoError, Ed25519, Hasher, Secp256k1, Sha256Hasher, SigAlgorithm, Signer,
+    Verifier, compute_block_hash,
 };
 
 // ── Hasher correctness ───────────────────────────────────────────────────
@@ -107,24 +107,39 @@ fn ed25519_invalid_key_lengths_error() {
     let hash = [0x00u8; 32];
     assert!(matches!(
         Ed25519.sign(&hash, &[0u8; 16]),
-        Err(CryptoError::InvalidPrivateKeyLength { expected: 32, actual: 16 })
+        Err(CryptoError::InvalidPrivateKeyLength {
+            expected: 32,
+            actual: 16
+        })
     ));
     assert!(matches!(
         Ed25519.verify(&hash, &[0u8; 16], &[0u8; 64]),
-        Err(CryptoError::InvalidPublicKeyLength { expected: 32, actual: 16 })
+        Err(CryptoError::InvalidPublicKeyLength {
+            expected: 32,
+            actual: 16
+        })
     ));
     let (_, pk) = ed25519_keypair();
     assert!(matches!(
         Ed25519.verify(&hash, &pk, &[0u8; 32]),
-        Err(CryptoError::InvalidSignatureLength { expected: 64, actual: 32 })
+        Err(CryptoError::InvalidSignatureLength {
+            expected: 64,
+            actual: 32
+        })
     ));
 }
 
 #[test]
 fn ed25519_algorithm_id_string() {
     // Disambiguate: both Signer and Verifier have an `algorithm()` method
-    assert_eq!(<Ed25519 as Signer>::algorithm(&Ed25519), SigAlgorithm::Ed25519);
-    assert_eq!(<Ed25519 as Verifier>::algorithm(&Ed25519), SigAlgorithm::Ed25519);
+    assert_eq!(
+        <Ed25519 as Signer>::algorithm(&Ed25519),
+        SigAlgorithm::Ed25519
+    );
+    assert_eq!(
+        <Ed25519 as Verifier>::algorithm(&Ed25519),
+        SigAlgorithm::Ed25519
+    );
     assert_eq!(SigAlgorithm::Ed25519.as_str(), "ed25519");
 }
 
@@ -171,18 +186,30 @@ fn secp256k1_invalid_inputs_error() {
     let hash = [0u8; 32];
     assert!(matches!(
         Secp256k1.sign(&hash, &[0u8; 16]),
-        Err(CryptoError::InvalidPrivateKeyLength { expected: 32, actual: 16 })
+        Err(CryptoError::InvalidPrivateKeyLength {
+            expected: 32,
+            actual: 16
+        })
     ));
     assert!(matches!(
         Secp256k1.verify(&hash, &[0u8; 16], &[0u8; 64]),
-        Err(CryptoError::InvalidPublicKeyLength { expected: 33, actual: 16 })
+        Err(CryptoError::InvalidPublicKeyLength {
+            expected: 33,
+            actual: 16
+        })
     ));
 }
 
 #[test]
 fn secp256k1_algorithm_id_string() {
-    assert_eq!(<Secp256k1 as Signer>::algorithm(&Secp256k1), SigAlgorithm::Secp256k1);
-    assert_eq!(<Secp256k1 as Verifier>::algorithm(&Secp256k1), SigAlgorithm::Secp256k1);
+    assert_eq!(
+        <Secp256k1 as Signer>::algorithm(&Secp256k1),
+        SigAlgorithm::Secp256k1
+    );
+    assert_eq!(
+        <Secp256k1 as Verifier>::algorithm(&Secp256k1),
+        SigAlgorithm::Secp256k1
+    );
     assert_eq!(SigAlgorithm::Secp256k1.as_str(), "secp256k1");
 }
 
@@ -272,12 +299,24 @@ fn block_hash_is_independent_of_bond_ordering() {
     let mut a = empty_msg(vec![1]);
     let mut b = empty_msg(vec![1]);
     a.body.state.bonds = vec![
-        MirrorBond { validator: vec![10], stake: 100 },
-        MirrorBond { validator: vec![20], stake: 200 },
+        MirrorBond {
+            validator: vec![10],
+            stake: 100,
+        },
+        MirrorBond {
+            validator: vec![20],
+            stake: 200,
+        },
     ];
     b.body.state.bonds = vec![
-        MirrorBond { validator: vec![20], stake: 200 },
-        MirrorBond { validator: vec![10], stake: 100 },
+        MirrorBond {
+            validator: vec![20],
+            stake: 200,
+        },
+        MirrorBond {
+            validator: vec![10],
+            stake: 100,
+        },
     ];
     assert_eq!(compute_block_hash(&a), compute_block_hash(&b));
 }
@@ -287,8 +326,14 @@ fn block_hash_changes_when_bond_stake_changes() {
     use cordial_f1r3node_adapter::block_translation::Bond as MirrorBond;
     let mut a: BlockMessage = empty_msg(vec![1]);
     let mut b = empty_msg(vec![1]);
-    a.body.state.bonds = vec![MirrorBond { validator: vec![10], stake: 100 }];
-    b.body.state.bonds = vec![MirrorBond { validator: vec![10], stake: 101 }];
+    a.body.state.bonds = vec![MirrorBond {
+        validator: vec![10],
+        stake: 100,
+    }];
+    b.body.state.bonds = vec![MirrorBond {
+        validator: vec![10],
+        stake: 101,
+    }];
     assert_ne!(compute_block_hash(&a), compute_block_hash(&b));
 }
 
@@ -296,7 +341,9 @@ fn block_hash_changes_when_bond_stake_changes() {
 fn block_hash_includes_system_deploys() {
     let a = empty_msg(vec![1]);
     let mut b = empty_msg(vec![1]);
-    b.body.system_deploys.push(ProcessedSystemDeploy::CloseBlock { succeeded: true });
+    b.body
+        .system_deploys
+        .push(ProcessedSystemDeploy::CloseBlock { succeeded: true });
     assert_ne!(compute_block_hash(&a), compute_block_hash(&b));
 
     // Different system deploy variant tags hash differently
