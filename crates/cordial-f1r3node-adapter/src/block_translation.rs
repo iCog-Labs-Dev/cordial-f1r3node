@@ -38,8 +38,8 @@ use cordial_miners_core::block::Block;
 use cordial_miners_core::crypto::hash_content;
 use cordial_miners_core::execution::{
     Bond as CmBond, CordialBlockPayload, Deploy as CmDeploy, ProcessedDeploy as CmProcessedDeploy,
-    ProcessedSystemDeploy as CmSystemDeploy, RejectedDeploy as CmRejectedDeploy,
-    RejectReason as CmRejectReason, SignedDeploy as CmSignedDeploy,
+    ProcessedSystemDeploy as CmSystemDeploy, RejectReason as CmRejectReason,
+    RejectedDeploy as CmRejectedDeploy, SignedDeploy as CmSignedDeploy,
 };
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
@@ -161,8 +161,13 @@ pub struct RejectedDeploy {
 /// Mirror of f1r3node's `ProcessedSystemDeploy` (simplified).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ProcessedSystemDeploy {
-    Slash { validator: ByteString, succeeded: bool },
-    CloseBlock { succeeded: bool },
+    Slash {
+        validator: ByteString,
+        succeeded: bool,
+    },
+    CloseBlock {
+        succeeded: bool,
+    },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -313,12 +318,13 @@ pub fn message_to_block(msg: &BlockMessage) -> Result<Block, TranslationError> {
 
     let mut predecessors = HashSet::new();
     for hash in pred_hashes {
-        let content_hash: [u8; 32] = hash.as_slice().try_into().map_err(|_| {
-            TranslationError::InvalidPredecessorHash {
-                expected_len: 32,
-                got: hash.len(),
-            }
-        })?;
+        let content_hash: [u8; 32] =
+            hash.as_slice()
+                .try_into()
+                .map_err(|_| TranslationError::InvalidPredecessorHash {
+                    expected_len: 32,
+                    got: hash.len(),
+                })?;
         let creator_bytes = hash_to_creator
             .get(hash.as_slice())
             .copied()
@@ -505,19 +511,23 @@ fn rejected_deploy_from_f1r3node(rd: &RejectedDeploy) -> CmRejectedDeploy {
 
 fn system_deploy_to_f1r3node(sd: CmSystemDeploy) -> ProcessedSystemDeploy {
     match sd {
-        CmSystemDeploy::Slash { validator, succeeded } => ProcessedSystemDeploy::Slash {
+        CmSystemDeploy::Slash {
+            validator,
+            succeeded,
+        } => ProcessedSystemDeploy::Slash {
             validator: validator.0,
             succeeded,
         },
-        CmSystemDeploy::CloseBlock { succeeded } => {
-            ProcessedSystemDeploy::CloseBlock { succeeded }
-        }
+        CmSystemDeploy::CloseBlock { succeeded } => ProcessedSystemDeploy::CloseBlock { succeeded },
     }
 }
 
 fn system_deploy_from_f1r3node(sd: &ProcessedSystemDeploy) -> CmSystemDeploy {
     match sd {
-        ProcessedSystemDeploy::Slash { validator, succeeded } => CmSystemDeploy::Slash {
+        ProcessedSystemDeploy::Slash {
+            validator,
+            succeeded,
+        } => CmSystemDeploy::Slash {
             validator: NodeId(validator.clone()),
             succeeded: *succeeded,
         },

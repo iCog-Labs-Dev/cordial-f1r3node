@@ -39,10 +39,12 @@
 //! implementation that hashes the real `prost`-encoded bytes for full
 //! byte-level wire compatibility.
 
-use blake2::digest::consts::U32;
 use blake2::Blake2b;
+use blake2::digest::consts::U32;
 use k256::ecdsa::signature::{Signer as K256Signer, Verifier as K256Verifier};
-use k256::ecdsa::{Signature as K256Signature, SigningKey as K256SigningKey, VerifyingKey as K256VerifyingKey};
+use k256::ecdsa::{
+    Signature as K256Signature, SigningKey as K256SigningKey, VerifyingKey as K256VerifyingKey,
+};
 use sha2::{Digest, Sha256};
 
 use crate::block_translation::BlockMessage;
@@ -162,12 +164,13 @@ impl Signer for Ed25519 {
     }
     fn sign(&self, hash: &[u8; 32], private_key: &[u8]) -> Result<Vec<u8>, CryptoError> {
         use ed25519_dalek::{Signer as _, SigningKey};
-        let pk_bytes: &[u8; 32] = private_key
-            .try_into()
-            .map_err(|_| CryptoError::InvalidPrivateKeyLength {
-                expected: 32,
-                actual: private_key.len(),
-            })?;
+        let pk_bytes: &[u8; 32] =
+            private_key
+                .try_into()
+                .map_err(|_| CryptoError::InvalidPrivateKeyLength {
+                    expected: 32,
+                    actual: private_key.len(),
+                })?;
         let signing_key = SigningKey::from_bytes(pk_bytes);
         Ok(signing_key.sign(hash).to_bytes().to_vec())
     }
@@ -226,11 +229,12 @@ impl Signer for Secp256k1 {
                 actual: private_key.len(),
             });
         }
-        let signing_key = K256SigningKey::from_slice(private_key)
-            .map_err(|_| CryptoError::InvalidPrivateKeyLength {
+        let signing_key = K256SigningKey::from_slice(private_key).map_err(|_| {
+            CryptoError::InvalidPrivateKeyLength {
                 expected: 32,
                 actual: private_key.len(),
-            })?;
+            }
+        })?;
         // k256's sign() hashes the input itself; we pass the pre-computed
         // 32-byte digest through `sign_prehash_recoverable` to keep the
         // contract uniform with the Ed25519 signer (which signs over the
@@ -265,8 +269,8 @@ impl Verifier for Secp256k1 {
                 actual: signature.len(),
             });
         }
-        let sig = K256Signature::from_slice(signature)
-            .map_err(|_| CryptoError::InvalidSignature)?;
+        let sig =
+            K256Signature::from_slice(signature).map_err(|_| CryptoError::InvalidSignature)?;
         Ok(verifying_key.verify(hash, &sig).is_ok())
     }
 }
@@ -351,7 +355,10 @@ pub fn compute_block_hash(msg: &BlockMessage) -> [u8; 32] {
     for sd in &msg.body.system_deploys {
         use crate::block_translation::ProcessedSystemDeploy;
         match sd {
-            ProcessedSystemDeploy::Slash { validator, succeeded } => {
+            ProcessedSystemDeploy::Slash {
+                validator,
+                succeeded,
+            } => {
                 buf.push(0u8);
                 put_bytes(&mut buf, validator);
                 buf.push(*succeeded as u8);

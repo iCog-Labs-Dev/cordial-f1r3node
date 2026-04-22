@@ -66,8 +66,8 @@ use either::Either;
 use cordial_miners_core::block::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    fork_choice, find_last_finalized, validate_block as core_validate_block,
-    InvalidBlock as CoreInvalidBlock, ValidationConfig, ValidationResult,
+    InvalidBlock as CoreInvalidBlock, ValidationConfig, ValidationResult, find_last_finalized,
+    fork_choice, validate_block as core_validate_block,
 };
 use cordial_miners_core::execution::{
     DeployPool, DeployPoolConfig, PoolError, SignedDeploy as CmSignedDeploy,
@@ -75,10 +75,10 @@ use cordial_miners_core::execution::{
 use cordial_miners_core::types::{BlockIdentity, NodeId};
 
 use crate::block_translation::{
-    block_to_message, message_to_block, BlockMessage, SignedDeployData, TranslationError,
+    BlockMessage, SignedDeployData, TranslationError, block_to_message, message_to_block,
 };
 use crate::shard_conf::CasperShardConf;
-use crate::snapshot::{build_snapshot, CasperSnapshot, SnapshotError};
+use crate::snapshot::{CasperSnapshot, SnapshotError, build_snapshot};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Mirror types for the trait surface
@@ -153,13 +153,13 @@ pub enum CasperError {
 
 impl From<SnapshotError> for CasperError {
     fn from(e: SnapshotError) -> Self {
-        CasperError::Snapshot(format!("{:?}", e))
+        CasperError::Snapshot(format!("{e:?}"))
     }
 }
 
 impl From<TranslationError> for CasperError {
     fn from(e: TranslationError) -> Self {
-        CasperError::Translation(format!("{:?}", e))
+        CasperError::Translation(format!("{e:?}"))
     }
 }
 
@@ -352,10 +352,13 @@ impl CordialCasper for CordialCasperAdapter {
         // Synchronous trait method but we hold an async Mutex. Use try_lock
         // for the common uncontended case; fall back to checking the buffer
         // alone if contended (callers can retry).
-        if let Ok(bl) = self.blocklace.try_lock() {
-            if bl.dom().iter().any(|id| id.content_hash.as_slice() == hash.as_slice()) {
-                return true;
-            }
+        if let Ok(bl) = self.blocklace.try_lock()
+            && bl
+                .dom()
+                .iter()
+                .any(|id| id.content_hash.as_slice() == hash.as_slice())
+        {
+            return true;
         }
         if let Ok(buf) = self.buffer.try_lock() {
             return buf.contains_key(hash);
@@ -365,7 +368,9 @@ impl CordialCasper for CordialCasperAdapter {
 
     fn dag_contains(&self, hash: &BlockHash) -> bool {
         if let Ok(bl) = self.blocklace.try_lock() {
-            bl.dom().iter().any(|id| id.content_hash.as_slice() == hash.as_slice())
+            bl.dom()
+                .iter()
+                .any(|id| id.content_hash.as_slice() == hash.as_slice())
         } else {
             false
         }
@@ -396,10 +401,8 @@ impl CordialCasper for CordialCasperAdapter {
                 timestamp: u64::try_from(deploy.data.time_stamp).unwrap_or(0),
                 phlo_price: u64::try_from(deploy.data.phlo_price).unwrap_or(0),
                 phlo_limit: u64::try_from(deploy.data.phlo_limit).unwrap_or(0),
-                valid_after_block_number: u64::try_from(
-                    deploy.data.valid_after_block_number,
-                )
-                .unwrap_or(0),
+                valid_after_block_number: u64::try_from(deploy.data.valid_after_block_number)
+                    .unwrap_or(0),
                 shard_id: deploy.data.shard_id.clone(),
             },
             deployer: deploy.pk.clone(),
@@ -421,12 +424,9 @@ impl CordialCasper for CordialCasperAdapter {
             Err(PoolError::InvalidSignature) => {
                 Ok(Either::Left(DeployError::SignatureVerificationFailed))
             }
-            Err(PoolError::InsufficientPhloPrice { required, actual }) => {
-                Ok(Either::Left(DeployError::PoolRejected(format!(
-                    "phlo price {} below required {}",
-                    actual, required
-                ))))
-            }
+            Err(PoolError::InsufficientPhloPrice { required, actual }) => Ok(Either::Left(
+                DeployError::PoolRejected(format!("phlo price {actual} below required {required}")),
+            )),
         }
     }
 
@@ -455,12 +455,10 @@ impl CordialCasper for CordialCasperAdapter {
         let core_block = match message_to_block(block) {
             Ok(b) => b,
             Err(e) => {
-                return Ok(Either::Left(BlockError::Invalid(InvalidBlock::InvalidFormat)))
-                    .map(|res: Either<BlockError, ValidBlock>| {
-                        // record the translation reason for debugging
-                        let _ = e;
-                        res
-                    });
+                let _ = e;
+                return Ok(Either::Left(BlockError::Invalid(
+                    InvalidBlock::InvalidFormat,
+                )));
             }
         };
 
@@ -478,7 +476,9 @@ impl CordialCasper for CordialCasperAdapter {
                     Ok(Either::Left(BlockError::MissingBlocks))
                 } else {
                     let first = &errs[0];
-                    Ok(Either::Left(BlockError::Invalid(Self::map_core_error(first))))
+                    Ok(Either::Left(BlockError::Invalid(Self::map_core_error(
+                        first,
+                    ))))
                 }
             }
         }
@@ -509,7 +509,9 @@ impl CordialCasper for CordialCasperAdapter {
                     Ok(Either::Left(BlockError::MissingBlocks))
                 } else {
                     let first = &errs[0];
-                    Ok(Either::Left(BlockError::Invalid(Self::map_core_error(first))))
+                    Ok(Either::Left(BlockError::Invalid(Self::map_core_error(
+                        first,
+                    ))))
                 }
             }
         }
@@ -518,8 +520,9 @@ impl CordialCasper for CordialCasperAdapter {
     async fn handle_valid_block(&self, block: &BlockMessage) -> Result<(), CasperError> {
         let core_block = message_to_block(block)?;
         let mut bl = self.blocklace.lock().await;
-        bl.insert(core_block)
-            .map_err(|e| CasperError::InvalidState(Box::leak(format!("insert: {}", e).into_boxed_str())))?;
+        bl.insert(core_block).map_err(|e| {
+            CasperError::InvalidState(Box::leak(format!("insert: {e}").into_boxed_str()))
+        })?;
 
         // Drain the pending buffer for blocks whose predecessors are now
         // satisfied. We re-check in a loop because each newly-inserted block
@@ -575,11 +578,7 @@ impl CordialCasper for CordialCasperAdapter {
             .blocklace
             .try_lock()
             .map_err(|_| CasperError::InvalidState("blocklace locked"))?;
-        let dom: HashSet<Vec<u8>> = bl
-            .dom()
-            .iter()
-            .map(|id| id.content_hash.to_vec())
-            .collect();
+        let dom: HashSet<Vec<u8>> = bl.dom().iter().map(|id| id.content_hash.to_vec()).collect();
 
         // A buffer entry is "dependency-free" when all its parent_hash_list
         // entries are in the DAG.
