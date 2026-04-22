@@ -57,22 +57,23 @@ use std::collections::HashMap;
 
 use cordial_miners_core::execution::{
     Bond, ExecutionRequest, ExecutionResult, ProcessedDeploy as CmProcessedDeploy,
-    ProcessedSystemDeploy as CmProcessedSystemDeploy, RejectReason, RejectedDeploy,
-    RuntimeError, RuntimeManager as CoreRuntimeManager, SignedDeploy as CmSignedDeploy,
-    SystemDeployRequest,
+    ProcessedSystemDeploy as CmProcessedSystemDeploy, RejectReason, RejectedDeploy, RuntimeError,
+    RuntimeManager as CoreRuntimeManager, SignedDeploy as CmSignedDeploy, SystemDeployRequest,
 };
 use cordial_miners_core::types::NodeId;
 
-use casper::rust::util::rholang::runtime_manager::RuntimeManager as F1r3RuntimeManager;
-use casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum;
 use casper::rust::util::rholang::costacc::{
     close_block_deploy::CloseBlockDeploy, slash_deploy::SlashDeploy,
 };
+use casper::rust::util::rholang::runtime_manager::RuntimeManager as F1r3RuntimeManager;
+use casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum;
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use crypto::rust::public_key::PublicKey;
 use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signed::Signed;
-use models::rust::casper::protocol::casper_message::{DeployData, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData};
+use models::rust::casper::protocol::casper_message::{
+    DeployData, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData,
+};
 use rholang::rust::interpreter::system_processes::BlockData;
 
 /// The adapter. Holds a mutable reference to f1r3node's `RuntimeManager`
@@ -133,7 +134,7 @@ impl<'a> CoreRuntimeManager for F1r3RspaceRuntime<'a> {
                 block_data,
                 invalid_blocks,
             ))
-            .map_err(|e| RuntimeError::InternalError(format!("compute_state: {:?}", e)))?;
+            .map_err(|e| RuntimeError::InternalError(format!("compute_state: {e:?}")))?;
 
         // Translate back into ExecutionResult
         let processed_deploys: Vec<CmProcessedDeploy> = f1r3_processed
@@ -261,7 +262,7 @@ pub fn processed_deploy_from_f1r3node(
     };
     Ok(CmProcessedDeploy {
         deploy: signed,
-        cost: u64::try_from(pd.cost.cost).unwrap_or(0),
+        cost: pd.cost.cost,
         is_failed: pd.is_failed,
     })
 }
