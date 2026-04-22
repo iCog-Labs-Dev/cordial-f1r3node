@@ -1,5 +1,5 @@
-use cordial_miners_core::crypto::{hash_content, sign, verify};
 use cordial_miners_core::BlockContent;
+use cordial_miners_core::crypto::{hash_content, sign, verify};
 use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
 use std::collections::HashSet;

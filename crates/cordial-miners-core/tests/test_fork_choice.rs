@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::{fork_choice, collect_validator_tips, is_cordial};
+use cordial_miners_core::consensus::{collect_validator_tips, fork_choice, is_cordial};
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 // ── Helpers ──
@@ -47,7 +47,10 @@ fn insert(bl: &mut Blocklace, block: &Block) {
 }
 
 fn bonds(entries: &[(u8, u64)]) -> HashMap<NodeId, u64> {
-    entries.iter().map(|(id, stake)| (node(*id), *stake)).collect()
+    entries
+        .iter()
+        .map(|(id, stake)| (node(*id), *stake))
+        .collect()
 }
 
 // ── Tests ──

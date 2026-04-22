@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 use crate::network::message::Message;
 
@@ -56,12 +56,12 @@ impl Peer {
                         let my_id = my_id.clone();
                         tokio::spawn(async move {
                             if let Err(e) = handle_inbound(stream, addr, my_id, conns, tx).await {
-                                eprintln!("inbound connection from {} failed: {}", addr, e);
+                                eprintln!("inbound connection from {addr} failed: {e}");
                             }
                         });
                     }
                     Err(e) => {
-                        eprintln!("accept error: {}", e);
+                        eprintln!("accept error: {e}");
                     }
                 }
             }
@@ -119,14 +119,9 @@ impl Peer {
         // Spawn reader loop for this connection
         let tx = self.incoming_tx.clone();
         tokio::spawn(async move {
-            loop {
-                match recv_message(&mut stream).await {
-                    Ok(msg) => {
-                        if tx.send((remote, msg)).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
+            while let Ok(msg) = recv_message(&mut stream).await {
+                if tx.send((remote, msg)).await.is_err() {
+                    break;
                 }
             }
         });
@@ -187,13 +182,18 @@ async fn handle_inbound(
     };
 
     // Send HelloAck
-    let ack = Message::HelloAck { node_id: my_node_id };
+    let ack = Message::HelloAck {
+        node_id: my_node_id,
+    };
     send_message(&mut stream, &ack).await?;
 
     // Register the connection
-    connections.lock().await.insert(addr, Connection {
-        node_id: remote_node_id,
-    });
+    connections.lock().await.insert(
+        addr,
+        Connection {
+            node_id: remote_node_id,
+        },
+    );
 
     // Forward the Hello to the application as well
     let _ = tx.send((addr, hello)).await;

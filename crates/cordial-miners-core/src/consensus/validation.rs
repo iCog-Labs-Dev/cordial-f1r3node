@@ -146,12 +146,10 @@ pub fn validate_block(
     }
 
     // 3. Sender is bonded
-    if config.check_sender {
-        if !bonds.contains_key(&block.identity.creator) {
-            errors.push(InvalidBlock::UnknownSender {
-                creator: block.identity.creator.clone(),
-            });
-        }
+    if config.check_sender && !bonds.contains_key(&block.identity.creator) {
+        errors.push(InvalidBlock::UnknownSender {
+            creator: block.identity.creator.clone(),
+        });
     }
 
     // 4. Closure axiom — all predecessors must exist
@@ -183,9 +181,7 @@ pub fn validate_block(
                 .content
                 .predecessors
                 .iter()
-                .any(|pred_id| {
-                    blocklace.preceedes_or_equals(&existing.identity, pred_id)
-                });
+                .any(|pred_id| blocklace.preceedes_or_equals(&existing.identity, pred_id));
 
             let existing_has_new_in_ancestry =
                 blocklace.precedes(&block.identity, &existing.identity);

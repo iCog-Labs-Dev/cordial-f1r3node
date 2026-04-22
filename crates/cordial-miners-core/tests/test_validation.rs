@@ -1,12 +1,12 @@
-use std::collections::HashMap;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    validate_block, validated_insert, InvalidBlock, ValidationConfig, ValidationResult,
+    InvalidBlock, ValidationConfig, ValidationResult, validate_block, validated_insert,
 };
 use cordial_miners_core::crypto::{hash_content, sign};
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 // ── Helpers ──
@@ -97,7 +97,10 @@ fn insert(bl: &mut Blocklace, block: &Block) {
 }
 
 fn bonds(entries: &[(u8, u64)]) -> HashMap<NodeId, u64> {
-    entries.iter().map(|(id, stake)| (node(*id), *stake)).collect()
+    entries
+        .iter()
+        .map(|(id, stake)| (node(*id), *stake))
+        .collect()
 }
 
 /// Config that skips crypto checks (for testing structural validation).
@@ -128,7 +131,12 @@ fn missing_predecessor_fails_closure() {
     let b = bonds(&[(1, 100)]);
     let result = validate_block(&c, &bl, &b, &no_crypto_config());
     assert!(!result.is_valid());
-    assert!(result.errors().iter().any(|e| matches!(e, InvalidBlock::MissingPredecessors { .. })));
+    assert!(
+        result
+            .errors()
+            .iter()
+            .any(|e| matches!(e, InvalidBlock::MissingPredecessors { .. }))
+    );
 }
 
 #[test]
@@ -151,7 +159,12 @@ fn unbonded_sender_fails() {
     let b = bonds(&[(2, 100)]); // node 1 is NOT bonded
     let result = validate_block(&g, &bl, &b, &no_crypto_config());
     assert!(!result.is_valid());
-    assert!(result.errors().iter().any(|e| matches!(e, InvalidBlock::UnknownSender { .. })));
+    assert!(
+        result
+            .errors()
+            .iter()
+            .any(|e| matches!(e, InvalidBlock::UnknownSender { .. }))
+    );
 }
 
 #[test]
@@ -177,7 +190,12 @@ fn equivocating_block_fails_chain_axiom() {
     let b = bonds(&[(1, 100)]);
     let result = validate_block(&g2, &bl, &b, &no_crypto_config());
     assert!(!result.is_valid());
-    assert!(result.errors().iter().any(|e| matches!(e, InvalidBlock::Equivocation { .. })));
+    assert!(
+        result
+            .errors()
+            .iter()
+            .any(|e| matches!(e, InvalidBlock::Equivocation { .. }))
+    );
 }
 
 #[test]
@@ -244,7 +262,12 @@ fn wrong_content_hash_fails() {
     };
     let result = validate_block(&block, &bl, &b, &config);
     assert!(!result.is_valid());
-    assert!(result.errors().iter().any(|e| matches!(e, InvalidBlock::InvalidContentHash { .. })));
+    assert!(
+        result
+            .errors()
+            .iter()
+            .any(|e| matches!(e, InvalidBlock::InvalidContentHash { .. }))
+    );
 }
 
 // ── Signature ──
@@ -273,7 +296,12 @@ fn invalid_signature_fails() {
     let config = ValidationConfig::default();
     let result = validate_block(&g, &bl, &b, &config);
     assert!(!result.is_valid());
-    assert!(result.errors().iter().any(|e| matches!(e, InvalidBlock::InvalidSignature)));
+    assert!(
+        result
+            .errors()
+            .iter()
+            .any(|e| matches!(e, InvalidBlock::InvalidSignature))
+    );
 }
 
 // ── Cordial condition ──
@@ -320,7 +348,12 @@ fn non_cordial_block_fails_strict_validation() {
     };
     let result = validate_block(&non_cordial, &bl, &b, &config);
     assert!(!result.is_valid());
-    assert!(result.errors().iter().any(|e| matches!(e, InvalidBlock::NotCordial { .. })));
+    assert!(
+        result
+            .errors()
+            .iter()
+            .any(|e| matches!(e, InvalidBlock::NotCordial { .. }))
+    );
 }
 
 // ── validated_insert ──

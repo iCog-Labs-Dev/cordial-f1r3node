@@ -72,8 +72,14 @@ fn hash_is_independent_of_predecessor_insertion_order() {
     set2.insert(pred_b.clone());
     set2.insert(pred_a.clone());
 
-    let c1 = BlockContent { payload: vec![10], predecessors: set1 };
-    let c2 = BlockContent { payload: vec![10], predecessors: set2 };
+    let c1 = BlockContent {
+        payload: vec![10],
+        predecessors: set1,
+    };
+    let c2 = BlockContent {
+        payload: vec![10],
+        predecessors: set2,
+    };
     assert_eq!(hash_content(&c1), hash_content(&c2));
 }
 

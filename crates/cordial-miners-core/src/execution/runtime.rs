@@ -101,7 +101,8 @@ pub trait RuntimeManager {
     ///
     /// Returns the resulting post-state hash and per-deploy outcomes.
     /// This should be deterministic: the same input produces the same output.
-    fn execute_block(&mut self, request: ExecutionRequest) -> Result<ExecutionResult, RuntimeError>;
+    fn execute_block(&mut self, request: ExecutionRequest)
+    -> Result<ExecutionResult, RuntimeError>;
 
     /// Validate that a block's declared post-state hash matches what the
     /// runtime produces when replaying the block's deploys.
@@ -176,7 +177,10 @@ impl Default for MockRuntime {
 }
 
 impl RuntimeManager for MockRuntime {
-    fn execute_block(&mut self, request: ExecutionRequest) -> Result<ExecutionResult, RuntimeError> {
+    fn execute_block(
+        &mut self,
+        request: ExecutionRequest,
+    ) -> Result<ExecutionResult, RuntimeError> {
         // 1. Check pre-state is known (unless permissive)
         if !self.is_permissive() && !self.known_states.contains(&request.pre_state_hash) {
             return Err(RuntimeError::UnknownPreState);
@@ -287,7 +291,10 @@ fn compute_mock_post_state(
     hasher.update((system.len() as u64).to_le_bytes());
     for sd in system {
         match sd {
-            ProcessedSystemDeploy::Slash { validator, succeeded } => {
+            ProcessedSystemDeploy::Slash {
+                validator,
+                succeeded,
+            } => {
                 hasher.update([0u8]); // tag
                 hasher.update((validator.0.len() as u64).to_le_bytes());
                 hasher.update(&validator.0);

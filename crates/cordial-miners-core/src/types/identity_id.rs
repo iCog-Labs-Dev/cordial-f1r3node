@@ -5,7 +5,7 @@ use super::node_id::NodeId;
 /// From the paper (§2.2):
 ///   i = signedhash((v, P), k_p)
 ///
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct BlockIdentity {
