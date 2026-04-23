@@ -1,5 +1,5 @@
-use serde::{Serialize, Deserialize};
 use crate::types::NodeId;
+use serde::{Deserialize, Serialize};
 
 /// Typed block payload for Cordial Miners consensus.
 ///
@@ -162,7 +162,7 @@ impl CordialBlockPayload {
 
     /// Deserialize a payload from `BlockContent.payload` bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
-        bincode::deserialize(bytes).map_err(|e| format!("payload deserialization failed: {}", e))
+        bincode::deserialize(bytes).map_err(|e| format!("payload deserialization failed: {e}"))
     }
 }
 

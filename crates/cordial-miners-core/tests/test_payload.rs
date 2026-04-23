@@ -1,6 +1,6 @@
 use cordial_miners_core::execution::{
-    CordialBlockPayload, BlockState, Bond, Deploy, SignedDeploy,
-    ProcessedDeploy, RejectedDeploy, RejectReason, ProcessedSystemDeploy,
+    BlockState, Bond, CordialBlockPayload, Deploy, ProcessedDeploy, ProcessedSystemDeploy,
+    RejectReason, RejectedDeploy, SignedDeploy,
 };
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
@@ -11,8 +11,14 @@ fn node(id: u8) -> NodeId {
 
 fn sample_bonds() -> Vec<Bond> {
     vec![
-        Bond { validator: node(1), stake: 100 },
-        Bond { validator: node(2), stake: 200 },
+        Bond {
+            validator: node(1),
+            stake: 100,
+        },
+        Bond {
+            validator: node(2),
+            stake: 200,
+        },
     ]
 }
 
@@ -255,14 +261,13 @@ fn chain_of_typed_blocks() {
     assert!(bl.is_closed());
 
     // Verify both payloads can be recovered
-    let g_recovered = CordialBlockPayload::from_bytes(
-        &bl.get(&genesis.identity).unwrap().content.payload,
-    ).unwrap();
+    let g_recovered =
+        CordialBlockPayload::from_bytes(&bl.get(&genesis.identity).unwrap().content.payload)
+            .unwrap();
     assert_eq!(g_recovered.state.block_number, 0);
 
-    let b1_recovered = CordialBlockPayload::from_bytes(
-        &bl.get(&b1.identity).unwrap().content.payload,
-    ).unwrap();
+    let b1_recovered =
+        CordialBlockPayload::from_bytes(&bl.get(&b1.identity).unwrap().content.payload).unwrap();
     assert_eq!(b1_recovered.state.block_number, 1);
     assert_eq!(b1_recovered.deploys.len(), 1);
     assert_eq!(b1_recovered.deploys[0].cost, 500);

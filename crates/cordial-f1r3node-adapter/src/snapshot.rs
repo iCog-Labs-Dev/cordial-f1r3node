@@ -59,13 +59,11 @@
 use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::{
-    collect_validator_tips, find_last_finalized, fork_choice,
-};
-use cordial_miners_core::execution::{compute_deploys_in_scope, CordialBlockPayload};
+use cordial_miners_core::consensus::{collect_validator_tips, find_last_finalized, fork_choice};
+use cordial_miners_core::execution::{CordialBlockPayload, compute_deploys_in_scope};
 use cordial_miners_core::types::{BlockIdentity, NodeId};
 
-use crate::block_translation::{block_to_message, BlockMessage, Justification, TranslationError};
+use crate::block_translation::{BlockMessage, Justification, TranslationError, block_to_message};
 
 /// Simplified mirror of f1r3node's `KeyValueDagRepresentation`.
 ///
@@ -145,7 +143,10 @@ pub struct CasperSnapshot {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SnapshotError {
     /// A block's payload bytes could not be decoded as `CordialBlockPayload`.
-    PayloadDecodeFailed { block_hash: [u8; 32], reason: String },
+    PayloadDecodeFailed {
+        block_hash: [u8; 32],
+        reason: String,
+    },
 
     /// Translating a tip block into a `BlockMessage` failed.
     TipTranslationFailed(TranslationError),
@@ -196,7 +197,8 @@ pub fn build_snapshot(
                 value: payload.state.block_number,
             }
         })?;
-        dag.block_number_map.insert(id.content_hash.to_vec(), block_number);
+        dag.block_number_map
+            .insert(id.content_hash.to_vec(), block_number);
         dag.height_map
             .entry(block_number)
             .or_default()
@@ -272,7 +274,11 @@ pub fn build_snapshot(
     // 9. deploys_in_scope: walk ancestry of current tips within the
     //    deploy lifespan window.
     let lifespan = shard_conf.deploy_lifespan.max(0) as u64;
-    let max_block_num_u64 = payload_for.values().map(|p| p.state.block_number).max().unwrap_or(0);
+    let max_block_num_u64 = payload_for
+        .values()
+        .map(|p| p.state.block_number)
+        .max()
+        .unwrap_or(0);
     let tip_set: HashSet<BlockIdentity> = match &fc {
         Some(fc) => fc.tips.iter().cloned().collect(),
         None => HashSet::new(),

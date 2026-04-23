@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use super::identity_id::BlockIdentity;
+use std::collections::HashSet;
 
 /// C = (v, P) — the block content that gets hashed to form the block identity.
 ///
@@ -7,7 +7,7 @@ use super::identity_id::BlockIdentity;
 ///   The block content is a pair C = (v, P) of an arbitrary value v
 ///   (the block payload) and a set P of the block identities of the
 ///   predecessors of b.
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockContent {

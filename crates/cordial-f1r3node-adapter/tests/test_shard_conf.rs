@@ -87,10 +87,16 @@ fn from_cordial_leaves_other_fields_at_defaults() {
     assert_eq!(c.bond_maximum, d.bond_maximum);
     assert_eq!(c.epoch_length, d.epoch_length);
     assert_eq!(c.quarantine_length, d.quarantine_length);
-    assert_eq!(c.disable_late_block_filtering, d.disable_late_block_filtering);
+    assert_eq!(
+        c.disable_late_block_filtering,
+        d.disable_late_block_filtering
+    );
     assert_eq!(c.enable_mergeable_channel_gc, d.enable_mergeable_channel_gc);
     assert_eq!(c.finalizer_conf, d.finalizer_conf);
-    assert_eq!(c.synchrony_recovery_max_bypasses, d.synchrony_recovery_max_bypasses);
+    assert_eq!(
+        c.synchrony_recovery_max_bypasses,
+        d.synchrony_recovery_max_bypasses
+    );
     assert_eq!(
         c.synchrony_finalized_baseline_max_distance,
         d.synchrony_finalized_baseline_max_distance
@@ -137,8 +143,10 @@ fn to_snapshot_conf_copies_relevant_fields() {
 
 #[test]
 fn to_snapshot_conf_maps_positive_max_parent_depth_to_some() {
-    let mut c = CasperShardConf::default();
-    c.max_parent_depth = 16;
+    let c = CasperShardConf {
+        max_parent_depth: 16,
+        ..CasperShardConf::default()
+    };
     let proj = c.to_snapshot_conf();
     assert_eq!(proj.max_parent_depth, Some(16));
 }

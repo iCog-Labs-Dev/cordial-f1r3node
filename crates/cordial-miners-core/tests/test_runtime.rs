@@ -30,7 +30,10 @@ fn empty_request(block_number: u64) -> ExecutionRequest {
         pre_state_hash: vec![],
         deploys: vec![],
         system_deploys: vec![],
-        bonds: vec![Bond { validator: node(1), stake: 100 }],
+        bonds: vec![Bond {
+            validator: node(1),
+            stake: 100,
+        }],
         block_number,
     }
 }
@@ -74,7 +77,10 @@ fn same_input_produces_same_post_state_hash() {
         pre_state_hash: vec![],
         deploys: vec![make_deploy(1, b"hello", 1000)],
         system_deploys: vec![],
-        bonds: vec![Bond { validator: node(1), stake: 100 }],
+        bonds: vec![Bond {
+            validator: node(1),
+            stake: 100,
+        }],
         block_number: 1,
     };
 
@@ -108,12 +114,24 @@ fn different_deploys_produce_different_post_state_hashes() {
 fn bond_ordering_does_not_affect_post_state_hash() {
     let mut rt = MockRuntime::permissive();
     let bonds_a = vec![
-        Bond { validator: node(1), stake: 100 },
-        Bond { validator: node(2), stake: 200 },
+        Bond {
+            validator: node(1),
+            stake: 100,
+        },
+        Bond {
+            validator: node(2),
+            stake: 200,
+        },
     ];
     let bonds_b = vec![
-        Bond { validator: node(2), stake: 200 },
-        Bond { validator: node(1), stake: 100 },
+        Bond {
+            validator: node(2),
+            stake: 200,
+        },
+        Bond {
+            validator: node(1),
+            stake: 100,
+        },
     ];
 
     let req_a = ExecutionRequest {
@@ -123,7 +141,10 @@ fn bond_ordering_does_not_affect_post_state_hash() {
         bonds: bonds_a,
         block_number: 1,
     };
-    let req_b = ExecutionRequest { bonds: bonds_b, ..req_a.clone() };
+    let req_b = ExecutionRequest {
+        bonds: bonds_b,
+        ..req_a.clone()
+    };
 
     let r1 = rt.execute_block(req_a).unwrap();
     let r2 = rt.execute_block(req_b).unwrap();
@@ -212,8 +233,14 @@ fn slash_removes_validator_bond() {
         deploys: vec![],
         system_deploys: vec![SystemDeployRequest::Slash { validator: node(2) }],
         bonds: vec![
-            Bond { validator: node(1), stake: 100 },
-            Bond { validator: node(2), stake: 200 },
+            Bond {
+                validator: node(1),
+                stake: 100,
+            },
+            Bond {
+                validator: node(2),
+                stake: 200,
+            },
         ],
         block_number: 1,
     };
@@ -222,7 +249,10 @@ fn slash_removes_validator_bond() {
     assert_eq!(r.new_bonds[0].validator, node(1));
     assert!(matches!(
         r.system_deploys[0],
-        ProcessedSystemDeploy::Slash { succeeded: true, .. }
+        ProcessedSystemDeploy::Slash {
+            succeeded: true,
+            ..
+        }
     ));
 }
 
@@ -232,14 +262,22 @@ fn slash_of_unknown_validator_reports_not_succeeded() {
     let req = ExecutionRequest {
         pre_state_hash: vec![],
         deploys: vec![],
-        system_deploys: vec![SystemDeployRequest::Slash { validator: node(99) }],
-        bonds: vec![Bond { validator: node(1), stake: 100 }],
+        system_deploys: vec![SystemDeployRequest::Slash {
+            validator: node(99),
+        }],
+        bonds: vec![Bond {
+            validator: node(1),
+            stake: 100,
+        }],
         block_number: 1,
     };
     let r = rt.execute_block(req).unwrap();
     assert!(matches!(
         r.system_deploys[0],
-        ProcessedSystemDeploy::Slash { succeeded: false, .. }
+        ProcessedSystemDeploy::Slash {
+            succeeded: false,
+            ..
+        }
     ));
     assert_eq!(r.new_bonds.len(), 1); // no change
 }
@@ -295,7 +333,10 @@ fn block_with_wrong_pre_state_fails_in_strict_mode() {
         bonds: vec![],
         block_number: 2,
     };
-    assert_eq!(rt.execute_block(req2).unwrap_err(), RuntimeError::UnknownPreState);
+    assert_eq!(
+        rt.execute_block(req2).unwrap_err(),
+        RuntimeError::UnknownPreState
+    );
 }
 
 // ── validate_post_state ──
