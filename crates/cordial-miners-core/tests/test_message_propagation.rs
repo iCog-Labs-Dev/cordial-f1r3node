@@ -9,14 +9,19 @@ fn make_genesis() -> Block {
             creator: NodeId(vec![1]),
             signature: vec![],
         },
-        content: BlockContent { payload: vec![42], predecessors: HashSet::new() },
+        content: BlockContent {
+            payload: vec![42],
+            predecessors: HashSet::new(),
+        },
     }
 }
 
 #[test]
 fn broadcast_block_serializes_and_deserializes() {
     let block = make_genesis();
-    let msg = Message::BroadcastBlock { block: block.clone() };
+    let msg = Message::BroadcastBlock {
+        block: block.clone(),
+    };
     let bytes = bincode::serialize(&msg).unwrap();
     let decoded: Message = bincode::deserialize(&bytes).unwrap();
     assert_eq!(msg, decoded);
@@ -63,8 +68,16 @@ fn sync_request_roundtrips() {
 #[test]
 fn sync_response_roundtrips() {
     let ids = vec![
-        BlockIdentity { content_hash: [0x01; 32], creator: NodeId(vec![1]), signature: vec![] },
-        BlockIdentity { content_hash: [0x02; 32], creator: NodeId(vec![2]), signature: vec![] },
+        BlockIdentity {
+            content_hash: [0x01; 32],
+            creator: NodeId(vec![1]),
+            signature: vec![],
+        },
+        BlockIdentity {
+            content_hash: [0x02; 32],
+            creator: NodeId(vec![2]),
+            signature: vec![],
+        },
     ];
     let msg = Message::SyncResponse { block_ids: ids };
     let bytes = bincode::serialize(&msg).unwrap();
