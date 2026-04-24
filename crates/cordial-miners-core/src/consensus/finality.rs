@@ -86,9 +86,9 @@ pub fn check_finality(
         .iter()
         .filter(|(node, _)| !equivocators.contains(node))
         .filter(|(node, _)| {
-            blocklace.tip_of(node).map_or(false, |tip| {
-                blocklace.preceedes_or_equals(block_id, &tip.identity)
-            })
+            blocklace
+                .tip_of(node)
+                .is_some_and(|tip| blocklace.preceedes_or_equals(block_id, &tip.identity))
         })
         .map(|(_, stake)| stake)
         .sum();
@@ -138,11 +138,14 @@ pub fn find_last_finalized(
 
     // Find the "highest" finalized block: the one not preceded by any
     // other finalized block (no other finalized block has it as ancestor)
-    finalized.iter().find(|candidate| {
-        !finalized.iter().any(|other| {
-            other != *candidate && blocklace.precedes(candidate, other)
+    finalized
+        .iter()
+        .find(|candidate| {
+            !finalized
+                .iter()
+                .any(|other| other != *candidate && blocklace.precedes(candidate, other))
         })
-    }).cloned()
+        .cloned()
 }
 
 /// Check if a block can still potentially be finalized, or if it has been
@@ -180,9 +183,9 @@ pub fn can_be_finalized(
         .iter()
         .filter(|(node, _)| !equivocators.contains(node))
         .filter(|(node, _)| {
-            blocklace.tip_of(node).map_or(false, |tip| {
-                blocklace.preceedes_or_equals(block_id, &tip.identity)
-            })
+            blocklace
+                .tip_of(node)
+                .is_some_and(|tip| blocklace.preceedes_or_equals(block_id, &tip.identity))
         })
         .map(|(_, stake)| stake)
         .sum();

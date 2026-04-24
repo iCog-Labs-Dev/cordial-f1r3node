@@ -133,7 +133,11 @@ impl DeployPool {
         let lifespan = self.config.deploy_lifespan;
         let mut removed = Vec::new();
         self.deploys.retain(|sig, d| {
-            let keep = !is_block_expired(d.deploy.valid_after_block_number, current_block_number, lifespan);
+            let keep = !is_block_expired(
+                d.deploy.valid_after_block_number,
+                current_block_number,
+                lifespan,
+            );
             if !keep {
                 removed.push(sig.clone());
             }
@@ -166,7 +170,11 @@ impl DeployPool {
             })
             .filter(|d| {
                 // Not block-expired
-                !is_block_expired(d.deploy.valid_after_block_number, current_block_number, lifespan)
+                !is_block_expired(
+                    d.deploy.valid_after_block_number,
+                    current_block_number,
+                    lifespan,
+                )
             })
             .filter(|_d| {
                 // Not time-expired: would check d.deploy.expiration_timestamp here
@@ -205,11 +213,8 @@ impl DeployPool {
             vec![(*sorted.last().unwrap()).clone()]
         } else {
             // (cap - 1) oldest + 1 newest
-            let mut out: Vec<SignedDeploy> = sorted
-                .iter()
-                .take(cap - 1)
-                .map(|d| (*d).clone())
-                .collect();
+            let mut out: Vec<SignedDeploy> =
+                sorted.iter().take(cap - 1).map(|d| (*d).clone()).collect();
             out.push((*sorted.last().unwrap()).clone());
             out
         };
@@ -272,20 +277,20 @@ pub fn compute_deploys_in_scope(
         }
 
         // Deserialize payload and extract deploy signatures
-        if let Some(content) = blocklace.content(&current_id) {
-            if let Ok(payload) = CordialBlockPayload::from_bytes(&content.payload) {
-                // Skip blocks outside the lifespan window
-                if payload.state.block_number < earliest {
-                    continue;
-                }
-                for pd in &payload.deploys {
-                    sigs.insert(pd.deploy.signature.clone());
-                }
-                // Continue walking ancestors
-                for pred in &content.predecessors {
-                    if !visited.contains(pred) {
-                        queue.push(pred.clone());
-                    }
+        if let Some(content) = blocklace.content(&current_id)
+            && let Ok(payload) = CordialBlockPayload::from_bytes(&content.payload)
+        {
+            // Skip blocks outside the lifespan window
+            if payload.state.block_number < earliest {
+                continue;
+            }
+            for pd in &payload.deploys {
+                sigs.insert(pd.deploy.signature.clone());
+            }
+            // Continue walking ancestors
+            for pred in &content.predecessors {
+                if !visited.contains(pred) {
+                    queue.push(pred.clone());
                 }
             }
         }
