@@ -2,9 +2,11 @@ name: Rust
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "master", "dev" ]
   pull_request:
-    branches: [ "master" ]
+    branches: [ "master", "dev" ]
+    # Explicitly including types ensures activity from forks triggers the CI
+    types: [opened, synchronize, reopened]
 
 env:
   CARGO_TERM_COLOR: always
