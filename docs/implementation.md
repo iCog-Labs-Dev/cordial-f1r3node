@@ -12,7 +12,7 @@ The blocklace is a DAG-based data structure used in Byzantine fault-tolerant dis
 
 The repo is a Cargo workspace with three crates, layered from bottom to top:
 
-- **`crates/blocklace/`** — the standalone consensus library. No f1r3node dependencies. SHA-256 + ED25519.
+- **`crates/blocklace/`** — the standalone consensus library. No f1r3node dependencies. Blake2b-256 + Secp256k1 (f1r3node compatible) with SHA-256 + ED25519 legacy support.
 - **`crates/blocklace-f1r3node/`** — f1r3node integration adapter: Casper trait mirror, block translation, snapshot construction, crypto bridge. Also no f1r3node dependencies — uses mirror types so the translation layer builds standalone.
 - **`crates/blocklace-f1r3rspace/`** — real RSpace-backed `RuntimeManager` adapter. Depends on f1r3node's `casper`, `models`, `rholang`, `rspace_plus_plus`, `crypto`, `shared` path dependencies. Requires `protoc` on PATH to build.
 
@@ -29,7 +29,7 @@ crates/
       main.rs            -- Binary entry point (placeholder)
       block.rs           -- Block struct and free functions
       blocklace.rs       -- Blocklace struct (the core data structure)
-      crypto.rs          -- SHA-256 hashing, ED25519 signing and verification
+      crypto.rs          -- Blake2b-256 hashing, Secp256k1 signing and verification with algorithm abstraction traits for backward compatibility
       consensus/
         mod.rs
         fork_choice.rs   -- Global fork choice, validator tips, cordial condition
@@ -100,7 +100,7 @@ The cryptographic identity of a block: `i = signedhash((v, P), k_p)`.
 
 | Field          | Type       | Description                                |
 |----------------|------------|--------------------------------------------|
-| `content_hash` | `[u8; 32]` | SHA-256 hash of the serialized BlockContent |
+| `content_hash` | `[u8; 32]` | Blake2b-256 hash of the serialized BlockContent (default) |
 | `creator`      | `NodeId`   | The node that signed this block            |
 | `signature`    | `Vec<u8>`  | `sign(content_hash, creator_private_key)`  |
 
@@ -172,15 +172,19 @@ The central data structure -- a set of blocks stored as `HashMap<BlockIdentity, 
 
 | Crate            | Version | Purpose                        |
 |------------------|---------|--------------------------------|
-| `sha2`           | 0.10    | SHA-256 content hashing        |
-| `ed25519-dalek`  | 2       | ED25519 signing & verification |
+| `blake2`         | 0.10    | Blake2b-256 content hashing (default) |
+| `k256`           | 0.13    | Secp256k1 signing & verification (default) |
+| `sha2`           | 0.10    | SHA-256 content hashing (legacy) |
+| `ed25519-dalek`  | 2       | ED25519 signing & verification (legacy) |
 | `rand`           | 0.8     | Key generation (tests)         |
 
 | Function         | Description                                                       |
 |------------------|-------------------------------------------------------------------|
-| `hash_content()` | Deterministic SHA-256 hash: length-prefixed payload + sorted predecessors |
-| `sign()`         | ED25519 signature (64 bytes) over a content hash                  |
-| `verify()`       | Verify an ED25519 signature against a public key                  |
+| `hash_content()` | Deterministic Blake2b-256 hash: length-prefixed payload + sorted predecessors (default) |
+| `sign()`         | Secp256k1 DER signature (70-72 bytes) over a content hash (default) |
+| `verify()`       | Verify a Secp256k1 signature against a public key (default) |
+
+**Algorithm Abstraction**: The `Hasher` and `SignatureScheme` traits enable backward compatibility - SHA-256 and ED25519 remain available through explicit algorithm selection.
 
 ---
 
@@ -233,7 +237,7 @@ Block validation pipeline that checks blocks before insertion. Replaces CBC Casp
 | Variant                | Description                                          |
 |------------------------|------------------------------------------------------|
 | `InvalidContentHash`   | `content_hash` does not match `hash(content)`        |
-| `InvalidSignature`     | ED25519 signature verification failed                |
+| `InvalidSignature`     | Signature verification failed (supports both Secp256k1 DER and ED25519) |
 | `UnknownSender`        | Creator is not a bonded validator                    |
 | `MissingPredecessors`  | Closure axiom violation                              |
 | `Equivocation`         | Chain axiom violation (creates fork in creator's chain) |
@@ -329,7 +333,7 @@ Abstract interface between consensus and execution. Defines what the blocklace n
 - **Rejection**: deploys with empty signatures are rejected with `RejectReason::InvalidSignature`
 - **Slash**: removes the validator's bond entry; `succeeded = true` iff the bond existed
 - **CloseBlock**: always succeeds
-- **Post-state hash**: SHA-256 over `(pre_state, block_number, processed_deploys, system_deploys, sorted bonds)` — deterministic and bond-order-independent
+- **Post-state hash**: Blake2b-256 over `(pre_state, block_number, processed_deploys, system_deploys, sorted bonds)` — deterministic and bond-order-independent
 - **Modes**: `new()` chains pre/post states strictly (rejects unknown pre-states); `permissive()` accepts any pre-state for tests that don't care about chaining
 
 ---
@@ -395,8 +399,8 @@ Pluggable hashing / signing / verification traits with f1r3node-compatible imple
 
 | Trait | Implementations |
 |-------|-----------------|
-| `Hasher` | `Sha256Hasher` (blocklace native), `Blake2b256Hasher` (Blake2b with U32 digest, matches f1r3node's `Blake2b256::hash`) |
-| `Signer` / `Verifier` | `Ed25519` (blocklace native), `Secp256k1` (k256 ECDSA, f1r3node's primary validator algo) |
+| `Hasher` | `Blake2b256Hasher` (default, f1r3node compatible), `Sha256Hasher` (legacy) |
+| `Signer` / `Verifier` | `Secp256k1` (default, k256 ECDSA, f1r3node compatible), `Ed25519` (legacy) |
 
 `SigAlgorithm` enum carries the wire identifier strings (`"ed25519"`, `"secp256k1"`) f1r3node puts in `BlockMessage.sig_algorithm`. `CryptoError` covers wrong-length keys/signatures and bad curve points without panicking.
 
@@ -488,7 +492,7 @@ Five public helper functions, each unit-tested:
 
 ### Known caveats
 
-- **Signature algorithm mismatch.** f1r3node's `SignaturesAlgFactory` explicitly disables ed25519, registering only `secp256k1` and `secp256k1-eth`. The adapter hardcodes `Secp256k1` as the algorithm for every translated deploy. Ed25519-signed deploys (our core-crate default) will round-trip by shape but will not verify on f1r3node's side. Adapter callers need to feed secp256k1-signed deploys for verification to pass downstream.
+- **Signature algorithm compatibility.** f1r3node's `SignaturesAlgFactory` uses `secp256k1` and `secp256k1-eth`. The core crate now defaults to Secp256k1, ensuring full compatibility with f1r3node. ED25519 remains available for legacy use through the algorithm abstraction layer.
 - **`new_bonds` is unchanged.** `execute_block` returns the request's bonds verbatim. Bonds in f1r3node are addressable by post-state hash and read via `RuntimeManager::compute_bonds(post_hash)`. Adding that call is follow-up work.
 - **Slash uses validator bytes as the `invalid_block_hash` placeholder.** Real slashes need the actual invalid-block hash; our `SystemDeployRequest::Slash` only carries a validator NodeId. Callers needing tighter semantics should construct a richer request type.
 - **No end-to-end tests** in this crate. Unit tests cover pure translation; exercising `execute_block` against a real RuntimeManager requires LMDB + Rholang bootstrap. Belongs in a Phase 4 integration harness.
@@ -501,8 +505,10 @@ Five public helper functions, each unit-tested:
 |-----------|-------|----------------|
 | `test_block.rs` | 9 | Block struct, equality, hashing, is_initial, is_pointed_from |
 | `test_blocklace.rs` | 7 | Insert, closure axiom, map-view accessors |
-| `test_hash.rs` | 5 | SHA-256 determinism, uniqueness, ordering independence |
-| `test_sign.rs` | 6 | ED25519 sign/verify roundtrip, tamper detection |
+| `test_hash.rs` | 5 | SHA-256 determinism, uniqueness, ordering independence (legacy) |
+| `test_sign.rs` | 6 | ED25519 sign/verify roundtrip, tamper detection (legacy) |
+| `test_hash_with_blake.rs` | 6 | Blake2b-256 determinism, uniqueness, ordering independence (default) |
+| `test_sign_with_secp256k1.rs` | 7 | Secp256k1 DER sign/verify roundtrip, tamper detection (default) |
 | `test_message.rs` | 6 | Handshake/keepalive message serialization |
 | `test_message_propagation.rs` | 7 | Block propagation message serialization |
 | `test_peer.rs` | 7 | TCP peer binding, handshake, multi-client |
@@ -522,7 +528,7 @@ Five public helper functions, each unit-tested:
 | `test_block_translation.rs` | 13 | Block ↔ BlockMessage roundtrip, parents/justifications union, numeric overflow, deterministic ordering |
 | `test_snapshot.rs` | 16 | dag_set / height_map / child_map / latest_messages, finality, tips, parents, justifications, deploys_in_scope, equivocator exclusion |
 | `test_shard_conf.rs` | 8 | Full f1r3node defaults parity, from_cordial import, saturating casts, to_snapshot_conf projection |
-| `test_crypto_bridge.rs` | 22 | SHA-256 and Blake2b-256 known vectors, ED25519 and Secp256k1 roundtrip + tamper detection, compute_block_hash determinism and sender-differentiation |
+| `test_crypto_bridge.rs` | 22 | Blake2b-256 and SHA-256 known vectors, Secp256k1 and ED25519 roundtrip + tamper detection, compute_block_hash determinism and sender-differentiation |
 | `test_casper_adapter.rs` | 21 | Adapter construction, contains / dag_contains / buffer, deploy acceptance + rejection, estimator, get_snapshot, validate (accept / missing / invalid sender), handle_valid / handle_invalid, last_finalized, normalized_initial_fault |
 
 ### `crates/blocklace-f1r3rspace/tests/` — 13 tests
