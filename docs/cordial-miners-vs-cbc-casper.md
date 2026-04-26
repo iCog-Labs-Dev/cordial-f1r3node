@@ -510,7 +510,7 @@ A third workspace crate, `blocklace-f1r3rspace`, lands the real RSpace-backed `R
 | Translation helpers + 13 unit tests | **COMPLETE** |
 | End-to-end Rholang execution test (LMDB + Rholang bootstrap) | **NOT STARTED** — Phase 4 integration harness |
 | `compute_bonds` follow-up call so `new_bonds` is accurate | NOT STARTED |
-| Richer `SystemDeployRequest::Slash` carrying invalid-block hash | NOT STARTED |
+| Richer `SystemDeployRequest::Slash` carrying invalid-block hash | **COMPLETED** |
 | Secp256k1-signed deploy test fixtures | NOT STARTED |
 
 **Phase 3 + extension totals**: ~2,175 lines of adapter code across two crates, 93 tests, full workspace at 252 tests.
