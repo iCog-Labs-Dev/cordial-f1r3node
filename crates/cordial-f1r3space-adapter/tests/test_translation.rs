@@ -90,14 +90,17 @@ fn close_block_translates_to_close_variant() {
 fn slash_translates_to_slash_variant_with_validator_pk() {
     let pre_state = [0x42u8; 32];
     let f1 = system_deploy_to_f1r3node(
-        &SystemDeployRequest::Slash { validator: node(7) },
+        &SystemDeployRequest::Slash { 
+            validator: node(7), 
+            invalid_block_hash: vec![0x07; 32] 
+        },
         &pre_state,
     );
     match f1 {
         SystemDeployEnum::Slash(s) => {
             assert_eq!(s.pk.bytes.to_vec(), vec![7u8]);
-            // invalid_block_hash is set to the validator bytes as a placeholder
-            assert_eq!(s.invalid_block_hash.to_vec(), vec![7u8]);
+            // invalid_block_hash is now the real hash passed in the request
+            assert_eq!(s.invalid_block_hash.to_vec(), vec![0x07; 32]);
         }
         _ => panic!("expected Slash variant"),
     }
