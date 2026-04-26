@@ -40,10 +40,9 @@
 //!   `Signed::from_existing_signature` rather than re-signing, so our
 //!   deploy's existing signature is preserved verbatim.
 //! - **System deploys**: `Slash` requires a `PublicKey` and a block hash
-//!   (what's being slashed). Our `SystemDeployRequest::Slash` only carries
-//!   the validator NodeId. We use it as both the slashed-validator
-//!   identifier and as the `invalid_block_hash` placeholder — adapter
-//!   callers who need tighter semantics should construct a richer request.
+//!   (what's being slashed). Our `SystemDeployRequest::Slash` now carries
+//!   both the validator NodeId and the `invalid_block_hash`, so we pass
+//!   the real hash to f1r3node's `SlashDeploy`.
 //! - **Block data** (sender, seq_num, block_number): populated from
 //!   `ExecutionRequest.block_number` plus a default sender derived from the
 //!   bonds list. Timestamp is 0.
@@ -204,17 +203,17 @@ pub fn signed_deploy_to_f1r3node(sd: &CmSignedDeploy) -> Result<Signed<DeployDat
 /// Convert our `SystemDeployRequest` to f1r3node's `SystemDeployEnum`.
 ///
 /// `Slash` needs a `PublicKey` for the slashed validator and a "block
-/// hash that's being slashed"; our request carries only the NodeId, so we
-/// use it for both. `CloseBlock` needs an initial random seed; we derive
-/// one from the pre-state hash.
+/// hash that's being slashed"; our request now carries both the validator
+/// NodeId and the invalid_block_hash, so we pass the real hash. `CloseBlock`
+/// needs an initial random seed; we derive one from the pre-state hash.
 pub fn system_deploy_to_f1r3node(
     sd: &SystemDeployRequest,
     pre_state_hash: &[u8],
 ) -> SystemDeployEnum {
     let rand_seed = Blake2b512Random::create_from_bytes(pre_state_hash);
     match sd {
-        SystemDeployRequest::Slash { validator } => SystemDeployEnum::Slash(SlashDeploy {
-            invalid_block_hash: prost::bytes::Bytes::copy_from_slice(&validator.0),
+        SystemDeployRequest::Slash { validator, invalid_block_hash } => SystemDeployEnum::Slash(SlashDeploy {
+            invalid_block_hash: prost::bytes::Bytes::copy_from_slice(&invalid_block_hash),
             pk: PublicKey::from_bytes(&validator.0),
             initial_rand: rand_seed,
         }),
