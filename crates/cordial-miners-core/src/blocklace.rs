@@ -1,7 +1,6 @@
 use std::collections::{HashMap, BTreeSet, VecDeque, HashSet};
 use crate::block::Block;
 use crate::types::{BlockContent, BlockIdentity, NodeId};
-use std::collections::{HashMap, HashSet};
 
 // The blocklace B - a set of blocks satisfying the closure and axioms
 // From definition 2.3, A blocklace B is a set of blocks subject to some invariants.
