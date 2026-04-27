@@ -6,7 +6,6 @@ use cordial_miners_core::cordiality::ConsensusEngine;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
-
 #[derive(Default)]
 pub enum ConsensusKind {
     #[default]
