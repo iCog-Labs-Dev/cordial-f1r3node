@@ -1,6 +1,6 @@
+use std::collections::{HashMap, BTreeSet, VecDeque, HashSet};
 use crate::block::Block;
 use crate::types::{BlockContent, BlockIdentity, NodeId};
-use std::collections::{HashMap, HashSet};
 
 // The blocklace B - a set of blocks satisfying the closure and axioms
 // From definition 2.3, A blocklace B is a set of blocks subject to some invariants.
@@ -109,6 +109,27 @@ impl Blocklace {
         }
         visited.iter().filter_map(|id| self.get(id)).collect()
     }
+
+    pub fn observe(&self, from: &BlockIdentity) -> BTreeSet<BlockIdentity> {
+            let mut visited = BTreeSet::new();
+            let mut queue = VecDeque::new();
+
+            // Start from the block itself (inclusive closure)
+            queue.push_back(from.clone());
+            visited.insert(from.clone());
+
+            while let Some(current_id) = queue.pop_front() {
+                if let Some(content) = self.content(&current_id) {
+                    for pred_id in &content.predecessors {
+                        // BTreeSet.insert returns false if the item was already present
+                        if visited.insert(pred_id.clone()) {
+                            queue.push_back(pred_id.clone());
+                        }
+                    }
+                }
+            }
+            visited
+        }
 
     /// ⪯b — ancestors of b including b itself
     /// This is downward closure used heavly throughout the paper, so we provide a direct method for it.
