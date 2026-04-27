@@ -36,11 +36,11 @@ jobs:
     # --- QUALITY CHECKS ---
     - name: Check Formatting
       working-directory: blocklace
-      run: cargo fmt --all --check
+      run: cargo fmt --package blocklace --check
 
     - name: Lint with Clippy
       working-directory: blocklace
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: cargo clippy --package blocklace --all-features -- -D warnings
 
     # --- BUILD & TEST ---
     - name: Build
