@@ -26,7 +26,10 @@ async fn two_peers_can_connect_via_handshake() {
     let peer_b = Peer::bind(vec![2], "127.0.0.1:0").await.unwrap();
 
     // peer_b connects to peer_a
-    peer_b.connect(&peer_a.listen_addr().to_string()).await.unwrap();
+    peer_b
+        .connect(&peer_a.listen_addr().to_string())
+        .await
+        .unwrap();
 
     // Give the accept loop a moment to process the inbound connection
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -49,20 +52,26 @@ async fn peer_a_receives_hello_from_peer_b() {
     let peer_a = Peer::bind(vec![1], "127.0.0.1:0").await.unwrap();
     let peer_b = Peer::bind(vec![2], "127.0.0.1:0").await.unwrap();
 
-    peer_b.connect(&peer_a.listen_addr().to_string()).await.unwrap();
+    peer_b
+        .connect(&peer_a.listen_addr().to_string())
+        .await
+        .unwrap();
 
     // peer_a should receive the Hello message forwarded by handle_inbound
-    let (_, msg) = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        peer_a.recv(),
-    ).await.unwrap().unwrap();
+    let (_, msg) = tokio::time::timeout(std::time::Duration::from_secs(2), peer_a.recv())
+        .await
+        .unwrap()
+        .unwrap();
 
     match msg {
-        Message::Hello { node_id, listen_port } => {
+        Message::Hello {
+            node_id,
+            listen_port,
+        } => {
             assert_eq!(node_id, vec![2]);
             assert_eq!(listen_port, peer_b.listen_addr().port());
         }
-        other => panic!("expected Hello, got {:?}", other),
+        other => panic!("expected Hello, got {other:?}"),
     }
 }
 

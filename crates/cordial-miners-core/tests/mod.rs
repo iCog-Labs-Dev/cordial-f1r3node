@@ -1,6 +1,6 @@
-use std::collections::HashSet;
-use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 use cordial_miners_core::block::Block;
+use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
+use std::collections::HashSet;
 
 /// Build a NodeId from a single byte — keeps tests readable: node(1), node(2) …
 pub fn node(byte: u8) -> NodeId {
@@ -17,7 +17,7 @@ pub fn private_key(byte: u8) -> Vec<u8> {
 pub fn make_identity(creator: NodeId, tag: u8) -> BlockIdentity {
     let mut hash = [0u8; 32];
     hash[0] = creator.0[0]; // encode creator in byte 0
-    hash[1] = tag;           // encode uniqueness in byte 1
+    hash[1] = tag; // encode uniqueness in byte 1
     BlockIdentity {
         content_hash: hash,
         creator,

@@ -22,19 +22,7 @@ rand.workspace = true
 async-trait.workspace = true
 either.workspace = true
 tokio.workspace = true
+clap = { version = "4.6", features = ["derive"] }
 
-# ---------------------------------------------------------------------------
-# f1r3node dependency (commented out until we wire a specific task in Phase 3)
-#
-# Uses a local path pointing to the cloned f1r3node repo. If you don't have
-# it checked out at the expected location, this adapter crate's RSpace
-# integration won't compile — but the core `blocklace` crate remains usable
-# on its own.
-#
-# Switch to a git or crates.io source later if f1r3node publishes.
-#
-# casper = { path = "../../../f1r3node/casper" }
-# models = { path = "../../../f1r3node/models" }
-# block_storage = { path = "../../../f1r3node/block-storage" }
-# crypto = { path = "../../../f1r3node/crypto" }
-# ---------------------------------------------------------------------------
+casper = { path = "../../../f1r3node/casper" }
+models = { path = "../../../f1r3node/models" }

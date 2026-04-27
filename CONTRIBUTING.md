@@ -8,15 +8,15 @@ If anything here is unclear or out of date, file an issue — we'd rather fix th
 
 ## Setting up your environment
 
-### For the standalone consensus library only
+### For the core consensus crate only
 
 ```bash
-git clone https://github.com/Johnnas12/blocklace.git
-cd blocklace
-cargo test -p blocklace
+git clone https://github.com/iCog-Labs-Dev/cordial-f1r3node.git
+cd cordial-f1r3node
+cargo +nightly-2025-06-15 test -p cordial-miners-core
 ```
 
-That's it. You only need a recent Rust toolchain.
+That's it. You only need a Rust toolchain (nightly recommended, see `Justfile` for pinned version).
 
 ### For the full workspace including f1r3node integration
 
@@ -27,26 +27,26 @@ You'll need three things:
    - Mac: `brew install protobuf`
    - Verify: `protoc --version`
 
-2. **f1r3node checked out as a sibling directory.** The path dependencies in `crates/blocklace-f1r3rspace/Cargo.toml` expect to find f1r3node at `../f1r3node` relative to this repo. So your layout should be:
+2. **f1r3node checked out as a sibling directory.** The path dependencies in `crates/cordial-f1r3space-adapter/Cargo.toml` expect to find f1r3node at `../f1r3node` relative to this repo. So your layout should be:
 
    ```
    ~/your-projects/
-     blocklace/        ← this repo
-     f1r3node/         ← https://github.com/F1R3FLY-io/f1r3node
+     cordial-f1r3node/  ← this repo
+     f1r3node/        ← https://github.com/F1R3FLY-io/f1r3node
    ```
 
-   If you keep them somewhere else, edit the path deps in `crates/blocklace-f1r3rspace/Cargo.toml` accordingly.
+   If you keep them somewhere else, edit the path deps in `crates/cordial-f1r3space-adapter/Cargo.toml` accordingly.
 
-3. **Recent Rust toolchain.** Stable should work for everything. f1r3node pins nightly internally, but we don't depend on that pin.
+3. **Rust nightly toolchain.** This workspace uses nightly features. Use the pinned toolchain in `Justfile` (`nightly-2025-06-15`) or a recent nightly.
 
 Then verify:
 
 ```bash
-cargo build --workspace
-cargo test --workspace
+just build
+just test
 ```
 
-First build is slow (~5 min) because it compiles f1r3node's Rholang interpreter and RSpace tuplespace. Subsequent builds are fast.
+First build is slow (~5-7 min) because it compiles f1r3node's Rholang interpreter and RSpace tuplespace. Subsequent builds are fast.
 
 ### Common build issues
 
@@ -56,6 +56,7 @@ First build is slow (~5 min) because it compiles f1r3node's Rholang interpreter 
 | `gxhash` errors about AES/SSE2 intrinsics | Make sure `.cargo/config.toml` exists at the repo root. It should be checked in — if it's missing, that's a bug |
 | Stack overflow in Rholang tests | `RUST_MIN_STACK=8388608` is set via `.cargo/config.toml`. Verify it's there |
 | `models` path dep "file not found" | f1r3node must be at `../f1r3node`. See setup step 2 |
+| `smallvec` feature error on stable | Use nightly toolchain: `cargo +nightly-2025-06-15 ...` |
 
 ---
 
@@ -65,7 +66,7 @@ First build is slow (~5 min) because it compiles f1r3node's Rholang interpreter 
 
 If you have an idea that isn't on the list, open a GitHub issue describing what you want to do *before* writing code. That avoids wasted work and gives maintainers a chance to flag conflicts with planned work.
 
-For larger architectural changes, open an RFC-style issue first. "Larger" includes anything that changes a public API in `blocklace`, restructures the workspace, adds a new dependency, or shifts the layering between the three crates.
+For larger architectural changes, open an RFC-style issue first. "Larger" includes anything that changes a public API in `cordial-miners-core`, restructures the workspace, adds a new dependency, or shifts the layering between the three crates.
 
 ---
 
@@ -73,9 +74,9 @@ For larger architectural changes, open an RFC-style issue first. "Larger" includ
 
 ### Branching
 
-Branch off `master`. Use a descriptive name:
+Branch off `main` (or `master` if that's the default). Use a descriptive name:
 
-- `task1/e2e-rholang-test` for tasks from `INTEGRATION_NEXT_STEPS.md`
+- `task1/e2e-rholang-test` for tasks from `docs/INTEGRATION_NEXT_STEPS.md`
 - `fix/cordial-condition-empty-tips` for bug fixes
 - `docs/clarify-snapshot-collision-note` for doc-only changes
 - `feature/lmdb-storage-backend` for larger features
@@ -120,22 +121,23 @@ For multi-commit PRs, each commit should be reviewable on its own. Don't squash 
 Before opening a PR:
 
 ```bash
-cargo fmt
-cargo clippy --workspace -- -D warnings
-cargo test --workspace
+just fmt
+just clippy
+just test
+just check-core-boundaries
 ```
 
 If any of those fail, fix it before pushing. Reviewers will assume green CI as a baseline.
 
 When adding a feature, write tests for it. When fixing a bug, write a test that would have caught the bug. Don't add a test that's hard to read just to bump the coverage number — clear tests are more valuable than many tests.
 
-For tests in `blocklace-f1r3rspace` that touch real f1r3node types, prefer **unit tests on the translation helpers** over end-to-end tests that need a live `RuntimeManager`. The translation surface is what we own; the runtime is f1r3node's responsibility.
+For tests in `cordial-f1r3space-adapter` that touch real f1r3node types, prefer **unit tests on the translation helpers** over end-to-end tests that need a live `RuntimeManager`. The translation surface is what we own; the runtime is f1r3node's responsibility.
 
 ### Documentation
 
 Update docs in the same PR as the code change, not in a follow-up:
 
-- If you change a public API in `crates/blocklace/`, update `docs/implementation.md`.
+- If you change a public API in `crates/cordial-miners-core`, update `docs/implementation.md`.
 - If you complete a task from `docs/INTEGRATION_NEXT_STEPS.md`, mark it done there.
 - If you add a new f1r3node-related capability, update `docs/cordial-miners-vs-cbc-casper.md`.
 - If you change the build setup, update `README.md` and the troubleshooting table here.
@@ -148,19 +150,21 @@ If your change has tradeoffs that aren't obvious from reading the code, document
 
 These exist because the three-crate split is the project's main design decision. Violating them creates pain that's hard to undo.
 
-### Don't let f1r3node types leak into `blocklace`
+### Don't let f1r3node types leak into `cordial-miners-core`
 
-The `blocklace` crate has zero dependencies on f1r3node. Adding any will force every consumer of the standalone consensus library to compile f1r3node's tree.
+The `cordial-miners-core` crate has zero dependencies on f1r3node crates. Adding any will force every consumer of the standalone consensus library to compile f1r3node's tree.
 
-If you find yourself wanting to import a type from `models` or `casper` into `blocklace`, that's a signal the abstraction is wrong. Discuss in an issue first.
+If you find yourself wanting to import a type from `models` or `casper` into `cordial-miners-core`, that's a signal the abstraction is wrong. Discuss in an issue first.
 
-### Don't let f1r3node real crates leak into `blocklace-f1r3node`
+**Enforcement:** The repo includes a CI guardrail script at `scripts/check_core_boundaries.sh` that greps for forbidden imports. Run `just check-core-boundaries` before pushing.
 
-`blocklace-f1r3node` uses *mirror types* of f1r3node's `BlockMessage`, `Body`, `CasperSnapshot`, etc. — plain Rust structs with the same shape. This lets the adapter build standalone, without f1r3node checked out.
+### Don't let f1r3node real crates leak into `cordial-f1r3node-adapter`
 
-If you want to use f1r3node's real types, do it in `blocklace-f1r3rspace` (which path-depends on f1r3node) or in a new fourth crate. Don't add f1r3node path deps to `blocklace-f1r3node`.
+`cordial-f1r3node-adapter` uses *mirror types* of f1r3node's `BlockMessage`, `Body`, `CasperSnapshot`, etc. — plain Rust structs with the same shape. This lets the adapter build standalone, without f1r3node checked out.
 
-There is an open question about consolidating the mirror types — see Task 5 in `INTEGRATION_NEXT_STEPS.md`. Until that's decided, mirrors stay.
+If you want to use f1r3node's real types, do it in `cordial-f1r3space-adapter` (which path-depends on f1r3node) or in a new fourth crate. Don't add f1r3node path deps to `cordial-f1r3node-adapter`.
+
+There is an open question about consolidating the mirror types — see Task 5 in `docs/INTEGRATION_NEXT_STEPS.md`. Until that's decided, mirrors stay.
 
 ### Be honest about caveats
 
@@ -173,7 +177,7 @@ This matters because integration code is full of subtle issues (signature algori
 ## Submitting a pull request
 
 1. Push your branch to your fork or to the main repo (if you have access).
-2. Open the PR against `master`.
+2. Open the PR against `main` (or `master`).
 3. In the description, link any related issues and include:
    - **Summary** of what the PR does, in 1-2 sentences
    - **Why** this change is needed (rationale, not just restating the diff)
@@ -200,12 +204,29 @@ None of these are personal. Reviewers want to merge your PR — these rules just
 
 Follow standard Rust idioms:
 
-- `cargo fmt` configures formatting; don't argue with the formatter.
-- `cargo clippy` configures most lints; don't suppress warnings without a comment explaining why.
+- `just fmt` configures formatting; don't argue with the formatter.
+- `just clippy` configures most lints; don't suppress warnings without a comment explaining why.
 - Names: `snake_case` for functions and modules, `PascalCase` for types, `SCREAMING_SNAKE_CASE` for constants.
 - Errors: prefer `Result<T, E>` with explicit error types over `unwrap()`. Test code can use `unwrap()` freely.
 - Comments: explain *why*, not *what*. The code already shows the what.
 - Module-level docs (`//!`) are appreciated for non-trivial modules.
+
+---
+
+## Useful commands
+
+This repo includes a `Justfile` with common workflows:
+
+```bash
+just build          # cargo build --workspace
+just test          # cargo test --workspace
+just test-core     # cargo test -p cordial-miners-core
+just test-adapter  # cargo test -p cordial-f1r3node-adapter
+just fmt          # cargo fmt for workspace crates
+just clippy       # cargo clippy --workspace -- -D warnings
+just check-core-boundaries  # CI guardrail script
+just ci           # fmt + clippy + build + test + check-core-boundaries
+```
 
 ---
 

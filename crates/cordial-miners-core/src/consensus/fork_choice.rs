@@ -57,19 +57,14 @@ pub struct ForkChoice {
 /// 6. Rank tips by their score (descending), break ties by hash (ascending)
 ///
 /// Returns `None` if the blocklace is empty or no valid tips exist.
-pub fn fork_choice(
-    blocklace: &Blocklace,
-    bonds: &HashMap<NodeId, u64>,
-) -> Option<ForkChoice> {
+pub fn fork_choice(blocklace: &Blocklace, bonds: &HashMap<NodeId, u64>) -> Option<ForkChoice> {
     // 1. Collect tips from all bonded validators
     let equivocators = blocklace.find_equivacators();
 
     let validator_tips: Vec<(NodeId, Block)> = bonds
         .keys()
         .filter(|node| !equivocators.contains(node))
-        .filter_map(|node| {
-            blocklace.tip_of(node).map(|tip| (node.clone(), tip))
-        })
+        .filter_map(|node| blocklace.tip_of(node).map(|tip| (node.clone(), tip)))
         .collect();
 
     if validator_tips.is_empty() {
@@ -114,7 +109,8 @@ pub fn fork_choice(
     ranked_tips.sort_by(|a, b| {
         let score_a = scores.get(a).copied().unwrap_or(0);
         let score_b = scores.get(b).copied().unwrap_or(0);
-        score_b.cmp(&score_a) // descending by score
+        score_b
+            .cmp(&score_a) // descending by score
             .then_with(|| a.content_hash.cmp(&b.content_hash)) // ascending by hash
     });
 
@@ -134,10 +130,7 @@ pub fn fork_choice(
 ///   (i.e., the "highest" common ancestor)
 ///
 /// Returns `None` if no common ancestor exists.
-fn compute_lca(
-    blocklace: &Blocklace,
-    tips: &[&BlockIdentity],
-) -> Option<BlockIdentity> {
+fn compute_lca(blocklace: &Blocklace, tips: &[&BlockIdentity]) -> Option<BlockIdentity> {
     if tips.is_empty() {
         return None;
     }
@@ -173,9 +166,9 @@ fn compute_lca(
     // In other words, no other block in `common` has this block as an ancestor.
     let common_vec: Vec<BlockIdentity> = common.iter().cloned().collect();
     common_vec.into_iter().find(|candidate| {
-        !common.iter().any(|other| {
-            other != candidate && blocklace.precedes(candidate, other)
-        })
+        !common
+            .iter()
+            .any(|other| other != candidate && blocklace.precedes(candidate, other))
     })
 }
 
@@ -208,9 +201,7 @@ fn walk_to_lca(
         // Walk predecessors
         if let Some(content) = blocklace.content(&current) {
             for pred_id in &content.predecessors {
-                if !visited.contains(pred_id)
-                    && blocklace.preceedes_or_equals(target, pred_id)
-                {
+                if !visited.contains(pred_id) && blocklace.preceedes_or_equals(target, pred_id) {
                     queue.push(pred_id.clone());
                 }
             }
@@ -246,12 +237,8 @@ pub fn collect_validator_tips(
 ///
 /// From the paper: a block is "cordial" if it references all known
 /// validator tips at the time of creation.
-pub fn is_cordial(
-    block: &Block,
-    known_tips: &HashMap<NodeId, BlockIdentity>,
-) -> bool {
-    known_tips.values().all(|tip_id| {
-        block.content.predecessors.contains(tip_id)
-            || block.identity == *tip_id
-    })
+pub fn is_cordial(block: &Block, known_tips: &HashMap<NodeId, BlockIdentity>) -> bool {
+    known_tips
+        .values()
+        .all(|tip_id| block.content.predecessors.contains(tip_id) || block.identity == *tip_id)
 }

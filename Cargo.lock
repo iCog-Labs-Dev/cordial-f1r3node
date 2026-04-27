@@ -669,10 +669,13 @@ dependencies = [
  "async-trait",
  "bincode",
  "blake2",
+ "casper",
+ "clap",
  "cordial-miners-core",
  "ed25519-dalek",
  "either",
  "k256",
+ "models",
  "rand 0.8.5",
  "serde",
  "sha2",
@@ -700,7 +703,9 @@ name = "cordial-miners-core"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "blake2",
  "ed25519-dalek",
+ "k256",
  "rand 0.8.5",
  "serde",
  "sha2",

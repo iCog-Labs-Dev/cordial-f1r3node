@@ -1,7 +1,9 @@
-use std::collections::HashMap;
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::{check_finality, find_last_finalized, can_be_finalized, FinalityStatus};
+use cordial_miners_core::consensus::{
+    FinalityStatus, can_be_finalized, check_finality, find_last_finalized,
+};
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 // ── Helpers ──
@@ -47,7 +49,10 @@ fn insert(bl: &mut Blocklace, block: &Block) {
 }
 
 fn bonds(entries: &[(u8, u64)]) -> HashMap<NodeId, u64> {
-    entries.iter().map(|(id, stake)| (node(*id), *stake)).collect()
+    entries
+        .iter()
+        .map(|(id, stake)| (node(*id), *stake))
+        .collect()
 }
 
 // ── check_finality tests ──
@@ -117,7 +122,10 @@ fn supermajority_support_finalizes_block() {
     // 3/3 validators support g — finalized
     assert!(status.is_finalized());
     match status {
-        FinalityStatus::Finalized { supporting_stake, total_honest_stake } => {
+        FinalityStatus::Finalized {
+            supporting_stake,
+            total_honest_stake,
+        } => {
             assert_eq!(supporting_stake, 300);
             assert_eq!(total_honest_stake, 300);
         }
