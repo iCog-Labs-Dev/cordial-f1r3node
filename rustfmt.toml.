@@ -1,0 +1,26 @@
+# Enable unstable features to allow advanced import control
+unstable_features = true
+
+# Use the edition of your project for consistent parsing
+edition = "2021"
+
+# Automatically reorder imports alphabetically
+reorder_imports = true
+
+# Merge imports from the same crate into a single line/block
+imports_granularity = "Crate"
+
+# Force Unix line endings to prevent Windows/Mac conflicts
+newline_style = "Unix"
+
+# Wrap comments that exceed the max_width
+wrap_comments = true
+
+# Standardize line length
+max_width = 100
+
+# Format code snippets inside doc comments automatically
+format_code_in_doc_comments = true
+
+# Ensures consistent trailing commas in multiline structs/enums
+trailing_comma = "Vertical"
