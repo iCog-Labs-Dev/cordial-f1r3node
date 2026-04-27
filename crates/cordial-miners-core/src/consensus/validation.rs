@@ -135,25 +135,23 @@ pub fn validate_block(
         // - DO NOT assume 64-byte signature (Ed25519 assumption)
         // - Secp256k1 signatures are DER encoded (variable length ~70–72 bytes)
         // - Public key may be 33 or 65 bytes
-        if !block.identity.signature.is_empty() {
-            if !crypto::verify(
+        if !block.identity.signature.is_empty()
+            && !crypto::verify(
                 &block.identity.content_hash,
                 public_key,
                 &block.identity.signature,
-            ) {
-                errors.push(InvalidBlock::InvalidSignature);
-            }
+            )
+        {
+            errors.push(InvalidBlock::InvalidSignature);
         }
         // Empty signature is allowed for unsigned blocks (e.g., in tests)
     }
 
     // 3. Sender is bonded
-    if config.check_sender {
-        if !bonds.contains_key(&block.identity.creator) {
-            errors.push(InvalidBlock::UnknownSender {
-                creator: block.identity.creator.clone(),
-            });
-        }
+    if config.check_sender && !bonds.contains_key(&block.identity.creator) {
+        errors.push(InvalidBlock::UnknownSender {
+            creator: block.identity.creator.clone(),
+        });
     }
 
     // 4. Closure axiom — all predecessors must exist
@@ -181,20 +179,19 @@ pub fn validate_block(
                 .content
                 .predecessors
                 .iter()
-                .any(|pred_id| {
-                    blocklace.preceedes_or_equals(&existing.identity, pred_id)
-                });
+                .any(|pred_id| blocklace.preceedes_or_equals(&existing.identity, pred_id));
 
             let existing_has_new_in_ancestry =
                 blocklace.precedes(&block.identity, &existing.identity);
 
-            if !new_has_existing_in_ancestry && !existing_has_new_in_ancestry {
-                if block.identity != existing.identity {
-                    errors.push(InvalidBlock::Equivocation {
-                        conflicting: existing.identity.clone(),
-                    });
-                    break; // one conflict is enough
-                }
+            if !new_has_existing_in_ancestry
+                && !existing_has_new_in_ancestry
+                && block.identity != existing.identity
+            {
+                errors.push(InvalidBlock::Equivocation {
+                    conflicting: existing.identity.clone(),
+                });
+                break; // one conflict is enough
             }
         }
     }
