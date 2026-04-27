@@ -7,7 +7,7 @@ use k256::ecdsa::{
     Signature as SecpSignature, SigningKey as SecpSigningKey, VerifyingKey as SecpVerifyingKey,
     signature::hazmat::{PrehashSigner, PrehashVerifier},
 };
-use sha2::{Digest as Sha2Digest, Sha256};
+use sha2::{Sha256};
 
 use crate::types::BlockContent;
 

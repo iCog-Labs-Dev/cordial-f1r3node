@@ -1,6 +1,6 @@
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{HashSet};
 // Helpers test
 
 /// Helper to create a block without the boilerplate
