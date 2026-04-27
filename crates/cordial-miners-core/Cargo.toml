@@ -11,3 +11,5 @@ rand.workspace = true
 tokio.workspace = true
 serde.workspace = true
 bincode.workspace = true
+blake2.workspace = true
+k256.workspace = true

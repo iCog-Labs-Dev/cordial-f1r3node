@@ -127,10 +127,15 @@ pub fn validate_block(
         }
     }
 
-    // 2. Signature verification
+    // 2. Signature verification (FIXED for Secp256k1 + variable-length DER)
     if config.check_signature {
         let public_key = &block.identity.creator.0;
-        if public_key.len() == 32 && block.identity.signature.len() == 64 {
+
+        // NOTE:
+        // - DO NOT assume 64-byte signature (Ed25519 assumption)
+        // - Secp256k1 signatures are DER encoded (variable length ~70–72 bytes)
+        // - Public key may be 33 or 65 bytes
+        if !block.identity.signature.is_empty() {
             if !crypto::verify(
                 &block.identity.content_hash,
                 public_key,
@@ -138,18 +143,17 @@ pub fn validate_block(
             ) {
                 errors.push(InvalidBlock::InvalidSignature);
             }
-        } else if !block.identity.signature.is_empty() {
-            // Non-empty signature with wrong sizes
-            errors.push(InvalidBlock::InvalidSignature);
         }
         // Empty signature is allowed for unsigned blocks (e.g., in tests)
     }
 
     // 3. Sender is bonded
-    if config.check_sender && !bonds.contains_key(&block.identity.creator) {
-        errors.push(InvalidBlock::UnknownSender {
-            creator: block.identity.creator.clone(),
-        });
+    if config.check_sender {
+        if !bonds.contains_key(&block.identity.creator) {
+            errors.push(InvalidBlock::UnknownSender {
+                creator: block.identity.creator.clone(),
+            });
+        }
     }
 
     // 4. Closure axiom — all predecessors must exist
@@ -173,21 +177,18 @@ pub fn validate_block(
         let creator_blocks = blocklace.blocks_by(creator);
 
         for existing in &creator_blocks {
-            // The new block and existing block must be comparable:
-            // either the new block is an ancestor of existing, or existing is
-            // an ancestor of the new block. We check if existing is in the
-            // new block's predecessors' ancestry.
             let new_has_existing_in_ancestry = block
                 .content
                 .predecessors
                 .iter()
-                .any(|pred_id| blocklace.preceedes_or_equals(&existing.identity, pred_id));
+                .any(|pred_id| {
+                    blocklace.preceedes_or_equals(&existing.identity, pred_id)
+                });
 
             let existing_has_new_in_ancestry =
                 blocklace.precedes(&block.identity, &existing.identity);
 
             if !new_has_existing_in_ancestry && !existing_has_new_in_ancestry {
-                // Check if they're the same block (re-insert)
                 if block.identity != existing.identity {
                     errors.push(InvalidBlock::Equivocation {
                         conflicting: existing.identity.clone(),

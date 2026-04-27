@@ -4,7 +4,8 @@ use cordial_miners_core::consensus::{
 };
 use cordial_miners_core::crypto::{hash_content, sign};
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::SigningKey as EdSigningKey;
+use k256::ecdsa::SigningKey as SecpSigningKey;
 use rand::rngs::OsRng;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -85,11 +86,18 @@ fn child_signed(private_key: &[u8], creator: &NodeId, tag: u8, parents: &[&Block
 }
 
 fn generate_keypair() -> (Vec<u8>, Vec<u8>) {
-    let signing_key = SigningKey::generate(&mut OsRng);
+    let signing_key = EdSigningKey::generate(&mut OsRng);
     (
         signing_key.to_bytes().to_vec(),
         signing_key.verifying_key().to_bytes().to_vec(),
     )
+}
+
+fn generate_secp_keypair() -> (Vec<u8>, Vec<u8>) {
+    let signing_key = k256::ecdsa::SigningKey::random(&mut OsRng);
+    let private = signing_key.to_bytes().to_vec();
+    let public = signing_key.verifying_key().to_sec1_bytes().to_vec();
+    (private, public)
 }
 
 fn insert(bl: &mut Blocklace, block: &Block) {
@@ -274,7 +282,7 @@ fn wrong_content_hash_fails() {
 
 #[test]
 fn valid_signature_passes() {
-    let (private_key, public_key) = generate_keypair();
+    let (private_key, public_key) = generate_secp_keypair();
     let creator = NodeId(public_key);
     let bl = Blocklace::new();
     let g = genesis_signed(&private_key, &creator, 1);
@@ -411,8 +419,8 @@ fn validation_result_helpers() {
 
 #[test]
 fn full_signed_chain_validates() {
-    let (pk1, pub1) = generate_keypair();
-    let (pk2, pub2) = generate_keypair();
+    let (pk1, pub1) = generate_secp_keypair();
+    let (pk2, pub2) = generate_secp_keypair();
     let v1 = NodeId(pub1);
     let v2 = NodeId(pub2);
 
