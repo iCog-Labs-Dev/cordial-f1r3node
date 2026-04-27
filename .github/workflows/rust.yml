@@ -33,6 +33,16 @@ jobs:
     - name: Install nightly toolchain
       uses: dtolnay/rust-toolchain@nightly
 
+    # --- QUALITY CHECKS ---
+    - name: Check Formatting
+      working-directory: blocklace
+      run: cargo fmt --all --check
+
+    - name: Lint with Clippy
+      working-directory: blocklace
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+    # --- BUILD & TEST ---
     - name: Build
       working-directory: blocklace
       run: cargo build --verbose
