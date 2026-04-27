@@ -181,9 +181,7 @@ pub fn validate_block(
                 .content
                 .predecessors
                 .iter()
-                .any(|pred_id| {
-                    blocklace.preceedes_or_equals(&existing.identity, pred_id)
-                });
+                .any(|pred_id| blocklace.preceedes_or_equals(&existing.identity, pred_id));
 
             let existing_has_new_in_ancestry =
                 blocklace.precedes(&block.identity, &existing.identity);
