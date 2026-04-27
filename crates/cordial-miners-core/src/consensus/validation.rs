@@ -140,19 +140,19 @@ pub fn validate_block(
                 &block.identity.content_hash,
                 public_key,
                 &block.identity.signature,
-            ) {
-                errors.push(InvalidBlock::InvalidSignature);
-            }
+            )
+        {
+            errors.push(InvalidBlock::InvalidSignature);
+        }
         // Empty signature is allowed for unsigned blocks (e.g., in tests)
     }
 
     // 3. Sender is bonded
-    if config.check_sender
-        && !bonds.contains_key(&block.identity.creator) {
-            errors.push(InvalidBlock::UnknownSender {
-                creator: block.identity.creator.clone(),
-            });
-        }
+    if config.check_sender && !bonds.contains_key(&block.identity.creator) {
+        errors.push(InvalidBlock::UnknownSender {
+            creator: block.identity.creator.clone(),
+        });
+    }
 
     // 4. Closure axiom — all predecessors must exist
     if config.check_closure {
@@ -184,13 +184,15 @@ pub fn validate_block(
             let existing_has_new_in_ancestry =
                 blocklace.precedes(&block.identity, &existing.identity);
 
-            if !new_has_existing_in_ancestry && !existing_has_new_in_ancestry
-                && block.identity != existing.identity {
-                    errors.push(InvalidBlock::Equivocation {
-                        conflicting: existing.identity.clone(),
-                    });
-                    break; // one conflict is enough
-                }
+            if !new_has_existing_in_ancestry
+                && !existing_has_new_in_ancestry
+                && block.identity != existing.identity
+            {
+                errors.push(InvalidBlock::Equivocation {
+                    conflicting: existing.identity.clone(),
+                });
+                break; // one conflict is enough
+            }
         }
     }
 
