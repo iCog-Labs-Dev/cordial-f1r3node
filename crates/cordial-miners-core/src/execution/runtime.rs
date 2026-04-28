@@ -238,7 +238,10 @@ impl RuntimeManager for MockRuntime {
 
         for sd in &request.system_deploys {
             match sd {
-                SystemDeployRequest::Slash { validator, invalid_block_hash: _ } => {
+                SystemDeployRequest::Slash {
+                    validator,
+                    invalid_block_hash: _,
+                } => {
                     // Remove the slashed validator's bond
                     let prior_stake = new_bonds
                         .iter()

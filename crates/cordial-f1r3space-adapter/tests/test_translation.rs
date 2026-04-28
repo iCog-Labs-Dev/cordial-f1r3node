@@ -90,9 +90,9 @@ fn close_block_translates_to_close_variant() {
 fn slash_translates_to_slash_variant_with_validator_pk() {
     let pre_state = [0x42u8; 32];
     let f1 = system_deploy_to_f1r3node(
-        &SystemDeployRequest::Slash { 
-            validator: node(7), 
-            invalid_block_hash: vec![0x07; 32] 
+        &SystemDeployRequest::Slash {
+            validator: node(7),
+            invalid_block_hash: vec![0x07; 32],
         },
         &pre_state,
     );
