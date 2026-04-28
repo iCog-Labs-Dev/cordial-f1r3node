@@ -66,6 +66,22 @@ pub enum SystemDeployRequest {
     CloseBlock,
 }
 
+impl SystemDeployRequest {
+    /// Guard to ensure invalid_block_hash is exactly 32 bytes.
+    ///
+    /// f1r3node expects 32-byte block hashes (SHA-256/Blake2b).
+    /// Call this before creating Slash requests to prevent invalid hashes.
+    pub fn validate_invalid_block_hash(hash: &[u8]) -> Result<(), String> {
+        if hash.len() != 32 {
+            return Err(format!(
+                "invalid_block_hash must be exactly 32 bytes, got {} bytes",
+                hash.len()
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Output of runtime execution.
 #[derive(Debug, Clone)]
 pub struct ExecutionResult {
