@@ -228,7 +228,7 @@ fn close_block_system_deploy_succeeds() {
 #[test]
 fn guard_invalid_block_hash_rejects_wrong_length() {
     // Test with too short hash
-    let result = SystemDeployRequest::validate_invalid_block_hash(&vec![0x01; 31]);
+    let result = SystemDeployRequest::validate_invalid_block_hash(&[0x01; 31]);
     assert!(result.is_err());
     assert!(
         result
@@ -237,7 +237,7 @@ fn guard_invalid_block_hash_rejects_wrong_length() {
     );
 
     // Test with too long hash
-    let result = SystemDeployRequest::validate_invalid_block_hash(&vec![0x01; 33]);
+    let result = SystemDeployRequest::validate_invalid_block_hash(&[0x01; 33]);
     assert!(result.is_err());
     assert!(
         result
@@ -246,7 +246,7 @@ fn guard_invalid_block_hash_rejects_wrong_length() {
     );
 
     // Test with correct length (should succeed)
-    let result = SystemDeployRequest::validate_invalid_block_hash(&vec![0x01; 32]);
+    let result = SystemDeployRequest::validate_invalid_block_hash(&[0x01; 32]);
     assert!(result.is_ok());
 }
 
