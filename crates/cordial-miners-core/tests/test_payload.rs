@@ -4,6 +4,22 @@ use cordial_miners_core::execution::{
 };
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
+use cordial_miners_core::crypto::{CryptoVerifier};
+
+// Mock Verifier
+struct MockVerifier;
+
+impl CryptoVerifier for MockVerifier {
+    type Error = String;
+    fn verify_block(
+        &self, 
+        _content: &BlockContent, 
+        _sig: &[u8], 
+        _creator: &NodeId
+    ) -> Result<(), Self::Error> {
+        Ok(()) // Always allow in tests
+    }
+}
 
 fn node(id: u8) -> NodeId {
     NodeId(vec![id])
@@ -205,6 +221,7 @@ fn genesis_has_block_number_zero() {
 
 #[test]
 fn chain_of_typed_blocks() {
+    let verifier = MockVerifier;
     use cordial_miners_core::blocklace::Blocklace;
     use cordial_miners_core::crypto::hash_content;
 
@@ -225,7 +242,7 @@ fn chain_of_typed_blocks() {
         },
         content: genesis_content,
     };
-    bl.insert(genesis.clone()).unwrap();
+    bl.insert(genesis.clone(), &verifier).unwrap();
 
     // Block 1 with a deploy
     let b1_payload = CordialBlockPayload {
@@ -255,7 +272,7 @@ fn chain_of_typed_blocks() {
         },
         content: b1_content,
     };
-    bl.insert(b1.clone()).unwrap();
+    bl.insert(b1.clone(), &verifier).unwrap();
 
     assert_eq!(bl.dom().len(), 2);
     assert!(bl.is_closed());
