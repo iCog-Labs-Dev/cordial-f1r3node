@@ -21,8 +21,8 @@ fn test_signing_key(seed: u8) -> Vec<u8> {
     // Create a deterministic private key by filling with a seed pattern
     let mut key = vec![0u8; 32];
     key[0] = seed;
-    for i in 1..32 {
-        key[i] = ((seed as u16).wrapping_mul(i as u16 + 1)) as u8;
+    for (i, item) in key.iter_mut().enumerate().skip(1) {
+        *item = ((seed as u16).wrapping_mul(i as u16 + 1)) as u8;
     }
     key
 }
