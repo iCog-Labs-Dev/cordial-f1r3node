@@ -6,15 +6,11 @@ use cordial_miners_core::cordiality::ConsensusEngine;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum ConsensusKind {
+    #[default]
     Legacy,
     CordialMiners,
-}
-
-impl Default for ConsensusKind {
-    fn default() -> Self {
-        Self::Legacy
-    }
 }
 
 impl FromStr for ConsensusKind {

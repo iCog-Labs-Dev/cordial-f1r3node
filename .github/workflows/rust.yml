@@ -33,6 +33,20 @@ jobs:
     - name: Install nightly toolchain
       uses: dtolnay/rust-toolchain@nightly
 
+    # --- QUALITY CHECKS ---
+    - name: Check Formatting
+      working-directory: blocklace
+      run: |
+        cargo fmt -p cordial-miners-core --check
+        cargo fmt -p cordial-f1r3node-adapter --check
+        cargo fmt -p cordial-f1r3space-adapter --check
+
+    - name: Lint with Clippy
+      working-directory: blocklace
+      run: |
+        cargo clippy -p cordial-miners-core -p cordial-f1r3node-adapter -p cordial-f1r3space-adapter --all-targets --all-features --no-deps -- -D warnings
+
+    # --- BUILD & TEST ---
     - name: Build
       working-directory: blocklace
       run: cargo build --verbose

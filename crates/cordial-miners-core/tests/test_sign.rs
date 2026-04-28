@@ -15,7 +15,7 @@ fn ed25519_sign_and_verify_roundtrip() {
     let (private_key, public_key) = generate_ed_keypair();
     let scheme = Ed25519Scheme;
     let hash = [0x13; 32];
-    
+
     let signature = scheme.sign(&hash, &private_key).expect("Ed sign failed");
     assert!(scheme.verify(&hash, &public_key, &signature));
 }
@@ -25,7 +25,7 @@ fn ed25519_signature_is_exactly_64_bytes() {
     let (private_key, _) = generate_ed_keypair();
     let scheme = Ed25519Scheme;
     let hash = [0xab; 32];
-    
+
     let signature = scheme.sign(&hash, &private_key).unwrap();
     assert_eq!(signature.len(), 64);
 }
@@ -36,7 +36,7 @@ fn ed25519_verify_fails_with_wrong_public_key() {
     let (_, wrong_public_key) = generate_ed_keypair();
     let scheme = Ed25519Scheme;
     let hash = [0x01; 32];
-    
+
     let signature = scheme.sign(&hash, &private_key).unwrap();
     assert!(!scheme.verify(&hash, &wrong_public_key, &signature));
 }
@@ -46,10 +46,10 @@ fn ed25519_verify_fails_with_tampered_signature() {
     let (private_key, public_key) = generate_ed_keypair();
     let scheme = Ed25519Scheme;
     let hash = [0x01; 32];
-    
+
     let mut signature = scheme.sign(&hash, &private_key).unwrap();
     signature[0] ^= 0xff;
-    
+
     assert!(!scheme.verify(&hash, &public_key, &signature));
 }
 
@@ -59,7 +59,7 @@ fn ed25519_different_hashes_produce_different_signatures() {
     let scheme = Ed25519Scheme;
     let h1 = [0x01; 32];
     let h2 = [0x02; 32];
-    
+
     let sig1 = scheme.sign(&h1, &private_key).unwrap();
     let sig2 = scheme.sign(&h2, &private_key).unwrap();
     assert_ne!(sig1, sig2);

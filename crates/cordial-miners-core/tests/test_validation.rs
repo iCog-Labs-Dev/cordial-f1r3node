@@ -5,7 +5,6 @@ use cordial_miners_core::consensus::{
 use cordial_miners_core::crypto::{hash_content, sign};
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use ed25519_dalek::SigningKey as EdSigningKey;
-use k256::ecdsa::SigningKey as SecpSigningKey;
 use rand::rngs::OsRng;
 use std::collections::HashMap;
 use std::collections::HashSet;

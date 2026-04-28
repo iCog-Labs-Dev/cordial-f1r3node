@@ -6,10 +6,10 @@ default:
     just --list
 
 fmt:
-    cargo +{{toolchain}} fmt -p cordial-miners-core -p cordial-f1r3node-adapter -p cordial-f1r3space-adapter
+    cargo +{{toolchain}} fmt -p cordial-miners-core -p cordial-miners-core -p cordial-f1r3node-adapter -p cordial-f1r3space-adapter --check
 
 clippy:
-    cargo +{{toolchain}} clippy --workspace --all-targets -- -D warnings
+    cargo +{{toolchain}} cordial-miners-core -p cordial-f1r3node-adapter -p cordial-f1r3space-adapter --all-targets --all-features --no-deps -- -D warnings
 
 build:
     cargo +{{toolchain}} build --workspace
