@@ -1,6 +1,6 @@
-use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use cordial_miners_core::blocklace::Blocklace;
-use std::collections::{HashSet, BTreeSet};
+use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
+use std::collections::HashSet;
 // Helpers test
 
 /// Helper to create a block without the boilerplate
@@ -261,7 +261,6 @@ fn dom_contains_all_inserted_identities() {
     assert!(dom.contains(&b2.identity));
 }
 
-
 /// Logic tests in Observe and Closure Closure
 #[test]
 fn test_closure_axiom_enforcement() {
@@ -276,17 +275,20 @@ fn test_closure_axiom_enforcement() {
     insert(&mut bl, b1);
 
     // Invalid insertion
-    let unknown_id  = create_mock_block(9, 0xFF, HashSet::new()).identity;
+    let unknown_id = create_mock_block(9, 0xFF, HashSet::new()).identity;
     let mut bad_preds = HashSet::new();
     bad_preds.insert(unknown_id);
     let rouge_block = create_mock_block(3, 0xCC, bad_preds);
 
-    assert!(bl.insert(rouge_block).is_err(), "Should fail due to missing predecessor");
+    assert!(
+        bl.insert(rouge_block).is_err(),
+        "Should fail due to missing predecessor"
+    );
 }
 
 /// New observe and Determinism Tests
 #[test]
-fn test_observe_includes_self_and_ancestors () {
+fn test_observe_includes_self_and_ancestors() {
     let mut bl = Blocklace::new();
 
     let g = create_mock_block(1, 0x01, HashSet::new());
@@ -306,8 +308,14 @@ fn test_observe_includes_self_and_ancestors () {
     let observation = bl.observe(&b.identity);
 
     assert_eq!(observation.len(), 3);
-    assert!(observation.contains(&b.identity), "observation must be inclusive");
-    assert!(observation.contains(&g.identity), "observation must find transitive ancestor");
+    assert!(
+        observation.contains(&b.identity),
+        "observation must be inclusive"
+    );
+    assert!(
+        observation.contains(&g.identity),
+        "observation must find transitive ancestor"
+    );
 }
 
 #[test]
@@ -333,11 +341,14 @@ fn test_observe_isolates_parallet_forks() {
 
     assert!(obs_a.contains(&a1.identity)); // INCLUSIVE: MEANING CONTAINS ITSELF TOO!
     assert!(obs_a.contains(&g.identity));
-    assert!(!obs_a.contains(&b1.identity), "Should not see blocks on parallel paths")
+    assert!(
+        !obs_a.contains(&b1.identity),
+        "Should not see blocks on parallel paths"
+    )
 }
 
 #[test]
-fn test_observe_determinism_across_reconstruction () {
+fn test_observe_determinism_across_reconstruction() {
     let mut bl1 = Blocklace::new();
     let mut bl2 = Blocklace::new();
 
@@ -362,8 +373,8 @@ fn test_observe_determinism_across_reconstruction () {
     let list1: Vec<_> = bl1.observe(&c.identity).into_iter().collect();
     let list2: Vec<_> = bl2.observe(&c.identity).into_iter().collect();
 
-    assert_eq!(list1, list2, "BTreeSet iteration must be identical regardless of insertion order")
-
-
-
+    assert_eq!(
+        list1, list2,
+        "BTreeSet iteration must be identical regardless of insertion order"
+    )
 }
