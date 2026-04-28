@@ -131,36 +131,25 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
 
     /// Verify that the block's signature is valid for its creator.
     ///
-    /// The signature is assumed to be ED25519 and to have been computed
-    /// over the block's content hash. The creator is assumed to be a 32-byte
-    /// ED25519 public key.
+    /// The signature is assumed to be in the format matching the crypto scheme
+    /// (Secp256k1 by default for f1r3node alignment). The creator is assumed to be
+    /// a valid public key in the appropriate format.
     ///
     /// # Returns
     ///
     /// - `Ok(())` if the signature is valid
-    /// - `Err` if the creator is not a valid 32-byte public key, or if verification fails
+    /// - `Err` if the signature verification fails or the public key is invalid
     fn validate_signature(&self, block: &Block) -> Result<()> {
         let creator_key = &block.identity.creator.0;
         let content_hash = &block.identity.content_hash;
         let signature = &block.identity.signature;
 
-        // ED25519 public keys must be exactly 32 bytes
-        if creator_key.len() != 32 {
-            return Err(anyhow!(
-                "Invalid creator public key: expected 32 bytes, got {}",
-                creator_key.len()
-            ));
+        // Signature must not be empty
+        if signature.is_empty() {
+            return Err(anyhow!("Signature cannot be empty"));
         }
 
-        // ED25519 signatures must be exactly 64 bytes
-        if signature.len() != 64 {
-            return Err(anyhow!(
-                "Invalid signature: expected 64 bytes, got {}",
-                signature.len()
-            ));
-        }
-
-        // Perform cryptographic verification
+        // Perform cryptographic verification using the default scheme
         if !crypto::verify(content_hash, creator_key, signature) {
             return Err(anyhow!(
                 "Signature verification failed for creator {:?}",
@@ -173,9 +162,8 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
 
     /// Verify that all parent references are valid.
     ///
-    /// Currently checks that the parent set is not malformed (which could happen
-    /// if parents contain invalid BlockIdentity values). Future versions may
-    /// perform additional checks (e.g., closure axiom validation against a blocklace).
+    /// Checks that the parent identities are well-formed with non-empty signatures
+    /// and valid public key sizes for Secp256k1 (33 bytes compressed or 65 bytes uncompressed).
     fn validate_parents(&self, block: &Block) -> Result<()> {
         // Check that parent identities are well-formed
         for parent_id in &block.content.predecessors {
@@ -187,16 +175,18 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
                 ));
             }
 
-            // Verify parent signature is well-formed
+            // Verify parent signature is not empty (must be present)
             if parent_id.signature.is_empty() {
                 return Err(anyhow!("Parent identity has empty signature"));
             }
 
-            // Verify parent creator key is exactly 32 bytes
-            if parent_id.creator.0.len() != 32 {
+            // Verify parent creator key is a valid Secp256k1 key size
+            // Valid sizes: 33 bytes (compressed) or 65 bytes (uncompressed)
+            let key_len = parent_id.creator.0.len();
+            if key_len != 33 && key_len != 65 {
                 return Err(anyhow!(
-                    "Parent creator has invalid key size: {}",
-                    parent_id.creator.0.len()
+                    "Parent creator has invalid key size: {} (expected 33 or 65)",
+                    key_len
                 ));
             }
         }
