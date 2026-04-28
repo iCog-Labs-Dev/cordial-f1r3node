@@ -15,19 +15,27 @@ use cordial_f1r3node_adapter::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
 
 // ── Test Helpers ─────────────────────────────────────────────────────────
 
-/// Generate a 32-byte ED25519 signing key from a single byte seed.
+/// Generate a 32-byte Secp256k1 signing key from a single byte seed.
 /// **WARNING**: For testing only! Not suitable for production.
-fn test_signing_key(seed: u8) -> [u8; 32] {
-    let mut key = [0u8; 32];
+fn test_signing_key(seed: u8) -> Vec<u8> {
+    // Create a deterministic private key by filling with a seed pattern
+    let mut key = vec![0u8; 32];
     key[0] = seed;
+    for i in 1..32 {
+        key[i] = ((seed as u16).wrapping_mul(i as u16 + 1)) as u8;
+    }
     key
 }
 
-/// Derive the ED25519 public key from a signing key.
-fn test_public_key(signing_key: &[u8; 32]) -> Vec<u8> {
-    use ed25519_dalek::SigningKey;
-    let sk = SigningKey::from_bytes(signing_key);
-    sk.verifying_key().to_bytes().to_vec()
+/// Derive the Secp256k1 public key (compressed SEC1 format, 33 bytes) from a signing key.
+fn test_public_key(signing_key: &[u8]) -> Vec<u8> {
+    use k256::ecdsa::SigningKey as SecpSigningKey;
+
+    let sk = SecpSigningKey::from_slice(signing_key)
+        .expect("Failed to create Secp256k1 signing key from seed");
+    let vk = sk.verifying_key();
+    // Use compressed format (33 bytes): 0x02/0x03 + 32-byte x-coordinate
+    vk.to_encoded_point(true).as_bytes().to_vec()
 }
 
 /// Build a test block with a given creator and predecessors.
@@ -35,7 +43,7 @@ fn build_test_block(
     creator: NodeId,
     payload: Vec<u8>,
     predecessors: HashSet<BlockIdentity>,
-    signing_key: &[u8; 32],
+    signing_key: &[u8],
 ) -> Block {
     let content = BlockContent {
         payload,
@@ -647,8 +655,8 @@ fn block_with_short_signature_rejected() {
     let creator = NodeId(test_public_key(&signing_key));
 
     let mut block = build_test_block(creator, vec![0x42; 16], HashSet::new(), &signing_key);
-    // Truncate the signature
-    block.identity.signature.truncate(32);
+    // Truncate the signature to make it invalid
+    block.identity.signature.truncate(10);
 
     let msg = Message::BroadcastBlock { block };
     let result = mapper.to_block(&msg);
@@ -657,7 +665,7 @@ fn block_with_short_signature_rejected() {
         result
             .unwrap_err()
             .to_string()
-            .contains("Invalid signature")
+            .contains("Signature verification failed")
     );
 }
 
@@ -672,7 +680,7 @@ fn block_with_short_creator_key_rejected() {
         HashSet::new(),
         &signing_key,
     );
-    // Truncate the creator key
+    // Truncate the creator key to make it invalid for Secp256k1
     block.identity.creator.0.truncate(16);
 
     let msg = Message::BroadcastBlock { block };
@@ -682,7 +690,7 @@ fn block_with_short_creator_key_rejected() {
         result
             .unwrap_err()
             .to_string()
-            .contains("Invalid creator public key")
+            .contains("Signature verification failed")
     );
 }
 
@@ -731,12 +739,7 @@ fn block_with_malformed_parent_key_rejected() {
     let msg = Message::BroadcastBlock { block };
     let result = mapper.to_block(&msg);
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Parent creator has invalid key size")
-    );
+    assert!(result.unwrap_err().to_string().contains("invalid key size"));
 }
 
 // ── Mock Adapter Unit Tests ──────────────────────────────────────────────
