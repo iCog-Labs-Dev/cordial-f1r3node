@@ -216,7 +216,7 @@ pub fn system_deploy_to_f1r3node(
             validator,
             invalid_block_hash,
         } => SystemDeployEnum::Slash(SlashDeploy {
-            invalid_block_hash: prost::bytes::Bytes::copy_from_slice(&invalid_block_hash),
+            invalid_block_hash: prost::bytes::Bytes::copy_from_slice(invalid_block_hash),
             pk: PublicKey::from_bytes(&validator.0),
             initial_rand: rand_seed,
         }),
