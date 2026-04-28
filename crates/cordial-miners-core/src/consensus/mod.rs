@@ -1,5 +1,6 @@
 pub mod finality;
 pub mod fork_choice;
+pub mod round;
 pub mod validation;
 
 pub use finality::{FinalityStatus, can_be_finalized, check_finality, find_last_finalized};
