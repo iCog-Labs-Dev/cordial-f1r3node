@@ -58,7 +58,10 @@ pub struct ExecutionRequest {
 #[derive(Debug, Clone)]
 pub enum SystemDeployRequest {
     /// Slash an equivocator.
-    Slash { validator: NodeId },
+    Slash {
+        validator: NodeId,
+        invalid_block_hash: Vec<u8>,
+    },
     /// Close the block (seal state transitions).
     CloseBlock,
 }
@@ -219,7 +222,7 @@ impl RuntimeManager for MockRuntime {
 
         for sd in &request.system_deploys {
             match sd {
-                SystemDeployRequest::Slash { validator } => {
+                SystemDeployRequest::Slash { validator, invalid_block_hash: _ } => {
                     // Remove the slashed validator's bond
                     let prior_stake = new_bonds
                         .iter()
