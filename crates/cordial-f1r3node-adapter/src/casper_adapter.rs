@@ -61,8 +61,8 @@
 use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
-use either::Either;
 use cordial_miners_core::crypto::CryptoVerifier;
+use either::Either;
 
 use cordial_miners_core::block::Block;
 use cordial_miners_core::blocklace::Blocklace;
@@ -222,7 +222,9 @@ pub trait CordialCasper<V: CryptoVerifier + Send + Sync> {
 /// crate (Phase 3 deferred work) since the standalone adapter has no
 /// RSpace runtime to expose.
 #[async_trait]
-pub trait CordialMultiParentCasper<V: CryptoVerifier + Send + Sync>: CordialCasper<V> + Send + Sync{
+pub trait CordialMultiParentCasper<V: CryptoVerifier + Send + Sync>:
+    CordialCasper<V> + Send + Sync
+{
     async fn last_finalized_block(&self) -> Result<BlockMessage, CasperError>;
 
     fn normalized_initial_fault(
@@ -242,7 +244,7 @@ pub trait CordialMultiParentCasper<V: CryptoVerifier + Send + Sync>: CordialCasp
 ///
 /// Uses `tokio::sync::Mutex` for the blocklace, deploy pool, and buffer
 /// so the trait methods can be called concurrently from multiple tasks.
-pub struct CordialCasperAdapter<V: CryptoVerifier + Send + Sync> { 
+pub struct CordialCasperAdapter<V: CryptoVerifier + Send + Sync> {
     blocklace: tokio::sync::Mutex<Blocklace>,
     deploy_pool: tokio::sync::Mutex<DeployPool>,
     /// Pending blocks awaiting predecessor arrival, keyed by block_hash.
@@ -282,7 +284,9 @@ impl CordialCasperAdapter<cordial_miners_core::crypto::Secp256k1Scheme> {
 }
 
 impl<V: CryptoVerifier + Send + Sync> CordialCasperAdapter<V>
-where V::Error: std::fmt::Debug {
+where
+    V::Error: std::fmt::Debug,
+{
     /// Create a new adapter with an explicit verifier.
     ///
     /// Use `new_with_verifier` when a custom verifier (e.g. a mock) is needed.
@@ -368,9 +372,10 @@ where V::Error: std::fmt::Debug {
 }
 
 #[async_trait]
-impl<V: CryptoVerifier + Send + Sync> CordialCasper<V> for CordialCasperAdapter<V> 
-    where 
-    V::Error: std::fmt::Debug {
+impl<V: CryptoVerifier + Send + Sync> CordialCasper<V> for CordialCasperAdapter<V>
+where
+    V::Error: std::fmt::Debug,
+{
     async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
         self.build_current_snapshot().await
     }
@@ -628,7 +633,9 @@ impl<V: CryptoVerifier + Send + Sync> CordialCasper<V> for CordialCasperAdapter<
 
 #[async_trait]
 impl<V: CryptoVerifier + Send + Sync> CordialMultiParentCasper<V> for CordialCasperAdapter<V>
-where V::Error: std::fmt::Debug {
+where
+    V::Error: std::fmt::Debug,
+{
     async fn last_finalized_block(&self) -> Result<BlockMessage, CasperError> {
         let bl = self.blocklace.lock().await;
         let id: BlockIdentity = match find_last_finalized(&bl, &self.bonds) {

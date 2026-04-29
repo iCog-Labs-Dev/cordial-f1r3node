@@ -1,18 +1,18 @@
 use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use ed25519_dalek::Verifier;
 use std::collections::HashSet;
-use cordial_miners_core::crypto::{CryptoVerifier};
 
 struct MockVerifier;
 
 impl CryptoVerifier for MockVerifier {
     type Error = String;
     fn verify_block(
-        &self, 
-        _content: &BlockContent, 
-        _sig: &[u8], 
-        _creator: &NodeId
+        &self,
+        _content: &BlockContent,
+        _sig: &[u8],
+        _creator: &NodeId,
     ) -> Result<(), Self::Error> {
         Ok(()) // Always allow in tests
     }
@@ -43,7 +43,6 @@ fn insert(b1: &mut Blocklace, block: cordial_miners_core::Block) {
     b1.insert(block, &verifier).expect("insert failed");
 }
 
-
 #[test]
 fn genesis_can_be_inserted_into_empty_blocklace() {
     let block = cordial_miners_core::Block {
@@ -63,6 +62,8 @@ fn genesis_can_be_inserted_into_empty_blocklace() {
     };
 
     let mut blocklace = Blocklace::new();
-    blocklace.insert(block.clone(), &MockVerifier).expect("Failed to insert genesis block");
+    blocklace
+        .insert(block.clone(), &MockVerifier)
+        .expect("Failed to insert genesis block");
     // insert(&mut blocklace, block);
 }
