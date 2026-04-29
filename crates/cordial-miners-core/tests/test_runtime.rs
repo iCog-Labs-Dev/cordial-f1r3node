@@ -231,7 +231,10 @@ fn slash_removes_validator_bond() {
     let req = ExecutionRequest {
         pre_state_hash: vec![],
         deploys: vec![],
-        system_deploys: vec![SystemDeployRequest::Slash { validator: node(2) }],
+        system_deploys: vec![SystemDeployRequest::Slash { 
+            validator: node(2), 
+            invalid_block_hash: vec![0x02; 32] 
+        }],
         bonds: vec![
             Bond {
                 validator: node(1),
@@ -264,6 +267,7 @@ fn slash_of_unknown_validator_reports_not_succeeded() {
         deploys: vec![],
         system_deploys: vec![SystemDeployRequest::Slash {
             validator: node(99),
+            invalid_block_hash: vec![0x99; 32],
         }],
         bonds: vec![Bond {
             validator: node(1),
