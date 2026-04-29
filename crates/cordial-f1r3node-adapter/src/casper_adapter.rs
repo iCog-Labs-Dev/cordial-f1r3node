@@ -62,6 +62,7 @@ use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use either::Either;
+use cordial_miners_core::crypto::CryptoVerifier;
 
 use cordial_miners_core::block::Block;
 use cordial_miners_core::blocklace::Blocklace;
@@ -169,7 +170,7 @@ impl From<TranslationError> for CasperError {
 
 /// Local mirror of f1r3node's `Casper` trait.
 #[async_trait]
-pub trait CordialCasper {
+pub trait CordialCasper<V: CryptoVerifier + Send + Sync> {
     async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError>;
 
     fn contains(&self, hash: &BlockHash) -> bool;
@@ -221,7 +222,7 @@ pub trait CordialCasper {
 /// crate (Phase 3 deferred work) since the standalone adapter has no
 /// RSpace runtime to expose.
 #[async_trait]
-pub trait CordialMultiParentCasper: CordialCasper + Send + Sync {
+pub trait CordialMultiParentCasper<V: CryptoVerifier + Send + Sync>: CordialCasper<V> + Send + Sync{
     async fn last_finalized_block(&self) -> Result<BlockMessage, CasperError>;
 
     fn normalized_initial_fault(
@@ -241,13 +242,14 @@ pub trait CordialMultiParentCasper: CordialCasper + Send + Sync {
 ///
 /// Uses `tokio::sync::Mutex` for the blocklace, deploy pool, and buffer
 /// so the trait methods can be called concurrently from multiple tasks.
-pub struct CordialCasperAdapter {
+pub struct CordialCasperAdapter<V: CryptoVerifier + Send + Sync> { 
     blocklace: tokio::sync::Mutex<Blocklace>,
     deploy_pool: tokio::sync::Mutex<DeployPool>,
     /// Pending blocks awaiting predecessor arrival, keyed by block_hash.
     buffer: tokio::sync::Mutex<HashMap<BlockHash, BlockMessage>>,
     /// Block hashes the adapter has marked invalid (so we don't re-process).
     invalid_blocks: tokio::sync::Mutex<HashMap<BlockHash, Validator>>,
+    pub verifier: V,
 
     bonds: HashMap<NodeId, u64>,
     shard_conf: CasperShardConf,
@@ -258,17 +260,39 @@ pub struct CordialCasperAdapter {
     validation_config: ValidationConfig,
 }
 
-impl CordialCasperAdapter {
-    /// Create a new adapter.
-    ///
-    /// `approved_block` is the genesis or approved block from f1r3node's
-    /// perspective. It's stored verbatim and returned by `get_approved_block`.
+// Backward-compatible constructor: default to Secp256k1 verifier when callers
+// don't supply one (keeps existing tests and call sites working).
+impl CordialCasperAdapter<cordial_miners_core::crypto::Secp256k1Scheme> {
     pub fn new(
         bonds: HashMap<NodeId, u64>,
         shard_conf: CasperShardConf,
         shard_id: impl Into<String>,
         deploy_pool_config: DeployPoolConfig,
         approved_block: Option<BlockMessage>,
+    ) -> Self {
+        Self::new_with_verifier(
+            bonds,
+            shard_conf,
+            shard_id,
+            deploy_pool_config,
+            approved_block,
+            cordial_miners_core::crypto::Secp256k1Scheme,
+        )
+    }
+}
+
+impl<V: CryptoVerifier + Send + Sync> CordialCasperAdapter<V>
+where V::Error: std::fmt::Debug {
+    /// Create a new adapter with an explicit verifier.
+    ///
+    /// Use `new_with_verifier` when a custom verifier (e.g. a mock) is needed.
+    pub fn new_with_verifier(
+        bonds: HashMap<NodeId, u64>,
+        shard_conf: CasperShardConf,
+        shard_id: impl Into<String>,
+        deploy_pool_config: DeployPoolConfig,
+        approved_block: Option<BlockMessage>,
+        verifier: V,
     ) -> Self {
         // Default to a relaxed validation config: skip the cordial check so
         // blocks coming from a non-cordial source (f1r3node, replay) aren't
@@ -283,6 +307,7 @@ impl CordialCasperAdapter {
             deploy_pool: tokio::sync::Mutex::new(DeployPool::new(deploy_pool_config)),
             buffer: tokio::sync::Mutex::new(HashMap::new()),
             invalid_blocks: tokio::sync::Mutex::new(HashMap::new()),
+            verifier,
             bonds,
             shard_conf,
             shard_id: shard_id.into(),
@@ -343,7 +368,9 @@ impl CordialCasperAdapter {
 }
 
 #[async_trait]
-impl CordialCasper for CordialCasperAdapter {
+impl<V: CryptoVerifier + Send + Sync> CordialCasper<V> for CordialCasperAdapter<V> 
+    where 
+    V::Error: std::fmt::Debug {
     async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
         self.build_current_snapshot().await
     }
@@ -520,7 +547,7 @@ impl CordialCasper for CordialCasperAdapter {
     async fn handle_valid_block(&self, block: &BlockMessage) -> Result<(), CasperError> {
         let core_block = message_to_block(block)?;
         let mut bl = self.blocklace.lock().await;
-        bl.insert(core_block).map_err(|e| {
+        bl.insert(core_block, &self.verifier).map_err(|e| {
             CasperError::InvalidState(Box::leak(format!("insert: {e}").into_boxed_str()))
         })?;
 
@@ -539,7 +566,7 @@ impl CordialCasper for CordialCasperAdapter {
             // Try to translate + insert; if it succeeds, drop from buffer.
             if let Ok(translated) = message_to_block(&pending) {
                 let mut bl = self.blocklace.lock().await;
-                if bl.insert(translated).is_ok() {
+                if bl.insert(translated, &self.verifier).is_ok() {
                     promoted.push(pending.block_hash.clone());
                 }
             }
@@ -600,7 +627,8 @@ impl CordialCasper for CordialCasperAdapter {
 }
 
 #[async_trait]
-impl CordialMultiParentCasper for CordialCasperAdapter {
+impl<V: CryptoVerifier + Send + Sync> CordialMultiParentCasper<V> for CordialCasperAdapter<V>
+where V::Error: std::fmt::Debug {
     async fn last_finalized_block(&self) -> Result<BlockMessage, CasperError> {
         let bl = self.blocklace.lock().await;
         let id: BlockIdentity = match find_last_finalized(&bl, &self.bonds) {
