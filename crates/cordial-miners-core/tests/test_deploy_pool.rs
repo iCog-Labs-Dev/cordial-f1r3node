@@ -222,7 +222,6 @@ fn prune_removes_block_expired() {
         ..Default::default()
     };
     let mut pool = DeployPool::new(config);
-    let verifier = MockVerifier;
     pool.add(make_deploy(1, 100, 1000, 1)).unwrap(); // expired at block 200
     pool.add(make_deploy(2, 180, 2000, 1)).unwrap(); // still valid
 
