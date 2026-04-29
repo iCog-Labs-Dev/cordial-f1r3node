@@ -317,7 +317,7 @@ Abstract interface between consensus and execution. Defines what the blocklace n
 | `MockRuntime` | Deterministic in-memory implementation for tests |
 | `ExecutionRequest` | `{ pre_state_hash, deploys, system_deploys, bonds, block_number }` |
 | `ExecutionResult` | `{ post_state_hash, processed_deploys, rejected_deploys, system_deploys, new_bonds }` |
-| `SystemDeployRequest` | `Slash { validator }` \| `CloseBlock` |
+| `SystemDeployRequest` | `Slash { validator, invalid_block_hash }` \| `CloseBlock` |
 | `RuntimeError` | `UnknownPreState` \| `InternalError(String)` |
 
 **RuntimeManager trait**:
@@ -494,7 +494,7 @@ Five public helper functions, each unit-tested:
 
 - **Signature algorithm compatibility.** f1r3node's `SignaturesAlgFactory` uses `secp256k1` and `secp256k1-eth`. The core crate now defaults to Secp256k1, ensuring full compatibility with f1r3node. ED25519 remains available for legacy use through the algorithm abstraction layer.
 - **`new_bonds` is unchanged.** `execute_block` returns the request's bonds verbatim. Bonds in f1r3node are addressable by post-state hash and read via `RuntimeManager::compute_bonds(post_hash)`. Adding that call is follow-up work.
-- **Slash uses validator bytes as the `invalid_block_hash` placeholder.** Real slashes need the actual invalid-block hash; our `SystemDeployRequest::Slash` only carries a validator NodeId. Callers needing tighter semantics should construct a richer request type.
+- **Slash now carries real `invalid_block_hash`.** `SystemDeployRequest::Slash` includes both validator NodeId and invalid_block_hash fields, so f1r3node's `SlashDeploy` receives the actual invalid block hash instead of validator bytes placeholder.
 - **No end-to-end tests** in this crate. Unit tests cover pure translation; exercising `execute_block` against a real RuntimeManager requires LMDB + Rholang bootstrap. Belongs in a Phase 4 integration harness.
 
 ---
