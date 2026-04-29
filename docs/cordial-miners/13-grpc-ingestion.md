@@ -2,28 +2,33 @@
 
 **Implementation**: `crates/cordial-f1r3node-adapter/src/grpc_ingest.rs`  
 **Module**: `cordial_f1r3node_adapter::grpc_ingest`  
-**Tests**: `crates/cordial-f1r3node-adapter/tests/test_grpc_ingest.rs` (26 tests)  
-**Purpose**: Safe translation from network-level messages (gRPC/bincode) to consensus-level blocks
+**Tests**: `crates/cordial-f1r3node-adapter/tests/test_grpc_ingest.rs` (23 tests)  
+**Purpose**: Safe translation from f1r3node protobuf wire format (`BlockMessage`) to consensus-level blocks
 
 ## Architecture Overview
 
 The gRPC ingestion layer implements a **fail-fast, stateless translation pipeline** that sits between the P2P network and the consensus core:
 
 ```
-Network (P2P Node)
+Network (f1r3node / P2P)
     ↓
-  bincode deserialization
+  protobuf deserialization
     ↓
-  Message enum
+  BlockMessage (wire format)
     ↓
 ┌─────────────────────────────────────┐
 │    GrpcBlockMapper<V, P, Id>        │  (pure, deterministic)
-│                                     │  - Extract BroadcastBlock
-│  Structural validation:             │  - Verify content hash (SHA-256)
-│  • Message type                     │  - Verify ED25519 signature
-│  • Content hash                     │  - Validate parent references
-│  • ED25519 signature                │
-│  • Parent integrity                 │
+│                                     │
+│  Translation:                       │
+│  • message_to_block() protobuf →    │
+│    internal Block format            │
+│  • Extract sig_algorithm field      │
+│                                     │
+│  Structural validation:             │
+│  • Wire block_hash vs recomputed    │
+│    Blake2b-256 content hash         │
+│  • Secp256k1 / Ed25519 signature    │
+│  • Parent creator key byte lengths  │
 └─────────────────────────────────────┘
     ↓
   Block (valid or error)
@@ -44,9 +49,9 @@ Network (P2P Node)
 
 ### 1. Fail-Fast
 Blocks with invalid structure are rejected **immediately** with specific, actionable error messages:
-- Content hash mismatch → clear expected vs. actual hashes
-- Signature verification failure → clear reason
-- Malformed parent references → specific field and validation rule
+- Wire hash length wrong or mismatch against recomputed → clear expected vs. actual hashes
+- Signature verification failure → creator key and algorithm named
+- Malformed parent creator key → specific byte length and valid range
 
 ### 2. Pure Mapping
 The `GrpcBlockMapper` is **stateless and deterministic**:
@@ -57,17 +62,20 @@ The `GrpcBlockMapper` is **stateless and deterministic**:
 
 ### 3. Separation of Concerns
 **Mapper** validates structure; **Adapter** handles semantics:
-- Mapper: cryptographic signatures, hash integrity, reference well-formedness
+- Mapper: cryptographic signatures, hash integrity, parent key well-formedness
 - Adapter: closure axiom, chain axiom, cordial condition, finality rules
 
-### 4. Type Genericity
+### 4. Protobuf-First Input
+The mapper accepts `BlockMessage` (f1r3node protobuf wire format) directly — there is no intermediate `Message` enum. Algorithm selection is driven by the `sig_algorithm` field on the wire message, defaulting to `"secp256k1"` if absent.
+
+### 5. Type Genericity
 Type parameters `<V, P, Id>` are reserved for future extension:
 ```rust
 pub struct GrpcBlockMapper<V = (), P = (), Id = ()> { ... }
 ```
 Current implementations use unit types `()`, but the API is forward-compatible for:
 - Custom validator types `V`
-- Custom payload types `P`  
+- Custom payload types `P`
 - Custom block identity types `Id`
 
 ## Public API
@@ -81,28 +89,29 @@ pub fn new() -> Self
 
 **Mapping method**:
 ```rust
-pub fn to_block(&self, msg: &Message) -> Result<Block>
+pub fn from_protobuf(&self, block_msg: &BlockMessage) -> Result<Block>
 ```
 
 **Behavior**:
-1. Accepts any `Message` enum variant
-2. Rejects non-`BroadcastBlock` with `InvalidMessageType` error
-3. Performs four sequential validation steps:
-   - Content hash verification
-   - ED25519 signature verification  
-   - Parent reference integrity
-4. Returns mapped `Block` on success, detailed error on failure
+1. Accepts a `BlockMessage` (f1r3node protobuf wire format)
+2. Translates to internal `Block` via `message_to_block()`
+3. Extracts `sig_algorithm` from the wire message (default: `"secp256k1"`)
+4. Performs three sequential structural validation steps:
+   - Wire content hash verification (Blake2b-256)
+   - Signature verification (algorithm-driven)
+   - Parent creator key byte-length check
+5. Returns the mapped `Block` on success, a detailed error on failure
 
 **Example**:
 ```rust
-use cordial_miners_core::network::Message;
+use cordial_f1r3node_adapter::block_translation::BlockMessage;
 use cordial_f1r3node_adapter::grpc_ingest::GrpcBlockMapper;
 
 let mapper = GrpcBlockMapper::new();
-let network_msg = Message::BroadcastBlock { block: ... };
+let block_msg = BlockMessage { sig_algorithm: "secp256k1".into(), /* ... */ };
 
-match mapper.to_block(&network_msg) {
-    Ok(block) => println!("Valid block received: {}", block.identity.creator),
+match mapper.from_protobuf(&block_msg) {
+    Ok(block) => println!("Valid block: {:?}", block.identity.creator),
     Err(e) => eprintln!("Rejected: {}", e),
 }
 ```
@@ -134,7 +143,6 @@ struct MyAdapter {
 
 impl BlocklaceAdapter<BlockIdentity> for MyAdapter {
     fn on_block(&mut self, block: Block) -> Result<()> {
-        // Semantic validation happens here
         self.blocklace.insert(block.clone())?;
         self.engine.on_block(block.identity)?;
         Ok(())
@@ -144,159 +152,169 @@ impl BlocklaceAdapter<BlockIdentity> for MyAdapter {
 
 ## Validation Pipeline
 
-### Step 1: Message Type Check
-- **Input**: `&Message`
-- **Validation**: Must be `Message::BroadcastBlock { block }`
-- **Rejection**: Other variants (Ping, Hello, SyncRequest, etc.) immediately fail
-- **Error**: `"Invalid message type: expected BroadcastBlock, got {:?}"`
+### Step 1: Protobuf Translation
+- **Input**: `&BlockMessage` (f1r3node wire format)
+- **Process**: `message_to_block(block_msg)` — decodes protobuf fields, merges
+  `header.parents_hash_list` and `justifications` into the unified `predecessors` set,
+  and populates the internal `Block` struct
+- **Also**: `sig_algorithm` is extracted from the wire message and normalised to
+  lowercase; an empty field defaults to `"secp256k1"`
+- **Rejection**: translation errors (malformed protobuf, missing required fields)
 
 ### Step 2: Content Hash Verification
-- **Input**: `Block { identity: { content_hash, ... }, content: { payload, predecessors } }`
-- **Process**: Recompute `SHA-256(content)` deterministically
-  - Payload is hashed with length prefix (8 bytes little-endian)
-  - Predecessors are sorted by content_hash for determinism
-  - Each predecessor encodes: [content_hash (32B), creator_len, creator, sig_len, signature]
-- **Validation**: `identity.content_hash == computed_hash`
-- **Rejection**: `"Content hash mismatch: expected {:?}, got {:?}"`
+- **Input**: `block_msg.block_hash` (wire) and the translated `Block`
+- **Process**: Recompute `Blake2b-256(content)` deterministically from the translated
+  `BlockContent`, then check both:
+  1. `block_msg.block_hash` (32 bytes) matches the recomputed hash — catches tampering
+     of the wire hash field before translation discards it
+  2. `block.identity.content_hash` matches the recomputed hash — sanity-checks the
+     translation itself
+- **Rejection**:
+  - `"Content hash mismatch: wire block_hash has invalid length N"`
+  - `"Content hash mismatch: wire block_hash [...] does not match recomputed [...]"`
+  - `"Content hash mismatch: translated identity [...] does not match recomputed [...]"`
 
 ### Step 3: Signature Verification
-- **Input**: `identity: { content_hash, creator (32-byte ED25519 public key), signature (64 bytes) }`
-- **Process**: `ED25519.verify(content_hash, creator_pubkey, signature)`
-- **Preconditions**:
-  - Creator key must be exactly 32 bytes
-  - Signature must be exactly 64 bytes
-- **Validation**: Signature is valid under creator's public key
-- **Rejection** reasons:
-  - `"Invalid creator public key: expected 32 bytes, got N"`
-  - `"Invalid signature: expected 64 bytes, got N"`
-  - `"Signature verification failed for creator {:?}"`
+- **Input**: `identity: { content_hash, creator (public key), signature }`
+- **Algorithm**: dispatched from `block_msg.sig_algorithm`:
+  - `"secp256k1"` (default): Secp256k1 ECDSA, DER-encoded; key 33 bytes (compressed)
+    or 65 bytes (uncompressed)
+  - `"ed25519"`: EdDSA; key 32 bytes, signature 64 bytes
+- **Preconditions**: signature must be non-empty
+- **Validation**: `SignatureScheme.verify(content_hash, creator_key, signature)`
+- **Rejection**:
+  - `"Signature cannot be empty"`
+  - `"Unknown signature algorithm: X (expected 'secp256k1' or 'ed25519')"`
+  - `"Signature verification failed for creator [...] using algorithm 'X'"`
 
 ### Step 4: Parent Reference Integrity
 - **Input**: `content.predecessors: HashSet<BlockIdentity>`
-- **Validation**: For each parent:
-  - Content hash is 32 bytes (always true for SHA-256, but checked defensively)
-  - Signature is non-empty
-  - Creator key is exactly 32 bytes
-- **Rejection** reasons:
-  - `"Parent identity has invalid content hash size: N"`
-  - `"Parent identity has empty signature"`
-  - `"Parent creator has invalid key size: N"`
-
-**Note**: This step validates **structure only**. Closure axiom (all parents exist in blocklace) and chain axiom (no equivocation) are semantic checks delegated to the adapter.
+- **Scope**: **Pure byte-level structural check only.** Parent existence is not verified
+  here — that is a semantic concern delegated to the adapter (closure axiom).
+- **Validation** per predecessor:
+  - `content_hash`: statically `[u8; 32]` — no runtime check needed
+  - `creator` key length: must be 33 bytes (Secp256k1 compressed) or 65 bytes
+    (Secp256k1 uncompressed)
+  - `signature`: **intentionally not checked** — wire-format predecessors carry only
+    a content hash and creator key; their signatures are legitimately absent
+- **Rejection**:
+  - `"Parent creator has invalid key length: N bytes (expected 33 or 65)"`
 
 ## Error Handling
 
 All errors are `anyhow::Result<Block>`, providing:
 - Detailed error messages for each validation failure
-- Clear actionable guidance (e.g., "expected 32 bytes, got N")
+- Clear actionable guidance (e.g., "expected 33 or 65, got N")
 - Opportunity for logging, metrics, and debugging
 
 ### Error Classes
 
 | Error | Cause | Action |
 |-------|-------|--------|
-| Invalid message type | Non-BroadcastBlock variant | Drop message, continue |
-| Content hash mismatch | Corrupted payload or signature | Drop block, log anomaly |
-| Signature verification failed | Invalid signature or wrong creator | Drop block, potential Byzantine peer |
-| Invalid key size | Malformed ED25519 key | Drop block, potential peer error |
-| Parent integrity violation | Malformed parent reference | Drop block, protocol violation |
+| Translation failure | Malformed protobuf / missing fields | Drop message, log error |
+| Wire hash wrong length | `block_hash` field not 32 bytes | Drop block, log anomaly |
+| Content hash mismatch | Tampered `block_hash` or corrupted payload | Drop block, log anomaly |
+| Unknown signature algorithm | `sig_algorithm` not `secp256k1` or `ed25519` | Drop block, check peer version |
+| Empty signature | `sig` field absent or zero-length | Drop block, potential peer error |
+| Signature verification failed | Invalid signature or wrong creator key | Drop block, potential Byzantine peer |
+| Parent key wrong length | Predecessor creator key not 33 or 65 bytes | Drop block, protocol violation |
 
 ## Testing Strategy
 
 **Test Location**: `crates/cordial-f1r3node-adapter/tests/test_grpc_ingest.rs`  
-**Test Count**: 26 tests (16 unit tests + 10 integration tests)
+**Test Count**: 23 tests (13 unit tests + 10 integration tests)
 
-### Unit Tests (16 cases)
+### Unit Tests (13 cases)
 
 **Valid block mapping** (3 tests):
-- Genesis block (no predecessors) maps to identical Block
-- Block with predecessors maps deterministically
-- Mapper is stateless and idempotent (different instances, same result)
-
-**Invalid message types** (3 tests):
-- Ping message rejected
-- Hello message rejected  
-- SyncRequest message rejected
+- `valid_genesis_block_maps_to_block` — no predecessors, hash and creator verified
+- `valid_block_with_predecessors_maps_deterministically` — predecessor chain, idempotent output
+- `mapper_is_stateless_and_idempotent` — different instances and repeated calls, same result
 
 **Content hash validation** (1 test):
-- Corrupted content hash rejected
+- `block_with_corrupted_content_hash_rejected` — flipped byte in `block_hash` field caught
 
 **Signature validation** (4 tests):
-- Corrupted signature rejected
-- Wrong creator key rejected
-- Truncated signature rejected
-- Truncated creator key rejected
+- `block_with_invalid_signature_rejected` — corrupted `sig` bytes
+- `block_with_wrong_creator_key_rejected` — mismatched sender key
+- `block_with_short_signature_rejected` — truncated signature
+- `block_with_short_creator_key_rejected` — truncated creator key
 
 **Parent integrity** (2 tests):
-- Empty parent signature rejected
-- Malformed parent creator key rejected
+- `block_with_empty_signature_in_parent_rejected` — injected parent reference, verified no panic
+- `block_with_malformed_parent_key_rejected` — parent hash too short (3 bytes), verified no panic
 
 **Mock adapter integration** (3 tests):
-- Valid block triggers `on_block` callback exactly once
-- Multiple valid blocks trigger multiple callbacks in order
-- Invalid block never reaches adapter
+- `valid_block_triggers_on_block_callback` — callback fires exactly once, hash preserved
+- `multiple_valid_blocks_trigger_multiple_callbacks` — two creators, two callbacks in order
+- `adapter_fails_to_receive_invalid_block` — corrupted block never reaches adapter
 
 ### Integration Tests (10 cases)
 
 **Full pipeline validation** (1 test):
-- Valid block flows network → mapper → adapter successfully
+- `full_pipeline_valid_block_from_protobuf_to_adapter` — `BlockMessage` → mapper → adapter end-to-end
 
-**Message filtering** (1 test):
-- Non-BroadcastBlock messages rejected before adapter
+**Algorithm rejection** (1 test):
+- `pipeline_rejects_non_broadcast_block_messages` — invalid `sig_algorithm` string rejected
 
 **Corruption detection** (1 test):
-- Corrupted blocks rejected before adapter
+- `pipeline_rejects_corrupted_blocks_before_adapter` — corrupted signature never reaches adapter
 
 **Multiple block sequencing** (1 test):
-- Pipeline handles 5+ blocks in sequence correctly
+- `pipeline_sequence_multiple_valid_blocks` — 5 blocks from distinct creators, all accepted in order
 
 **Predecessor handling** (2 tests):
-- Single-predecessor blocks maintain relationships
-- Complex chains (genesis → 3 children) preserve structure
+- `pipeline_with_block_predecessors` — genesis → child, predecessor relationship preserved
+- `complex_predecessor_chain` — genesis → 3 chained children, all accepted, structure intact
 
 **Adapter failure paths** (1 test):
-- Adapter can reject even structurally-valid blocks
+- `adapter_can_reject_valid_blocks` — adapter may reject structurally-valid blocks
 
 **Mapper properties** (2 tests):
-- Determinism: different instances produce identical results
-- Idempotence: same mapper, same input → same output
+- `mapper_determinism_across_instances` — two mapper instances, identical output
+- `mapper_idempotence_same_instance` — same instance, same input three times, identical output
 
 **Error clarity** (1 test):
-- Error messages are descriptive for each failure type
+- `error_messages_are_descriptive` — corrupted hash and corrupted signature each produce
+  descriptive errors containing `"hash mismatch"` / `"Signature"` respectively
 
 ### Test Execution
 
-Run all gRPC ingestion tests (26 total):
+Run all gRPC ingestion tests:
 ```bash
 cargo test -p cordial-f1r3node-adapter --test test_grpc_ingest
 ```
 
-Run specific test:
+Run a specific test:
 ```bash
 cargo test -p cordial-f1r3node-adapter --test test_grpc_ingest valid_genesis_block_maps_to_block
 ```
 
 Expected output:
 ```
-running 26 tests
-test full_pipeline_valid_block_from_network_to_adapter ... ok
+running 23 tests
 test valid_genesis_block_maps_to_block ... ok
-test valid_block_with_predecessors_maps_deterministically ... ok
+test full_pipeline_valid_block_from_protobuf_to_adapter ... ok
 ...
-test result: ok. 26 passed; 0 failed
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ```
 
 ## Cryptographic Assumptions
 
-- **Hash function**: SHA-256 (deterministic, collision-resistant)
-- **Signature scheme**: ED25519 (unforgeability under chosen-message attack)
-- **Key format**: Raw 32-byte public keys (standard ED25519)
-- **Signature format**: Raw 64-byte signatures (standard ED25519)
+- **Hash function**: Blake2b-256 (f1r3node alignment; deterministic, collision-resistant)
+- **Signature schemes** (selected per-message via `sig_algorithm`):
+  - `"secp256k1"` (default): Secp256k1 ECDSA, DER-encoded signatures
+    - Public key: 33 bytes compressed or 65 bytes uncompressed
+    - Signature: variable-length DER (typically 71–72 bytes)
+  - `"ed25519"`: EdDSA
+    - Public key: 32 bytes
+    - Signature: 64 bytes
 
 **Implications**:
 - A block's identity is immutable once signed
 - Blocks cannot be forged without the creator's private key
-- Content cannot be modified without invalidating the signature
+- Content cannot be modified without invalidating both the hash and the signature
+- Algorithm agility is fully wire-driven: no hard-coded scheme at the mapper level
 
 ## Future Extensions
 
@@ -308,33 +326,32 @@ The generic parameters `<V, P, Id>` enable future extensibility:
 // Future: custom validator type for weighted voting
 pub struct GrpcBlockMapper<V: Validator, P, Id> {
     validators: PhantomData<V>,
-    ...
+    // ...
 }
 
 impl<V: Validator> GrpcBlockMapper<V, (), ()> {
-    pub fn to_block_with_weights(&self, msg: &Message, weights: &[V]) -> Result<Block> {
-        // Could validate block weight thresholds here
-        ...
+    pub fn from_protobuf_with_weights(&self, msg: &BlockMessage, weights: &[V]) -> Result<Block> {
+        // Validate block weight thresholds here
     }
 }
 ```
 
 ### Blocklace Integration
 
-The mapper works naturally with `Blocklace` for closure axiom enforcement:
+The mapper works naturally with `Blocklace` for closure axiom enforcement in the adapter:
 
 ```rust
 impl BlocklaceAdapter<BlockIdentity> for MyAdapter {
     fn on_block(&mut self, block: Block) -> Result<()> {
-        // Mapper guaranteed structural validity; we check semantic rules
-        let missing = block.content.predecessors.iter()
+        // Mapper guaranteed structural validity; adapter checks semantic rules
+        let missing: Vec<_> = block.content.predecessors.iter()
             .filter(|pid| !self.blocklace.blocks.contains_key(pid))
-            .collect::<Vec<_>>();
-        
+            .collect();
+
         if !missing.is_empty() {
             return Err(anyhow!("Closure violation: missing {:?}", missing));
         }
-        
+
         self.blocklace.insert(block)?;
         Ok(())
     }
@@ -352,29 +369,29 @@ pub struct CustomPayload {
     timestamp: u64,
 }
 
-// Map from network CustomPayload to domain model
-impl From<CustomPayload> for AppPayload { ... }
+impl From<CustomPayload> for AppPayload { /* ... */ }
 ```
 
 ## Related Modules
 
-- **`cordial_miners_core::crypto`**: SHA-256 hashing and ED25519 signing/verification
+- **`cordial_f1r3node_adapter::block_translation`**: `BlockMessage` protobuf type and `message_to_block()` translator
+- **`cordial_miners_core::crypto`**: Blake2b-256 hashing; `Secp256k1Scheme` and `Ed25519Scheme` verifiers
 - **`cordial_miners_core::Block`**: The consensus-layer block type
-- **`cordial_miners_core::network::Message`**: The network message enum
-- **`cordial_miners_core::Blocklace`**: In-memory block store (closure enforcement)
+- **`cordial_miners_core::Blocklace`**: In-memory block store (closure enforcement in adapter)
 - **`cordial_miners_core::ConsensusEngine`**: Trait for consensus callbacks
 
 ## Summary
 
-The gRPC ingestion layer provides a **production-ready translation boundary** between untrusted network input and trusted consensus state:
+The gRPC ingestion layer provides a **translation boundary** between untrusted network input and trusted consensus state:
 
-| Aspect | Guarantee |
-|--------|-----------|
+| Aspect | Status |
+|--------|--------|
 | **Correctness** | All structural invariants verified before passing to consensus |
 | **Determinism** | Same input always produces same output |
-| **Performance** | O(n) in payload + predecessors size, no allocation beyond message parsing |
+| **Performance** | O(n) in payload + predecessors size, no allocation beyond protobuf parsing |
 | **Safety** | Pure mapping phase cannot corrupt consensus state |
+| **Algorithm agility** | Signature scheme selected per-message from wire format |
 | **Debuggability** | Detailed, actionable error messages for every rejection |
 | **Extensibility** | Generic type parameters enable future customization |
 
-Blocks that pass this layer are **guaranteed structurally sound** and ready for semantic validation by the consensus engine.
+Blocks that pass this layer have passed structural validation (hash integrity, signature verification, parent key byte lengths) and are ready for semantic validation by the consensus engine.
