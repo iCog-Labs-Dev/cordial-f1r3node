@@ -1,4 +1,5 @@
 use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::crypto::hash_content;
 use cordial_miners_core::execution::{
     BlockState, Bond, CordialBlockPayload, Deploy, DeployPool, DeployPoolConfig, PoolError,
@@ -6,17 +7,16 @@ use cordial_miners_core::execution::{
 };
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
-use cordial_miners_core::crypto::{CryptoVerifier};
 
 struct MockVerifier;
 
 impl CryptoVerifier for MockVerifier {
     type Error = String;
     fn verify_block(
-        &self, 
-        _content: &BlockContent, 
-        _sig: &[u8], 
-        _creator: &NodeId
+        &self,
+        _content: &BlockContent,
+        _sig: &[u8],
+        _creator: &NodeId,
     ) -> Result<(), Self::Error> {
         Ok(()) // Always allow in tests
     }
@@ -222,7 +222,6 @@ fn prune_removes_block_expired() {
         ..Default::default()
     };
     let mut pool = DeployPool::new(config);
-    let verifier = MockVerifier;
     pool.add(make_deploy(1, 100, 1000, 1)).unwrap(); // expired at block 200
     pool.add(make_deploy(2, 180, 2000, 1)).unwrap(); // still valid
 
