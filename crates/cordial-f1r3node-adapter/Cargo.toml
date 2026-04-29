@@ -11,6 +11,7 @@ cordial-miners-core = { path = "../cordial-miners-core" }
 sha2.workspace = true
 serde.workspace = true
 bincode.workspace = true
+anyhow.workspace = true
 
 # Phase 3.4 — crypto alignment with f1r3node.
 blake2.workspace = true
