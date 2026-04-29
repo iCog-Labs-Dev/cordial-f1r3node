@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-use crate::crypto::{CryptoVerifier};
+use crate::crypto::CryptoVerifier;
 use crate::network::message::Message;
 use crate::network::peer::Peer;
 use crate::types::BlockIdentity;
