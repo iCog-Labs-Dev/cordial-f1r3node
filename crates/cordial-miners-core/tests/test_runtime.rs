@@ -226,12 +226,40 @@ fn close_block_system_deploy_succeeds() {
 }
 
 #[test]
+fn guard_invalid_block_hash_rejects_wrong_length() {
+    // Test with too short hash
+    let result = SystemDeployRequest::validate_invalid_block_hash(&[0x01; 31]);
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .contains("must be exactly 32 bytes, got 31 bytes")
+    );
+
+    // Test with too long hash
+    let result = SystemDeployRequest::validate_invalid_block_hash(&[0x01; 33]);
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .contains("must be exactly 32 bytes, got 33 bytes")
+    );
+
+    // Test with correct length (should succeed)
+    let result = SystemDeployRequest::validate_invalid_block_hash(&[0x01; 32]);
+    assert!(result.is_ok());
+}
+
+#[test]
 fn slash_removes_validator_bond() {
     let mut rt = MockRuntime::new();
     let req = ExecutionRequest {
         pre_state_hash: vec![],
         deploys: vec![],
-        system_deploys: vec![SystemDeployRequest::Slash { validator: node(2) }],
+        system_deploys: vec![SystemDeployRequest::Slash {
+            validator: node(2),
+            invalid_block_hash: vec![0x02; 32],
+        }],
         bonds: vec![
             Bond {
                 validator: node(1),
@@ -264,6 +292,7 @@ fn slash_of_unknown_validator_reports_not_succeeded() {
         deploys: vec![],
         system_deploys: vec![SystemDeployRequest::Slash {
             validator: node(99),
+            invalid_block_hash: vec![0x99; 32],
         }],
         bonds: vec![Bond {
             validator: node(1),
