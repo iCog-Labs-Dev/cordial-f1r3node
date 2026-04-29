@@ -1,41 +1,51 @@
 //! # gRPC Ingestion Layer
 //!
-//! Provides a safe translation layer between network-level gRPC/bincode messages
-//! and consensus-level [`Block`] structs.
+//! Provides a safe translation layer from f1r3node protobuf wire format
+//! (`BlockMessage`) through validation to consensus-level [`Block`] structs.
 //!
 //! ## Architecture
 //!
-//! The ingestion pipeline separates concerns across two components:
+//! The ingestion pipeline separates concerns across three components:
 //!
-//! 1. **Mapper** (pure, deterministic, no side effects):
-//!    - Validates structural integrity (hashes, signatures, parent references)
-//!    - Extracts [`Block`] from [`Message::BroadcastBlock`] variants
-//!    - Rejects invalid messages with specific error reasons
+//! 1. **Translator** (protobuf decoding via `message_to_block()`):
+//!    - Converts f1r3node [`BlockMessage`] (protobuf) to internal [`Block`] format
+//!    - Merges parents and justifications into unified predecessor set
+//!    - Extracts `sig_algorithm` for downstream validation
 //!
-//! 2. **Adapter** (stateful, handles side effects):
+//! 2. **Validator** (pure, deterministic, no side effects):
+//!    - Validates structural integrity (hashes, signatures)
+//!    - Uses `sig_algorithm` from protobuf message
+//!    - Rejects invalid blocks with specific error reasons
+//!
+//! 3. **Adapter** (stateful, handles side effects):
 //!    - Implements [`BlocklaceAdapter`] trait
 //!    - Invokes [`ConsensusEngine::on_block`] callback
 //!    - Manages blocklace insertion, finality checks, etc.
 //!
 //! ## Design Principles
 //!
+//! - **Protobuf-first**: Accepts f1r3node wire format directly
+//! - **Algorithm-driven**: Signature verification dispatched from protobuf `sig_algorithm`
 //! - **Fail-fast**: Invalid blocks rejected immediately with clear errors
-//! - **Pure mapping**: No database writes, no state mutations in mapper
+//! - **Pure validation**: No database writes, no state mutations in mapper
 //! - **Type-generic**: `<V, P, Id>` parameters allow future extensibility
 //! - **Trust boundary**: Mapper validates structure; adapter handles semantics
 
 use anyhow::{Result, anyhow};
 use cordial_miners_core::Block;
-use cordial_miners_core::crypto;
-use cordial_miners_core::network::Message;
+use cordial_miners_core::crypto::{self, Ed25519Scheme, Secp256k1Scheme, SignatureScheme};
 #[allow(unused)]
 use cordial_miners_core::types::{BlockIdentity, NodeId};
 
-/// A pure, stateless mapper from network messages to consensus blocks.
+use crate::block_translation::{BlockMessage, message_to_block};
+
+/// A pure, stateless validator for protobuf blocks from f1r3node.
 ///
-/// Validates structural integrity (hashes, signatures, parent references) without
-/// performing any side effects or state mutations. Multiple invocations with the
-/// same input are guaranteed to produce identical results.
+/// Accepts f1r3node [`BlockMessage`] (protobuf wire format), translates to internal
+/// [`Block`] format, and validates structural integrity (hashes, signatures, parent
+/// references). The signature algorithm is dispatched from the protobuf message.
+///
+/// Multiple invocations with the same input are guaranteed to produce identical results.
 ///
 /// # Type Parameters
 ///
@@ -43,12 +53,19 @@ use cordial_miners_core::types::{BlockIdentity, NodeId};
 /// - `P`: Payload type (reserved for future extension)
 /// - `Id`: Block identity type (reserved for future extension)
 ///
+/// # Cryptographic Algorithms
+///
+/// - **Hashing**: Blake2b-256 (f1r3node alignment)
+/// - **Signature verification**: Extracted from protobuf `BlockMessage.sig_algorithm`
+///   - `"secp256k1"`: Secp256k1 ECDSA with DER encoding
+///   - `"ed25519"`: EdDSA with 64-byte signatures
+///
 /// # Example
 ///
 /// ```ignore
 /// let mapper = GrpcBlockMapper::new();
-/// let network_msg = Message::BroadcastBlock { block: ... };
-/// match mapper.to_block(&network_msg) {
+/// let block_msg = BlockMessage { sig_algorithm: "secp256k1".into(), ... };
+/// match mapper.from_protobuf(&block_msg) {
 ///     Ok(block) => println!("Valid block: {:?}", block),
 ///     Err(e) => eprintln!("Rejected: {}", e),
 /// }
@@ -66,63 +83,92 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
         }
     }
 
-    /// Map a network message to a validated [`Block`].
+    /// Translate and validate a protobuf [`BlockMessage`] to a consensus [`Block`].
     ///
-    /// Performs the following validations:
+    /// Performs the following steps:
     ///
-    /// 1. **Message type**: Ensures the message is [`Message::BroadcastBlock`]
-    /// 2. **Content hash**: Recomputes hash of block content and verifies match
-    /// 3. **Signature**: Verifies ED25519 signature against creator's public key
-    /// 4. **Parent integrity**: Ensures all parent references exist in the message
+    /// 1. **Protobuf translation**: Converts f1r3node [`BlockMessage`] to internal [`Block`]
+    ///    format via [`message_to_block`]
+    /// 2. **Algorithm extraction**: Gets signature algorithm from `BlockMessage.sig_algorithm`
+    /// 3. **Content hash validation**: Verifies wire `block_hash` and translated identity both match the recomputed Blake2b-256 hash
+    /// 4. **Signature validation**: Verifies block signature using the extracted algorithm
+    /// 5. **Parent integrity**: Ensures all parent references are well-formed
     ///
-    /// Returns an error if any validation fails. Errors are detailed and actionable
+    /// Returns an error if any step fails. Errors are detailed and actionable
     /// for logging and debugging.
     ///
     /// # Arguments
     ///
-    /// * `msg` - The network message (typically [`Message::BroadcastBlock`])
+    /// * `block_msg` - The protobuf block message from f1r3node
     ///
     /// # Returns
     ///
     /// - `Ok(Block)` if all validations pass
-    /// - `Err(anyhow::Error)` with a detailed message if validation fails
-    pub fn to_block(&self, msg: &Message) -> Result<Block> {
-        // 1. Extract the block from the message variant
-        let block = match msg {
-            Message::BroadcastBlock { block } => block.clone(),
-            other => {
-                return Err(anyhow!(
-                    "Invalid message type: expected BroadcastBlock, got {:?}",
-                    std::mem::discriminant(other)
-                ));
-            }
+    /// - `Err(anyhow::Error)` with a detailed message if translation or validation fails
+    pub fn from_protobuf(&self, block_msg: &BlockMessage) -> Result<Block> {
+        // 1. Translate protobuf message to internal Block format
+        let block = message_to_block(block_msg)
+            .map_err(|e| anyhow!("Failed to translate BlockMessage to Block: {:?}", e))?;
+
+        // 2. Extract signature algorithm (case-insensitive, default to secp256k1)
+        let sig_algo = block_msg.sig_algorithm.to_lowercase();
+        let sig_algo = if sig_algo.is_empty() {
+            "secp256k1"
+        } else {
+            &sig_algo
         };
 
-        // 2. Validate content hash
-        self.validate_content_hash(&block)?;
+        // 3. Validate content hash (Blake2b-256):
+        //    First verify the wire-format block_hash matches what we recompute from
+        //    content, then verify it matches the identity stored in the translated block.
+        //    This catches corruption of block_msg.block_hash before translation silently
+        //    discards the tampered value.
+        self.validate_content_hash_against_wire(block_msg, &block)?;
 
-        // 3. Validate signature (ED25519)
-        self.validate_signature(&block)?;
+        // 4. Validate signature (algorithm-specific from protobuf)
+        self.validate_signature(&block, sig_algo)?;
 
-        // 4. Validate parent references
+        // 5. Validate parent references
         self.validate_parents(&block)?;
 
         Ok(block)
     }
 
-    /// Verify that the block's content hash matches the recomputed hash.
+    /// Verify the wire-format block_hash matches the recomputed hash from content,
+    /// and that the translated identity also matches.
     ///
-    /// The hash is computed deterministically from the serialized content
-    /// using SHA-256.
-    fn validate_content_hash(&self, block: &Block) -> Result<()> {
-        let expected = crypto::hash_content(&block.content);
-        let actual = block.identity.content_hash;
+    /// Checks both the raw wire `block_msg.block_hash` (before translation can discard it)
+    /// and the translated `block.identity.content_hash`, using Blake2b-256 (f1r3node alignment).
+    fn validate_content_hash_against_wire(
+        &self,
+        block_msg: &BlockMessage,
+        block: &Block,
+    ) -> Result<()> {
+        let recomputed = crypto::hash_content(&block.content);
 
-        if expected != actual {
+        // Verify wire-format hash against recomputed hash (catches tampering of block_hash field)
+        if block_msg.block_hash.len() != 32 {
             return Err(anyhow!(
-                "Content hash mismatch: expected {:?}, got {:?}",
-                expected,
-                actual
+                "Content hash mismatch: wire block_hash has invalid length {}",
+                block_msg.block_hash.len()
+            ));
+        }
+        let mut wire_hash = [0u8; 32];
+        wire_hash.copy_from_slice(&block_msg.block_hash);
+        if wire_hash != recomputed {
+            return Err(anyhow!(
+                "Content hash mismatch: wire block_hash {:?} does not match recomputed {:?}",
+                wire_hash,
+                recomputed
+            ));
+        }
+
+        // Sanity-check translated identity
+        if block.identity.content_hash != recomputed {
+            return Err(anyhow!(
+                "Content hash mismatch: translated identity {:?} does not match recomputed {:?}",
+                block.identity.content_hash,
+                recomputed
             ));
         }
 
@@ -131,17 +177,25 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
 
     /// Verify that the block's signature is valid for its creator.
     ///
-    /// The signature is assumed to be in the format matching the crypto scheme
-    /// (Secp256k1 by default for f1r3node alignment). The creator is assumed to be
-    /// a valid public key in the appropriate format.
+    /// The signature verification algorithm is dispatched based on the `sig_algorithm`
+    /// parameter (default: "secp256k1" for f1r3node alignment).
+    ///
+    /// Supported algorithms:
+    /// - `"secp256k1"`: Secp256k1 ECDSA (DER-encoded, typically 71-72 bytes)
+    /// - `"ed25519"`: EdDSA (64 bytes)
+    ///
+    /// # Arguments
+    ///
+    /// * `block` - The block to verify
+    /// * `sig_algorithm` - Algorithm identifier (case-insensitive, e.g. "secp256k1")
     ///
     /// # Returns
     ///
     /// - `Ok(())` if the signature is valid
-    /// - `Err` if the signature verification fails or the public key is invalid
-    fn validate_signature(&self, block: &Block) -> Result<()> {
+    /// - `Err` if the signature verification fails, public key is invalid, or algorithm is unknown
+    fn validate_signature(&self, block: &Block, sig_algorithm: &str) -> Result<()> {
         let creator_key = &block.identity.creator.0;
-        let content_hash = &block.identity.content_hash;
+        let hash_array = &block.identity.content_hash;
         let signature = &block.identity.signature;
 
         // Signature must not be empty
@@ -149,46 +203,56 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
             return Err(anyhow!("Signature cannot be empty"));
         }
 
-        // Perform cryptographic verification using the default scheme
-        if !crypto::verify(content_hash, creator_key, signature) {
+        // Dispatch verification based on algorithm
+        let valid = match sig_algorithm {
+            "secp256k1" => Secp256k1Scheme.verify(hash_array, creator_key, signature),
+            "ed25519" => Ed25519Scheme.verify(hash_array, creator_key, signature),
+            other => {
+                return Err(anyhow!(
+                    "Unknown signature algorithm: {} (expected 'secp256k1' or 'ed25519')",
+                    other
+                ));
+            }
+        };
+
+        if !valid {
             return Err(anyhow!(
-                "Signature verification failed for creator {:?}",
-                creator_key
+                "Signature verification failed for creator {:?} using algorithm '{}'",
+                creator_key,
+                sig_algorithm
             ));
         }
 
         Ok(())
     }
 
-    /// Verify that all parent references are valid.
+    /// Verify that all parent references are structurally valid.
     ///
-    /// Checks that the parent identities are well-formed with non-empty signatures
-    /// and valid public key sizes for Secp256k1 (33 bytes compressed or 65 bytes uncompressed).
+    /// This is a **pure, stateless, byte-level** check only. Parent *existence* is not
+    /// verified here — that is a semantic concern belonging to the consensus layer which
+    /// has access to the full blocklace. No external lookups or state mutations occur.
+    ///
+    /// Checks performed per predecessor [`BlockIdentity`]:
+    /// - `content_hash`: statically `[u8; 32]` — no runtime check needed.
+    /// - `creator` key: must be 33 bytes (Secp256k1 compressed) or 65 bytes (uncompressed).
+    /// - `signature`: intentionally **not** checked — in the wire format only the hash is
+    ///   transmitted; predecessor signatures are legitimately absent and will be empty.
     fn validate_parents(&self, block: &Block) -> Result<()> {
-        // Check that parent identities are well-formed
         for parent_id in &block.content.predecessors {
-            // Verify parent content hash is 32 bytes (should always be true for BlockIdentity)
-            if parent_id.content_hash.len() != 32 {
-                return Err(anyhow!(
-                    "Parent identity has invalid content hash size: {}",
-                    parent_id.content_hash.len()
-                ));
-            }
-
-            // Verify parent signature is not empty (must be present)
-            if parent_id.signature.is_empty() {
-                return Err(anyhow!("Parent identity has empty signature"));
-            }
-
-            // Verify parent creator key is a valid Secp256k1 key size
-            // Valid sizes: 33 bytes (compressed) or 65 bytes (uncompressed)
+            // Validate creator public key byte length.
+            // Valid Secp256k1 sizes: 33 bytes (compressed) or 65 bytes (uncompressed).
+            // A key of any other length cannot be a well-formed Secp256k1 public key.
             let key_len = parent_id.creator.0.len();
             if key_len != 33 && key_len != 65 {
                 return Err(anyhow!(
-                    "Parent creator has invalid key size: {} (expected 33 or 65)",
+                    "Parent creator has invalid key length: {} bytes (expected 33 or 65)",
                     key_len
                 ));
             }
+
+            // Signatures are NOT checked: wire-format predecessors carry only content_hash
+            // and a creator key; their signatures are absent by design. Full predecessor
+            // validation (including signature verification) is deferred to the consensus layer.
         }
 
         Ok(())
