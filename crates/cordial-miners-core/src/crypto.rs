@@ -30,6 +30,34 @@ pub enum SigAlgorithm {
     Secp256k1,
 }
 
+/// This is for issue #9
+pub trait CryptoVerifier {
+    type Error: std::fmt::Debug;
+    fn verify_block(
+        &self,
+        content: &BlockContent,
+        signature: &[u8],
+        creator: &crate::types::NodeId,
+    ) -> Result<(), Self::Error>;
+}
+
+impl CryptoVerifier for Secp256k1Scheme {
+    type Error = String;
+    fn verify_block(
+        &self,
+        content: &BlockContent,
+        signature: &[u8],
+        creator: &crate::types::NodeId,
+    ) -> Result<(), Self::Error> {
+        let hash = hash_content(content);
+        if verify(&hash, &creator.0, signature) {
+            Ok(())
+        } else {
+            Err("Signature verification failed".to_string())
+        }
+    }
+}
+
 pub trait SignatureScheme {
     fn name(&self) -> String;
     fn sign(&self, hash: &[u8; 32], private_key: &[u8]) -> Result<Vec<u8>, String>;

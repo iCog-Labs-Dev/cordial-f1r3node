@@ -1,8 +1,22 @@
 use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::crypto::{CryptoVerifier, Secp256k1Scheme};
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
 // Helpers test
+// Mock Verifier
+struct MockVerifier;
 
+impl CryptoVerifier for MockVerifier {
+    type Error = String;
+    fn verify_block(
+        &self,
+        _content: &BlockContent,
+        _sig: &[u8],
+        _creator: &NodeId,
+    ) -> Result<(), Self::Error> {
+        Ok(()) // Always allow in tests
+    }
+}
 /// Helper to create a block without the boilerplate
 fn create_mock_block(creator_id: u8, hash_byte: u8, predecessors: HashSet<BlockIdentity>) -> Block {
     let mut content_hash = [0u8; 32];
@@ -22,7 +36,8 @@ fn create_mock_block(creator_id: u8, hash_byte: u8, predecessors: HashSet<BlockI
 }
 
 fn insert(b1: &mut Blocklace, block: cordial_miners_core::Block) {
-    b1.insert(block).expect("insert failed");
+    let verifier = MockVerifier;
+    b1.insert(block, &verifier).expect("insert failed");
 }
 
 // closure axiom test: inserting a block with unknown predecessor should fail
@@ -114,7 +129,8 @@ fn inserting_block_with_unknown_predecessor_fails() {
             predecessors: [unknown_pred].iter().cloned().collect(),
         },
     };
-    let result = b1.insert(block_with_unknown_pred);
+    let verifier = Secp256k1Scheme;
+    let result = b1.insert(block_with_unknown_pred, &verifier);
     assert!(result.is_err())
 }
 
@@ -279,9 +295,9 @@ fn test_closure_axiom_enforcement() {
     let mut bad_preds = HashSet::new();
     bad_preds.insert(unknown_id);
     let rouge_block = create_mock_block(3, 0xCC, bad_preds);
-
+    let verifier = Secp256k1Scheme;
     assert!(
-        bl.insert(rouge_block).is_err(),
+        bl.insert(rouge_block, &verifier).is_err(),
         "Should fail due to missing predecessor"
     );
 }

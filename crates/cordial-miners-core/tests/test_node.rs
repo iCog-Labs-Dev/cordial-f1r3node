@@ -1,6 +1,21 @@
+use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::network::{Message, Node};
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
+
+struct MockVerifier;
+
+impl CryptoVerifier for MockVerifier {
+    type Error = String;
+    fn verify_block(
+        &self,
+        _content: &BlockContent,
+        _sig: &[u8],
+        _creator: &NodeId,
+    ) -> Result<(), Self::Error> {
+        Ok(()) // Always allow in tests
+    }
+}
 
 fn make_genesis(tag: u8) -> Block {
     Block {
@@ -32,14 +47,18 @@ fn make_child(tag: u8, parent: &Block) -> Block {
 
 #[tokio::test]
 async fn node_starts_with_empty_blocklace() {
-    let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
+    let node = Node::bind(vec![1], "127.0.0.1:0", MockVerifier)
+        .await
+        .unwrap();
     let bl = node.blocklace.lock().await;
     assert_eq!(bl.dom().len(), 0);
 }
 
 #[tokio::test]
 async fn create_block_inserts_into_local_blocklace() {
-    let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
+    let node = Node::bind(vec![1], "127.0.0.1:0", MockVerifier)
+        .await
+        .unwrap();
     let genesis = make_genesis(1);
 
     node.create_block(genesis.clone()).await.unwrap();
@@ -51,7 +70,9 @@ async fn create_block_inserts_into_local_blocklace() {
 
 #[tokio::test]
 async fn create_block_with_missing_predecessor_fails() {
-    let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
+    let node = Node::bind(vec![1], "127.0.0.1:0", MockVerifier)
+        .await
+        .unwrap();
     let genesis = make_genesis(1);
     // Don't insert genesis first — child should fail
     let child = make_child(2, &genesis);
@@ -62,7 +83,9 @@ async fn create_block_with_missing_predecessor_fails() {
 
 #[tokio::test]
 async fn create_block_chain_succeeds() {
-    let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
+    let node = Node::bind(vec![1], "127.0.0.1:0", MockVerifier)
+        .await
+        .unwrap();
     let genesis = make_genesis(1);
     let child = make_child(2, &genesis);
 
@@ -76,7 +99,9 @@ async fn create_block_chain_succeeds() {
 
 #[tokio::test]
 async fn handle_ping_returns_pong() {
-    let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
+    let node = Node::bind(vec![1], "127.0.0.1:0", MockVerifier)
+        .await
+        .unwrap();
     let fake_addr = "127.0.0.1:9999".parse().unwrap();
 
     let response = node.handle_message(fake_addr, Message::Ping).await;
@@ -85,7 +110,9 @@ async fn handle_ping_returns_pong() {
 
 #[tokio::test]
 async fn handle_request_block_returns_known_block() {
-    let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
+    let node = Node::bind(vec![1], "127.0.0.1:0", MockVerifier)
+        .await
+        .unwrap();
     let genesis = make_genesis(1);
     node.create_block(genesis.clone()).await.unwrap();
 
@@ -109,7 +136,9 @@ async fn handle_request_block_returns_known_block() {
 
 #[tokio::test]
 async fn handle_request_block_returns_none_for_unknown() {
-    let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
+    let node = Node::bind(vec![1], "127.0.0.1:0", MockVerifier)
+        .await
+        .unwrap();
     let unknown_id = BlockIdentity {
         content_hash: [0xff; 32],
         creator: NodeId(vec![99]),
@@ -129,7 +158,9 @@ async fn handle_request_block_returns_none_for_unknown() {
 
 #[tokio::test]
 async fn handle_sync_request_returns_dom() {
-    let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
+    let node = Node::bind(vec![1], "127.0.0.1:0", MockVerifier)
+        .await
+        .unwrap();
     let g1 = make_genesis(1);
     let g2 = make_genesis(2);
     node.create_block(g1.clone()).await.unwrap();
@@ -150,7 +181,9 @@ async fn handle_sync_request_returns_dom() {
 
 #[tokio::test]
 async fn handle_broadcast_block_inserts_genesis() {
-    let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
+    let node = Node::bind(vec![1], "127.0.0.1:0", MockVerifier)
+        .await
+        .unwrap();
     let genesis = make_genesis(1);
     let fake_addr = "127.0.0.1:9999".parse().unwrap();
 
@@ -173,7 +206,9 @@ async fn handle_broadcast_block_inserts_genesis() {
 
 #[tokio::test]
 async fn handle_block_response_inserts_block() {
-    let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
+    let node = Node::bind(vec![1], "127.0.0.1:0", MockVerifier)
+        .await
+        .unwrap();
     let genesis = make_genesis(1);
     let fake_addr = "127.0.0.1:9999".parse().unwrap();
 
@@ -191,7 +226,9 @@ async fn handle_block_response_inserts_block() {
 
 #[tokio::test]
 async fn handle_block_response_none_is_noop() {
-    let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
+    let node = Node::bind(vec![1], "127.0.0.1:0", MockVerifier)
+        .await
+        .unwrap();
     let fake_addr = "127.0.0.1:9999".parse().unwrap();
 
     let response = node
@@ -205,7 +242,9 @@ async fn handle_block_response_none_is_noop() {
 
 #[tokio::test]
 async fn handle_hello_is_noop() {
-    let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
+    let node = Node::bind(vec![1], "127.0.0.1:0", MockVerifier)
+        .await
+        .unwrap();
     let fake_addr = "127.0.0.1:9999".parse().unwrap();
 
     let response = node
@@ -222,7 +261,9 @@ async fn handle_hello_is_noop() {
 
 #[tokio::test]
 async fn sync_request_on_empty_returns_empty() {
-    let node = Node::bind(vec![1], "127.0.0.1:0").await.unwrap();
+    let node = Node::bind(vec![1], "127.0.0.1:0", MockVerifier)
+        .await
+        .unwrap();
     let fake_addr = "127.0.0.1:9999".parse().unwrap();
 
     let response = node.handle_message(fake_addr, Message::SyncRequest).await;

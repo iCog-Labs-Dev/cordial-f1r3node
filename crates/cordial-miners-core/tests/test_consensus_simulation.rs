@@ -9,12 +9,26 @@ use cordial_miners_core::consensus::{
     ValidationConfig, check_finality, collect_validator_tips, find_last_finalized, fork_choice,
     is_cordial, validated_insert,
 };
+use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-// ── Helpers ──
+struct MockVerifier;
 
+impl CryptoVerifier for MockVerifier {
+    type Error = String;
+    fn verify_block(
+        &self,
+        _content: &BlockContent,
+        _sig: &[u8],
+        _creator: &NodeId,
+    ) -> Result<(), Self::Error> {
+        Ok(()) // Always allow in tests
+    }
+}
+
+// ── Helpers ──
 fn node(id: u8) -> NodeId {
     NodeId(vec![id])
 }
@@ -52,7 +66,8 @@ fn child(creator: &NodeId, tag: u8, parents: &[&Block]) -> Block {
 }
 
 fn insert(bl: &mut Blocklace, block: &Block) {
-    bl.insert(block.clone()).expect("insert failed");
+    let verifier = MockVerifier;
+    bl.insert(block.clone(), &verifier).expect("insert failed");
 }
 
 fn bonds(entries: &[(u8, u64)]) -> HashMap<NodeId, u64> {

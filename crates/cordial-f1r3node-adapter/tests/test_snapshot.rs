@@ -11,6 +11,21 @@ use cordial_miners_core::execution::{
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
 use cordial_f1r3node_adapter::snapshot::{CasperShardConf, SnapshotError, build_snapshot};
+use cordial_miners_core::crypto::CryptoVerifier;
+
+struct MockVerifier;
+
+impl CryptoVerifier for MockVerifier {
+    type Error = String;
+    fn verify_block(
+        &self,
+        _content: &BlockContent,
+        _sig: &[u8],
+        _creator: &NodeId,
+    ) -> Result<(), Self::Error> {
+        Ok(()) // Always allow in tests
+    }
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -96,12 +111,12 @@ fn dag_set_contains_all_block_hashes() {
     let mut bl = Blocklace::new();
     let v1 = node(1);
     let g = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 1);
-    bl.insert(g.clone()).unwrap();
+    bl.insert(g.clone(), &MockVerifier).unwrap();
 
     let mut preds = HashSet::new();
     preds.insert(g.identity.clone());
     let b2 = make_block(v1.clone(), simple_payload(1, vec![]), preds, 2);
-    bl.insert(b2.clone()).unwrap();
+    bl.insert(b2.clone(), &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
@@ -145,8 +160,8 @@ fn height_map_groups_blocks_by_block_number() {
 
     let g1 = make_block(v1, p1, HashSet::new(), 1);
     let g2 = make_block(v2, p2, HashSet::new(), 2);
-    bl.insert(g1.clone()).unwrap();
-    bl.insert(g2.clone()).unwrap();
+    bl.insert(g1.clone(), &MockVerifier).unwrap();
+    bl.insert(g2.clone(), &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100), (2, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
@@ -163,12 +178,12 @@ fn child_map_inverts_predecessor_relation() {
     let v1 = node(1);
 
     let g = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 1);
-    bl.insert(g.clone()).unwrap();
+    bl.insert(g.clone(), &MockVerifier).unwrap();
 
     let mut preds = HashSet::new();
     preds.insert(g.identity.clone());
     let b2 = make_block(v1.clone(), simple_payload(1, vec![]), preds, 2);
-    bl.insert(b2.clone()).unwrap();
+    bl.insert(b2.clone(), &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
@@ -199,19 +214,19 @@ fn latest_messages_map_tracks_each_validator_tip() {
     let v2 = node(2);
 
     let g = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 1);
-    bl.insert(g.clone()).unwrap();
+    bl.insert(g.clone(), &MockVerifier).unwrap();
 
     // v1 extends
     let mut preds_a = HashSet::new();
     preds_a.insert(g.identity.clone());
     let b1a = make_block(v1.clone(), simple_payload(1, vec![]), preds_a, 2);
-    bl.insert(b1a.clone()).unwrap();
+    bl.insert(b1a.clone(), &MockVerifier).unwrap();
 
     // v2 builds on g
     let mut preds_b = HashSet::new();
     preds_b.insert(g.identity.clone());
     let b2a = make_block(v2.clone(), simple_payload(1, vec![]), preds_b, 3);
-    bl.insert(b2a.clone()).unwrap();
+    bl.insert(b2a.clone(), &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100), (2, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
@@ -235,8 +250,8 @@ fn latest_messages_map_excludes_equivocators() {
     // v1 creates TWO incomparable genesis blocks — equivocation
     let g1 = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 1);
     let g2 = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 2);
-    bl.insert(g1).unwrap();
-    bl.insert(g2).unwrap();
+    bl.insert(g1, &MockVerifier).unwrap();
+    bl.insert(g2, &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
@@ -255,11 +270,11 @@ fn last_finalized_block_matches_finality_detector() {
 
     // v1 genesis, v2 builds on it → g finalizes under (v1, v2) both supporting
     let g = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 1);
-    bl.insert(g.clone()).unwrap();
+    bl.insert(g.clone(), &MockVerifier).unwrap();
     let mut preds = HashSet::new();
     preds.insert(g.identity.clone());
     let b2 = make_block(v2.clone(), simple_payload(1, vec![]), preds, 2);
-    bl.insert(b2.clone()).unwrap();
+    bl.insert(b2.clone(), &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100), (2, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
@@ -290,9 +305,9 @@ fn no_finality_when_single_validator_has_no_supermajority() {
     let g1 = make_block(node(1), simple_payload(0, vec![]), HashSet::new(), 1);
     let g2 = make_block(node(2), simple_payload(0, vec![]), HashSet::new(), 2);
     let g3 = make_block(node(3), simple_payload(0, vec![]), HashSet::new(), 3);
-    bl.insert(g1).unwrap();
-    bl.insert(g2).unwrap();
-    bl.insert(g3).unwrap();
+    bl.insert(g1, &MockVerifier).unwrap();
+    bl.insert(g2, &MockVerifier).unwrap();
+    bl.insert(g3, &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100), (2, 100), (3, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
@@ -310,7 +325,7 @@ fn tips_and_parents_reflect_fork_choice() {
     let v1 = node(1);
 
     let g = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 1);
-    bl.insert(g.clone()).unwrap();
+    bl.insert(g.clone(), &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
@@ -335,12 +350,12 @@ fn justifications_contain_one_entry_per_validator_tip() {
     let v2 = node(2);
 
     let g = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 1);
-    bl.insert(g.clone()).unwrap();
+    bl.insert(g.clone(), &MockVerifier).unwrap();
 
     let mut preds = HashSet::new();
     preds.insert(g.identity.clone());
     let b2 = make_block(v2.clone(), simple_payload(1, vec![]), preds, 2);
-    bl.insert(b2.clone()).unwrap();
+    bl.insert(b2.clone(), &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100), (2, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
@@ -363,17 +378,17 @@ fn max_block_num_reflects_highest_block_number_in_lace() {
     let v1 = node(1);
 
     let g = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 1);
-    bl.insert(g.clone()).unwrap();
+    bl.insert(g.clone(), &MockVerifier).unwrap();
 
     let mut preds1 = HashSet::new();
     preds1.insert(g.identity.clone());
     let b1 = make_block(v1.clone(), simple_payload(1, vec![]), preds1, 2);
-    bl.insert(b1.clone()).unwrap();
+    bl.insert(b1.clone(), &MockVerifier).unwrap();
 
     let mut preds2 = HashSet::new();
     preds2.insert(b1.identity.clone());
     let b2 = make_block(v1.clone(), simple_payload(5, vec![]), preds2, 3);
-    bl.insert(b2).unwrap();
+    bl.insert(b2, &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
@@ -388,17 +403,17 @@ fn max_seq_nums_counts_blocks_per_validator() {
     let v2 = node(2);
 
     let g = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 1);
-    bl.insert(g.clone()).unwrap();
+    bl.insert(g.clone(), &MockVerifier).unwrap();
 
     let mut p1 = HashSet::new();
     p1.insert(g.identity.clone());
     let b1 = make_block(v1.clone(), simple_payload(1, vec![]), p1, 2);
-    bl.insert(b1.clone()).unwrap();
+    bl.insert(b1.clone(), &MockVerifier).unwrap();
 
     let mut p2 = HashSet::new();
     p2.insert(b1.identity.clone());
     let b2 = make_block(v2.clone(), simple_payload(2, vec![]), p2, 3);
-    bl.insert(b2).unwrap();
+    bl.insert(b2, &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100), (2, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
@@ -433,8 +448,8 @@ fn equivocator_excluded_from_active_validators() {
     // v1 equivocates
     let g1 = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 1);
     let g2 = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 2);
-    bl.insert(g1).unwrap();
-    bl.insert(g2).unwrap();
+    bl.insert(g1, &MockVerifier).unwrap();
+    bl.insert(g2, &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100), (2, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
@@ -475,7 +490,7 @@ fn deploys_in_scope_collects_from_tip_ancestry() {
     let mut genesis_payload = simple_payload(0, vec![]);
     genesis_payload.deploys = vec![processed];
     let g = make_block(v1.clone(), genesis_payload, HashSet::new(), 1);
-    bl.insert(g.clone()).unwrap();
+    bl.insert(g.clone(), &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
@@ -501,7 +516,7 @@ fn undecodable_payload_produces_error() {
         },
         content,
     };
-    bl.insert(block).unwrap();
+    bl.insert(block, &MockVerifier).unwrap();
 
     let bonds_map = bonds(&[(1, 100)]);
     let err = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap_err();
