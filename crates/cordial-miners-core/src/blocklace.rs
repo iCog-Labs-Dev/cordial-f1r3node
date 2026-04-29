@@ -1,4 +1,5 @@
 use crate::block::Block;
+use crate::crypto::CryptoVerifier;
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
@@ -56,7 +57,17 @@ impl Blocklace {
 // Insertion and Closure axiom
 impl Blocklace {
     /// Insert a block into the blocklace, enforcing the closure axiom.
-    pub fn insert(&mut self, block: Block) -> Result<(), String> {
+    pub fn insert<V: CryptoVerifier>(&mut self, block: Block, verifier: &V) -> Result<(), String> {
+        // 1. Signature Verification (Issue 2)
+        verifier
+            .verify_block(
+                &block.content,
+                &block.identity.signature,
+                &block.identity.creator,
+            )
+            .map_err(|e| format!("Invalid signature: {:?}", e))?;
+
+        // 2. Closure Axiom Enforcement (Issue 1)
         for pred_id in &block.content.predecessors {
             if !self.blocks.contains_key(pred_id) {
                 return Err(format!(
@@ -64,9 +75,22 @@ impl Blocklace {
                 ));
             }
         }
+
+        // 3. Commit to state
         self.blocks.insert(block.identity.clone(), block.content);
         Ok(())
     }
+    // pub fn insert(&mut self, block: Block) -> Result<(), String> {
+    //     for pred_id in &block.content.predecessors {
+    //         if !self.blocks.contains_key(pred_id) {
+    //             return Err(format!(
+    //                 "Closure violation: predecessor {pred_id:?} not in blocklace"
+    //             ));
+    //         }
+    //     }
+    //     self.blocks.insert(block.identity.clone(), block.content);
+    //     Ok(())
+    // }
 
     pub fn is_closed(&self) -> bool {
         self.blocks.values().all(|content| {

@@ -2,12 +2,27 @@ use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
     InvalidBlock, ValidationConfig, ValidationResult, validate_block, validated_insert,
 };
+use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::crypto::{hash_content, sign};
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use ed25519_dalek::SigningKey as EdSigningKey;
 use rand::rngs::OsRng;
 use std::collections::HashMap;
 use std::collections::HashSet;
+
+struct MockVerifier;
+
+impl CryptoVerifier for MockVerifier {
+    type Error = String;
+    fn verify_block(
+        &self,
+        _content: &BlockContent,
+        _sig: &[u8],
+        _creator: &NodeId,
+    ) -> Result<(), Self::Error> {
+        Ok(()) // Always allow in tests
+    }
+}
 
 // ── Helpers ──
 
@@ -100,7 +115,8 @@ fn generate_secp_keypair() -> (Vec<u8>, Vec<u8>) {
 }
 
 fn insert(bl: &mut Blocklace, block: &Block) {
-    bl.insert(block.clone()).expect("insert failed");
+    let verifier = MockVerifier;
+    bl.insert(block.clone(), &verifier).expect("insert failed");
 }
 
 fn bonds(entries: &[(u8, u64)]) -> HashMap<NodeId, u64> {

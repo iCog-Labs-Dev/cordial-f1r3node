@@ -21,6 +21,21 @@ use cordial_f1r3node_adapter::casper_adapter::{
     InvalidBlock, ValidBlock,
 };
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
+use cordial_miners_core::crypto::CryptoVerifier;
+// A mock verifier that always approves signatures, for testing purposes.
+struct MockVerifier;
+
+impl CryptoVerifier for MockVerifier {
+    type Error = String;
+    fn verify_block(
+        &self,
+        _content: &BlockContent,
+        _sig: &[u8],
+        _creator: &NodeId,
+    ) -> Result<(), Self::Error> {
+        Ok(()) // Always allow in tests
+    }
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -90,21 +105,22 @@ fn sample_deploy(sig_byte: u8) -> SignedDeployData {
     }
 }
 
-async fn insert_through_adapter(adapter: &CordialCasperAdapter, block: Block) {
+async fn insert_through_adapter(adapter: &CordialCasperAdapter<MockVerifier>, block: Block) {
     let mut bl = adapter.blocklace().lock().await;
-    bl.insert(block).unwrap();
+    bl.insert(block, &adapter.verifier).unwrap();
 }
 
 // ── Construction ─────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn adapter_constructs_with_defaults() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     assert_eq!(adapter.get_version(), 0); // default casper_version
     assert!(adapter.get_approved_block().is_err());
@@ -117,12 +133,13 @@ async fn approved_block_is_returned() {
     let genesis = make_block(node(1), simple_payload(0), HashSet::new(), 1);
     let genesis_msg = block_to_message(&genesis, "root").unwrap();
 
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         Some(genesis_msg.clone()),
+        MockVerifier,
     );
     let stored = adapter.get_approved_block().unwrap();
     assert_eq!(stored.sender, vec![1]);
@@ -132,12 +149,13 @@ async fn approved_block_is_returned() {
 
 #[tokio::test]
 async fn dag_contains_tracks_inserted_blocks() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     let g = make_block(node(1), simple_payload(0), HashSet::new(), 1);
     let hash = g.identity.content_hash.to_vec();
@@ -153,12 +171,13 @@ async fn dag_contains_tracks_inserted_blocks() {
 
 #[tokio::test]
 async fn deploy_accepts_valid_signed_deploy() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     let deploy = sample_deploy(1);
     let expected_sig = deploy.sig.clone();
@@ -171,12 +190,13 @@ async fn deploy_accepts_valid_signed_deploy() {
 
 #[tokio::test]
 async fn deploy_rejects_duplicate_signature() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     let d = sample_deploy(1);
     adapter.deploy(d.clone()).unwrap();
@@ -191,12 +211,13 @@ async fn deploy_rejects_duplicate_signature() {
 
 #[tokio::test]
 async fn deploy_rejects_empty_signature() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     let mut d = sample_deploy(1);
     d.sig = vec![];
@@ -209,12 +230,13 @@ async fn deploy_rejects_empty_signature() {
 
 #[tokio::test]
 async fn has_pending_deploys_reflects_pool_state() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     assert!(!adapter.has_pending_deploys_in_storage().await.unwrap());
     adapter.deploy(sample_deploy(1)).unwrap();
@@ -225,12 +247,13 @@ async fn has_pending_deploys_reflects_pool_state() {
 
 #[tokio::test]
 async fn estimator_returns_empty_when_no_blocks() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     let tips = adapter.estimator().await.unwrap();
     assert!(tips.is_empty());
@@ -238,12 +261,13 @@ async fn estimator_returns_empty_when_no_blocks() {
 
 #[tokio::test]
 async fn estimator_returns_tip_of_single_chain() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     let g = make_block(node(1), simple_payload(0), HashSet::new(), 1);
     let g_hash = g.identity.content_hash.to_vec();
@@ -258,12 +282,13 @@ async fn estimator_returns_tip_of_single_chain() {
 
 #[tokio::test]
 async fn get_snapshot_succeeds_on_empty_blocklace() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     let snap = adapter.get_snapshot().await.unwrap();
     assert!(snap.dag.dag_set.is_empty());
@@ -274,12 +299,13 @@ async fn get_snapshot_succeeds_on_empty_blocklace() {
 
 #[tokio::test]
 async fn validate_accepts_well_formed_genesis() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     let g = make_block(node(1), simple_payload(0), HashSet::new(), 1);
     let msg = block_to_message(&g, "root").unwrap();
@@ -301,12 +327,13 @@ async fn validate_accepts_well_formed_genesis() {
 
 #[tokio::test]
 async fn validate_missing_predecessor_returns_missing_blocks() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     )
     .with_validation_config(cordial_miners_core::consensus::ValidationConfig {
         check_content_hash: false,
@@ -330,12 +357,13 @@ async fn validate_missing_predecessor_returns_missing_blocks() {
 
 #[tokio::test]
 async fn validate_unbonded_sender_returns_invalid_sender() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(2, 100)]), // only node 2 is bonded
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     )
     .with_validation_config(cordial_miners_core::consensus::ValidationConfig {
         check_content_hash: false,
@@ -358,12 +386,13 @@ async fn validate_unbonded_sender_returns_invalid_sender() {
 
 #[tokio::test]
 async fn handle_valid_block_inserts_into_blocklace() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     let g = make_block(node(1), simple_payload(0), HashSet::new(), 1);
     let hash = g.identity.content_hash.to_vec();
@@ -375,12 +404,13 @@ async fn handle_valid_block_inserts_into_blocklace() {
 
 #[tokio::test]
 async fn handle_invalid_block_does_not_insert() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     let g = make_block(node(1), simple_payload(0), HashSet::new(), 1);
     let hash = g.identity.content_hash.to_vec();
@@ -396,12 +426,13 @@ async fn handle_invalid_block_does_not_insert() {
 
 #[tokio::test]
 async fn buffer_starts_empty() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     assert!(adapter.get_all_from_buffer().unwrap().is_empty());
     assert!(
@@ -416,24 +447,26 @@ async fn buffer_starts_empty() {
 
 #[tokio::test]
 async fn last_finalized_returns_err_when_none_finalized() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     assert!(adapter.last_finalized_block().await.is_err());
 }
 
 #[tokio::test]
 async fn last_finalized_returns_genesis_once_supermajority_supports_it() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     // Single validator with 100% stake → genesis is immediately finalized.
     let g = make_block(node(1), simple_payload(0), HashSet::new(), 1);
@@ -451,12 +484,13 @@ async fn last_finalized_returns_genesis_once_supermajority_supports_it() {
 
 #[tokio::test]
 async fn normalized_initial_fault_zero_when_no_equivocators() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100), (2, 200)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     let weights: HashMap<Vec<u8>, u64> = [(vec![1u8], 100u64), (vec![2u8], 200u64)]
         .into_iter()
@@ -467,12 +501,13 @@ async fn normalized_initial_fault_zero_when_no_equivocators() {
 
 #[tokio::test]
 async fn normalized_initial_fault_counts_equivocator_stake() {
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100), (2, 200)]),
         default_shard_conf(),
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     // Make node 1 an equivocator by inserting two incomparable blocks.
     // They must have distinct content to get distinct BlockIdentities.
@@ -499,12 +534,13 @@ async fn normalized_initial_fault_counts_equivocator_stake() {
 async fn get_version_reads_from_shard_conf() {
     let mut shard_conf = default_shard_conf();
     shard_conf.casper_version = 42;
-    let adapter = CordialCasperAdapter::new(
+    let adapter = CordialCasperAdapter::new_with_verifier(
         bonds(&[(1, 100)]),
         shard_conf,
         "root",
         DeployPoolConfig::default(),
         None,
+        MockVerifier,
     );
     assert_eq!(adapter.get_version(), 42);
 }

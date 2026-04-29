@@ -1,4 +1,5 @@
 use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::crypto::hash_content;
 use cordial_miners_core::execution::{
     BlockState, Bond, CordialBlockPayload, Deploy, DeployPool, DeployPoolConfig, PoolError,
@@ -7,8 +8,21 @@ use cordial_miners_core::execution::{
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
 
-// ── Helpers ──
+struct MockVerifier;
 
+impl CryptoVerifier for MockVerifier {
+    type Error = String;
+    fn verify_block(
+        &self,
+        _content: &BlockContent,
+        _sig: &[u8],
+        _creator: &NodeId,
+    ) -> Result<(), Self::Error> {
+        Ok(()) // Always allow in tests
+    }
+}
+
+// ── Helpers ──
 fn node(id: u8) -> NodeId {
     NodeId(vec![id])
 }
@@ -279,6 +293,7 @@ fn compute_deploys_in_scope_empty_for_no_predecessors() {
 
 #[test]
 fn compute_deploys_in_scope_collects_ancestor_deploys() {
+    let verifier = MockVerifier;
     let mut bl = Blocklace::new();
     let v1 = node(1);
 
@@ -287,7 +302,7 @@ fn compute_deploys_in_scope_collects_ancestor_deploys() {
 
     // Genesis with deploy_a
     let g = make_block_with_real_hash(v1.clone(), 1, 0, HashSet::new(), vec![deploy_a.clone()]);
-    bl.insert(g.clone()).unwrap();
+    bl.insert(g.clone(), &verifier).unwrap();
 
     // Block 2 with deploy_b, pointing to genesis
     let b2 = make_block_with_real_hash(
@@ -297,7 +312,7 @@ fn compute_deploys_in_scope_collects_ancestor_deploys() {
         [g.identity.clone()].into_iter().collect(),
         vec![deploy_b.clone()],
     );
-    bl.insert(b2.clone()).unwrap();
+    bl.insert(b2.clone(), &verifier).unwrap();
 
     // Compute scope for a new block building on b2
     let predecessors: HashSet<BlockIdentity> = [b2.identity].into_iter().collect();
@@ -310,6 +325,7 @@ fn compute_deploys_in_scope_collects_ancestor_deploys() {
 
 #[test]
 fn compute_deploys_in_scope_respects_lifespan_window() {
+    let verifier = MockVerifier;
     let mut bl = Blocklace::new();
     let v1 = node(1);
 
@@ -318,7 +334,7 @@ fn compute_deploys_in_scope_respects_lifespan_window() {
 
     // Genesis at block 0 with deploy_old
     let g = make_block_with_real_hash(v1.clone(), 1, 0, HashSet::new(), vec![deploy_old.clone()]);
-    bl.insert(g.clone()).unwrap();
+    bl.insert(g.clone(), &verifier).unwrap();
 
     // Block at block_number 100 with deploy_new
     let b2 = make_block_with_real_hash(
@@ -328,7 +344,7 @@ fn compute_deploys_in_scope_respects_lifespan_window() {
         [g.identity.clone()].into_iter().collect(),
         vec![deploy_new.clone()],
     );
-    bl.insert(b2.clone()).unwrap();
+    bl.insert(b2.clone(), &verifier).unwrap();
 
     // At current block 110, lifespan 50 => earliest = 60
     // Genesis (block 0) is outside the window — its deploy should NOT be in scope
@@ -343,6 +359,7 @@ fn compute_deploys_in_scope_respects_lifespan_window() {
 
 #[test]
 fn select_excludes_deploys_in_ancestry() {
+    let verifier = MockVerifier;
     let mut bl = Blocklace::new();
     let v1 = node(1);
 
@@ -357,7 +374,7 @@ fn select_excludes_deploys_in_ancestry() {
         HashSet::new(),
         vec![deploy_in_chain.clone()],
     );
-    bl.insert(g.clone()).unwrap();
+    bl.insert(g.clone(), &verifier).unwrap();
 
     // Pool has both deploys
     let mut pool = default_pool();
