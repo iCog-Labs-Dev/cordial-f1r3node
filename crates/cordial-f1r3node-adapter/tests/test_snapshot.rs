@@ -18,15 +18,14 @@ struct MockVerifier;
 impl CryptoVerifier for MockVerifier {
     type Error = String;
     fn verify_block(
-        &self, 
-        _content: &BlockContent, 
-        _sig: &[u8], 
-        _creator: &NodeId
+        &self,
+        _content: &BlockContent,
+        _sig: &[u8],
+        _creator: &NodeId,
     ) -> Result<(), Self::Error> {
         Ok(()) // Always allow in tests
     }
 }
-
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 

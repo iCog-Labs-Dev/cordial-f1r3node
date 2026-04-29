@@ -2,25 +2,24 @@ use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
     FinalityStatus, can_be_finalized, check_finality, find_last_finalized,
 };
+use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashMap;
 use std::collections::HashSet;
-use cordial_miners_core::crypto::{CryptoVerifier};
 
 struct MockVerifier;
 
 impl CryptoVerifier for MockVerifier {
     type Error = String;
     fn verify_block(
-        &self, 
-        _content: &BlockContent, 
-        _sig: &[u8], 
-        _creator: &NodeId
+        &self,
+        _content: &BlockContent,
+        _sig: &[u8],
+        _creator: &NodeId,
     ) -> Result<(), Self::Error> {
         Ok(()) // Always allow in tests
     }
 }
-
 
 // ── Helpers ──
 

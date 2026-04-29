@@ -16,22 +16,22 @@ use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 use either::Either;
 
 use cordial_f1r3node_adapter::block_translation::{DeployData, SignedDeployData, block_to_message};
-use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_f1r3node_adapter::casper_adapter::{
     BlockError, CordialCasper, CordialCasperAdapter, CordialMultiParentCasper, DeployError,
     InvalidBlock, ValidBlock,
 };
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
+use cordial_miners_core::crypto::CryptoVerifier;
 // A mock verifier that always approves signatures, for testing purposes.
 struct MockVerifier;
 
 impl CryptoVerifier for MockVerifier {
     type Error = String;
     fn verify_block(
-        &self, 
-        _content: &BlockContent, 
-        _sig: &[u8], 
-        _creator: &NodeId
+        &self,
+        _content: &BlockContent,
+        _sig: &[u8],
+        _creator: &NodeId,
     ) -> Result<(), Self::Error> {
         Ok(()) // Always allow in tests
     }

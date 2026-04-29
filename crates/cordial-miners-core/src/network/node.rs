@@ -4,10 +4,10 @@ use tokio::sync::Mutex;
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
+use crate::crypto::{CryptoVerifier};
 use crate::network::message::Message;
 use crate::network::peer::Peer;
 use crate::types::BlockIdentity;
-use crate::crypto::{CryptoVerifier, Secp256k1Scheme};
 
 /// A blocklace network node — owns a Peer (networking) and a Blocklace (state).
 ///
@@ -15,13 +15,13 @@ use crate::crypto::{CryptoVerifier, Secp256k1Scheme};
 /// - Creating and broadcasting new blocks
 /// - Receiving blocks from peers and inserting them (with predecessor fetching)
 /// - Synchronizing state with peers on connect
-pub struct Node <V: CryptoVerifier> {
+pub struct Node<V: CryptoVerifier> {
     pub peer: Peer,
     pub blocklace: Arc<Mutex<Blocklace>>,
     pub verifier: V,
 }
 
-impl <V: CryptoVerifier> Node<V> {
+impl<V: CryptoVerifier> Node<V> {
     /// Create a new node bound to the given address.
     pub async fn bind(node_id: Vec<u8>, addr: &str, verifier: V) -> std::io::Result<Self> {
         let peer = Peer::bind(node_id, addr).await?;
@@ -38,10 +38,15 @@ impl <V: CryptoVerifier> Node<V> {
     }
 
     /// Insert a block locally and broadcast it to all connected peers.
-    pub async fn create_block(&self, block: Block) -> Result<(), String> where V::Error: std::fmt::Debug {
-        
+    pub async fn create_block(&self, block: Block) -> Result<(), String>
+    where
+        V::Error: std::fmt::Debug,
+    {
         // Insert into local blocklace
-        self.blocklace.lock().await.insert(block.clone(), &self.verifier)?;
+        self.blocklace
+            .lock()
+            .await
+            .insert(block.clone(), &self.verifier)?;
 
         // Broadcast to all connected peers
         let peers = self.peer.connected_peer_addrs().await;
@@ -117,7 +122,6 @@ impl <V: CryptoVerifier> Node<V> {
             .filter(|pred_id| bl.content(pred_id).is_none())
             .cloned()
             .collect();
-        let verifier = Secp256k1Scheme;
         if missing_preds.is_empty() {
             // All predecessors present — insert directly
             let _ = bl.insert(block, &self.verifier);

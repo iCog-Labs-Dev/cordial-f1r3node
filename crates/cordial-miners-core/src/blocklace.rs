@@ -1,7 +1,7 @@
 use crate::block::Block;
+use crate::crypto::CryptoVerifier;
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
-use crate::crypto::CryptoVerifier;
 
 // The blocklace B - a set of blocks satisfying the closure and axioms
 // From definition 2.3, A blocklace B is a set of blocks subject to some invariants.
@@ -60,7 +60,11 @@ impl Blocklace {
     pub fn insert<V: CryptoVerifier>(&mut self, block: Block, verifier: &V) -> Result<(), String> {
         // 1. Signature Verification (Issue 2)
         verifier
-            .verify_block(&block.content, &block.identity.signature, &block.identity.creator)
+            .verify_block(
+                &block.content,
+                &block.identity.signature,
+                &block.identity.creator,
+            )
             .map_err(|e| format!("Invalid signature: {:?}", e))?;
 
         // 2. Closure Axiom Enforcement (Issue 1)

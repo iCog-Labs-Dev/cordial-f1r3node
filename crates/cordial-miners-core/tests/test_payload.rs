@@ -1,10 +1,10 @@
+use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::execution::{
     BlockState, Bond, CordialBlockPayload, Deploy, ProcessedDeploy, ProcessedSystemDeploy,
     RejectReason, RejectedDeploy, SignedDeploy,
 };
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
-use cordial_miners_core::crypto::{CryptoVerifier};
 
 // Mock Verifier
 struct MockVerifier;
@@ -12,10 +12,10 @@ struct MockVerifier;
 impl CryptoVerifier for MockVerifier {
     type Error = String;
     fn verify_block(
-        &self, 
-        _content: &BlockContent, 
-        _sig: &[u8], 
-        _creator: &NodeId
+        &self,
+        _content: &BlockContent,
+        _sig: &[u8],
+        _creator: &NodeId,
     ) -> Result<(), Self::Error> {
         Ok(()) // Always allow in tests
     }
