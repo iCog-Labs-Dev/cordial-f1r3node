@@ -140,10 +140,8 @@ pub fn is_round_cordial(blocklace: &Blocklace, round: u64, n: usize, f: usize) -
 pub fn latest_cordial_round(blocklace: &Blocklace, n: usize, f: usize) -> Option<u64> {
     let max_d = max_depth(blocklace)?;
     // Scan from latest round backward
-    for d in (0..=max_d).rev() {
-        if is_round_cordial(blocklace, d, n, f) {
-            return Some(d);
-        }
-    }
+    (0..=max_d)
+        .rev()
+        .find(|&d| is_round_cordial(blocklace, d, n, f));
     None
 }
