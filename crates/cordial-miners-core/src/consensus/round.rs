@@ -142,6 +142,5 @@ pub fn latest_cordial_round(blocklace: &Blocklace, n: usize, f: usize) -> Option
     // Scan from latest round backward
     (0..=max_d)
         .rev()
-        .find(|&d| is_round_cordial(blocklace, d, n, f));
-    None
+        .find(|&d| is_round_cordial(blocklace, d, n, f))
 }
