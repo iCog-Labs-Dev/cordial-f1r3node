@@ -59,3 +59,14 @@ fn wave_partitioning_matches_fixed_wavelength() {
     assert_eq!(wave_of_round(7, 3), Some(2));
     assert_eq!(wave_of_round(8, 0), None); // A wavelength of 0 is invalid, so the function should return None.
 }
+
+// Test if wave bounds are computed correctly
+#[test]
+fn wave_bounds_computed_correctly() {
+    assert_eq!(first_round_of_wave( 0, 5), Some(0)); // The first round of wave 0 with wavelength 5 is calculated as wave * wavelength = 0 * 5 = 0.
+    assert_eq!(last_round_of_wave(0, 5), Some(4)); // The last round of wave 0 with wavelength 5 is calculated as first round + wavelength - 1 = 0 + 5 - 1 = 4.
+    assert_eq!(first_round_of_wave( 2, 5), Some(10)); // The first round of wave 2 with wavelength 5 is calculated as wave * wavelength = 2 * 5 = 10.
+    assert_eq!(last_round_of_wave(2, 5), Some(14)); // The last round of wave 2 with wavelength 5 is calculated as first round + wavelength - 1 = 10 + 5 - 1 = 14.
+    assert_eq!(rounds_of_wave(2, 5), Some(10..=14)); // the rounds of wave 2 with wavelength 5 are calculated as the range from the first round to the last round, which is 10..=14.
+    assert_eq!(leader_round_of_wave(2, 5), Some(10)); // The leader round of wave 2 with wavelength 5 is the first round of that wave, which is 10.
+}
