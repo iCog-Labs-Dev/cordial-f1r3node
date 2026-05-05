@@ -79,3 +79,29 @@ fn first_round_and_membership_helpers_match_wave_structure() {
     assert!(round_is_in_wave(7, 2, 3)); // Round 7 belongs to wave 2 because wave_of_round(7, 3) returns Some(2).
     assert!(!round_is_in_wave(7, 1, 3)); // Round 7 does not belong to wave 1 because wave_of_round(7, 3) returns Some(2), not Some(1).
 }
+
+// Test leader block is taken from first round of wave only
+#[test]
+fn leader_blocks_are_taken_from_first_round_of_wave_only() {
+    let mut blocklace = Blocklace::new();
+    let g1 = create_mock_block(1, 1, HashSet::new()); // This block is created by miner 1 and has a hash byte of 1. It has no predecessors.
+    let g2 = create_mock_block(2, 2, HashSet::new()); // This block is created by miner 2 and has a hash byte of 2. It has no predecessors.
+    insert(&mut blocklace, g1.clone());
+    insert(&mut blocklace, g2.clone());
+
+    let r1_leader = create_mock_block(1, 3, HashSet::from([g1.identity.clone()])); // This block is created by miner 1 and has a hash byte of 3. It has no predecessors, so it belongs to round 0.
+    let r1_other = create_mock_block(3, 4, HashSet::from([g2.identity.clone()])); // This block is created by miner 2 and has a hash byte of 4. It has no predecessors, so it belongs to round 0.
+
+    insert(&mut blocklace, r1_leader.clone());
+    insert(&mut blocklace, r1_other.clone());
+
+    let r2_same_creator = create_mock_block(1, 5, HashSet::from([r1_leader.identity.clone()])); // This block is created by miner 1 and has a hash byte of 5. It has no predecessors, so it belongs to round 0.
+    insert(&mut blocklace, r2_same_creator.clone());
+
+    let leaders = leader_blocks_of_wave(&blocklace, 1, 1, |wave| match wave {
+        1 => Some(NodeId(vec![1])),
+        _ => None,
+    });
+    assert_eq!(leaders.len(), 1); // Only r2_leader should be the leader block of wave 1, because it is the only block that belongs to the first round of wave 1 and is created by the selected leader (miner 1). r2_same_creator does not belong to wave 1, so it should not be considered a leader block for that wave.
+    assert!(leaders.contains(&r1_leader)); // r1_leader should not be a leader block of wave 1, because it belongs to round 0, not round 1.
+}
