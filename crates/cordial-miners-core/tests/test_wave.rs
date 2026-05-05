@@ -105,3 +105,14 @@ fn leader_blocks_are_taken_from_first_round_of_wave_only() {
     assert_eq!(leaders.len(), 1); // Only r2_leader should be the leader block of wave 1, because it is the only block that belongs to the first round of wave 1 and is created by the selected leader (miner 1). r2_same_creator does not belong to wave 1, so it should not be considered a leader block for that wave.
     assert!(leaders.contains(&r1_leader)); // r1_leader should not be a leader block of wave 1, because it belongs to round 0, not round 1.
 }
+
+// Tests if no selected leader results in no leader blocks
+#[test]
+fn no_selected_leader_results_in_no_leader_blocks() {
+    let mut blocklace = Blocklace::new();
+    let g1 = create_mock_block(1, 1, HashSet::new());
+    insert(&mut blocklace, g1.clone());
+
+    let leaders = leader_blocks_of_wave(&blocklace, 0, 3, |_| None);
+    assert_eq!(leaders.len(), 0); // No selected leader, so no leader blocks should be returned.
+}
