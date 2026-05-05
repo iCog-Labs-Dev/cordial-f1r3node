@@ -2,9 +2,18 @@ pub mod finality;
 pub mod fork_choice;
 pub mod round;
 pub mod validation;
+pub mod wave;
 
 pub use finality::{FinalityStatus, can_be_finalized, check_finality, find_last_finalized};
 pub use fork_choice::{ForkChoice, collect_validator_tips, fork_choice, is_cordial};
+pub use round::{
+    blocks_at_depth, compute_all_depths, depth, depth_prefix, depth_suffix, is_round_cordial,
+    latest_cordial_round, max_depth,
+};
 pub use validation::{
     InvalidBlock, ValidationConfig, ValidationResult, validate_block, validated_insert,
+};
+pub use wave::{
+    first_round_of_wave, is_first_round_of_wave, last_round_of_wave, leader_blocks_of_wave,
+    leader_round_of_wave, round_is_in_wave, rounds_of_wave, wave_of_round,
 };
