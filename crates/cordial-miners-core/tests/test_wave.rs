@@ -116,3 +116,24 @@ fn no_selected_leader_results_in_no_leader_blocks() {
     let leaders = leader_blocks_of_wave(&blocklace, 0, 3, |_| None);
     assert_eq!(leaders.len(), 0); // No selected leader, so no leader blocks should be returned.
 }
+
+// test if equivocating leader can have multiple leader blocks
+#[test]
+fn equivocating_leader_can_have_multiple_leader_blocks() {
+    let mut blocklace = Blocklace::new();
+    let g1 = create_mock_block(1, 1, HashSet::new());
+
+    insert(&mut blocklace, g1.clone());
+
+    let leader_a = create_mock_block(1, 2, HashSet::from([g1.identity.clone()])); // This block is created by miner 1 and has a hash byte of 2. It has no predecessors, so it belongs to round 0.
+    let leader_b = create_mock_block(1, 3, HashSet::from([g1.identity.clone()])); // This block is created by miner 1 and has a hash byte of 3. It has no predecessors, so it belongs to round 0.
+    let other = create_mock_block(2, 4, HashSet::from([g1.identity.clone()])); // This block is created by miner 2 and has a hash byte of 4. It has no predecessors, so it belongs to round 0.
+
+    insert(&mut blocklace, leader_a.clone());
+    insert(&mut blocklace, leader_b.clone());
+    insert(&mut blocklace, other.clone());
+
+    let leaders = leader_blocks_of_wave(&blocklace, 1, 1, |_| Some(NodeId(vec![1])));
+
+    assert_eq!(leaders.len(), 2); // Both leader_a and leader_b should be leader blocks of wave 1, as they are created by the equivocating leader (miner 1).
+}
