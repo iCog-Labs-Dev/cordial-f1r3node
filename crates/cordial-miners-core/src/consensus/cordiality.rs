@@ -93,3 +93,39 @@ pub fn all_equivocations(blocklace: &Blocklace) -> Vec<Equivocation> {
 
     equivocations
 }
+
+/// Return the set of block ids acknowledged by a candidate block through its
+/// predecessor closure.
+///
+/// This is the reconstructed DAG view induced by the candidate's declared
+/// predecessors, without inserting the candidate into the blocklace.
+
+pub fn observed_block_ids(blocklace: &Blocklace, block: &Block) -> HashSet<BlockIdentity> {
+    let mut observed = HashSet::new();
+
+    for pred_id in &block.content.predecessors {
+        observed.extend(blocklace.observe(pred_id).into_iter());
+    }
+
+    observed
+}
+
+/// Return whether `block` acknowledges every branch of the same-round
+/// equivocation by `creator` at `round`.
+pub fn acknowledges_equivocation(
+    blocklace: &Blocklace,
+    block: &Block,
+    creator: &NodeId,
+    round: u64,
+) -> bool {
+    let equivocation = equivocation_blocks_at_round(blocklace, creator, round);
+    if equivocation.is_empty() {
+        return true;
+    }
+
+    let observed = observed_block_ids(blocklace, block);
+    equivocation
+        .iter()
+        .all(|equiv_block| observed.contains(&equiv_block.identity))
+}
+
