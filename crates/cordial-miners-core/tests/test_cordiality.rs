@@ -129,3 +129,46 @@ fn candidate_can_hide_known_equivocation() {
     assert_eq!(hidden[0].hidden, vec![e2.identity.clone()]);
 
 }
+
+
+// Test that cordiality requires acknowledging all known tips and no hidden equivocations. We create a candidate block that is missing a known tip and check that it is not cordial, then we create a candidate block that acknowledges all known tips and has no hidden equivocations and check that it is cordial.
+#[test]
+fn cordiality_requires_tips_and_no_hidden_equivocations() {
+    let mut blocklace = Blocklace::new();
+    let e1 = create_mock_block(1, 1, HashSet::new());
+    let e2 = create_mock_block(1,2, HashSet::new());
+    let g2 = create_mock_block(2, 3, HashSet::new());
+
+    insert(&mut blocklace, &e1);
+    insert(&mut blocklace, &e2);
+    insert(&mut blocklace, &g2);
+
+    let witness = create_mock_block(4, 4, HashSet::from([e1.identity.clone(), e2.identity.clone()]));
+    insert(&mut blocklace, &witness);
+
+    let known_tips: HashMap<NodeId, BlockIdentity> = [
+        (node(1), witness.identity.clone()),
+        (node(2), g2.identity.clone()),
+    ]
+    .into();
+
+    let missing_tip_candidate = create_mock_block(5, 5, HashSet::from([witness.identity.clone()]));
+
+    // The missing_tip_candidate block acknowledges the witness block, which is the known tip for node 1, but it does not acknowledge the known tip for node 2 (g2). Therefore, the missing_tip_candidate block should be considered as missing a known tip and should not be considered cordial. The missing_known_tips function should return the identity of g2 as a missing known tip for the missing_tip_candidate block.
+    assert!(missing_known_tips(&missing_tip_candidate, &known_tips).contains(&g2.identity));
+    // Since the missing_tip_candidate block is missing a known tip, it should not be considered cordial according to the definition of cordiality, which requires acknowledging all known tips and having no hidden equivocations. Therefore, the is_cordial_block function should return false for the missing_tip_candidate block when we pass in the blocklace and the known_tips.
+    assert!(!is_cordial_block(
+        &blocklace,
+        &missing_tip_candidate,
+        &known_tips
+    ));
+
+    let cordial = create_mock_block(
+        5,
+        6,
+        HashSet::from([witness.identity.clone(), g2.identity.clone()]),
+    );
+    // The cordial block acknowledges both known tips (witness and g2) and does not have any hidden equivocations, so it should be considered cordial according to the definition of cordiality. Therefore, the is_cordial_block function should return true for the cordial block when we pass in the blocklace and the known_tips.
+    assert!(is_cordial_block(&blocklace, &cordial, &known_tips));
+
+}
