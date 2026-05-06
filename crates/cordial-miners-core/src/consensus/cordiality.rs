@@ -27,3 +27,11 @@ pub struct Equivocation {
     pub round: u64,
     pub blocks: Vec<BlockIdentity>
 }
+
+/// A globally known equivocation that a candidate block fails to acknowledge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HiddenEquivocation {
+    pub creator: NodeId,
+    pub round: u64,
+    pub blocks: Vec<BlockIdentity>
+}
