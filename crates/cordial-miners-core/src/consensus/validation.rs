@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
+use crate::consensus::cordiality::{hidden_equivocations, is_cordial_block, missing_known_tips};
+use crate::consensus::fork_choice::collect_validator_tips;
 use crate::crypto;
 use crate::types::{BlockIdentity, NodeId};
 
@@ -34,6 +36,13 @@ pub enum InvalidBlock {
 
     /// Block does not satisfy the cordial condition (does not reference all known tips).
     NotCordial { missing_tips: Vec<BlockIdentity> },
+
+    /// Block hides a same-round equivocation already known to the local DAG view.
+    HiddenEquivocation {
+        creator: NodeId,
+        round: u64,
+        hidden: Vec<BlockIdentity>,
+    },
 }
 
 /// Result of block validation.
@@ -196,23 +205,25 @@ pub fn validate_block(
         }
     }
 
-    // 6. Cordial condition — block references all known tips
+    // 6. Cordial condition — block references known tips and does not hide
+    //    globally known equivocations already present in the local DAG view.
     if config.check_cordial {
-        let equivocators = blocklace.find_equivacators();
-        let missing_tips: Vec<BlockIdentity> = bonds
-            .keys()
-            .filter(|node| !equivocators.contains(node))
-            .filter_map(|node| blocklace.tip_of(node))
-            .filter(|tip| {
-                !block.content.predecessors.contains(&tip.identity)
-                    && block.identity != tip.identity
-            })
-            .map(|tip| tip.identity)
-            .collect();
+        let known_tips = collect_validator_tips(blocklace, bonds);
+        let missing_tips = missing_known_tips(block, &known_tips);
 
         if !missing_tips.is_empty() {
             errors.push(InvalidBlock::NotCordial { missing_tips });
         }
+
+        for hidden in hidden_equivocations(blocklace, block) {
+            errors.push(InvalidBlock::HiddenEquivocation {
+                creator: hidden.creator,
+                round: hidden.round,
+                hidden: hidden.hidden,
+            });
+        }
+
+        let _ = is_cordial_block(blocklace, block, &known_tips);
     }
 
     if errors.is_empty() {
