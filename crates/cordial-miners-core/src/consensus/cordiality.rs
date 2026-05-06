@@ -176,3 +176,17 @@ pub fn missing_known_tips(
     missing.sort();
     missing
 }
+
+
+
+/// Check whether a block is cordial with respect to:
+/// - known validator tips, and
+/// - globally known same-round equivocations already present in the blocklace.
+pub fn is_cordial_block(
+    blocklace: &Blocklace,
+    block: &Block,
+    known_tips: &HashMap<NodeId, BlockIdentity>,
+) -> bool {
+    missing_known_tips(block, known_tips).is_empty()
+        && hidden_equivocations(blocklace, block).is_empty()
+}
