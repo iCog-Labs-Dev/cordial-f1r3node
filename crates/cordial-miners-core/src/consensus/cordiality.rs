@@ -35,3 +35,22 @@ pub struct HiddenEquivocation {
     pub round: u64,
     pub blocks: Vec<BlockIdentity>
 }
+
+/// Return all blocks  created by 'creator' at exactly 'round' in the blocklace.
+pub fn creator_blocks_at_round(blocklace: &Blocklace, creator: &NodeId, round:u64) -> HashSet<Block> {
+    blocks_at_depth(blocklace, round)
+        .into_iter()
+        .filter(|b| b.identity.creator == *creator)
+        .collect()
+}
+
+/// Return all same-round equivocation branches for `creator` at `round`.
+/// Under the user story for this task, a validator equivocates when they create at least two different blocks in the exact same round.
+pub fn equivocation_blocks_at_round(blocklace: &Blocklace, creator: &NodeId, round:u64) -> HashSet<Block>{
+    let blocks = creator_blocks_at_round(blocklace, creator, round);
+    if blocks.len() >= 2 {
+        blocks
+    } else {
+        HashSet::new()
+    }
+}
