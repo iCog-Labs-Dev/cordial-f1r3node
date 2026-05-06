@@ -6,6 +6,7 @@ use cordial_miners_core::consensus::cordiality::{
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::{HashMap, HashSet};
+use std::vec;
 
 struct MockVerifier;
 
@@ -81,5 +82,50 @@ fn different_rounds_are_not_same_round_equivocations() {
 
     assert!(equivocation_blocks_at_round(&blocklace, &node(1), 0).is_empty());
     assert!(equivocation_blocks_at_round(&blocklace, &node(1), 1).is_empty());
+
+}
+
+// Test that different creators at the same round do not count as equivocation. We create two blocks by different creators at the same round and check that they are not detected as equivocations.
+#[test]
+fn predecessor_closure_can_acknowledge_equivocation() {
+    let mut blocklace = Blocklace::new();
+    let e1 = create_mock_block(1, 1, HashSet::new());
+    let e2 = create_mock_block(1, 2, HashSet::new());
+    
+    insert(&mut blocklace, &e1);
+    insert(&mut blocklace, &e2);
+
+    let witness = create_mock_block(2,3, HashSet::from([e1.identity.clone(), e2.identity.clone()]));
+    insert(&mut blocklace, &witness);
+
+    let candidate = create_mock_block(3, 4,HashSet::from([witness.identity.clone()]));
+
+    let observed = observed_block_ids(&blocklace, &candidate);
+
+    // The candidate block acknowledges the witness block, which in turn acknowledges both equivocation blocks e1 and e2. Therefore, the candidate block should be considered as acknowledging the equivocation by node 1 at round 0, and the observed block ids should include both e1 and e2.
+    assert!(observed.contains(&e1.identity));
+    assert!(observed.contains(&e2.identity));
+    assert!(acknowledges_equivocation(&blocklace, &candidate, &node(1), 0));
+}
+
+
+#[test]
+fn candidate_can_hide_known_equivocation() {
+    let mut blocklace = Blocklace::new();
+    let e1 = create_mock_block(1, 1, HashSet::new());
+    let e2 = create_mock_block(1, 2, HashSet::new());
+    
+    insert(&mut blocklace, &e1);
+    insert(&mut blocklace, &e2);
+
+    let candidate = create_mock_block(3, 3, HashSet::from([e1.identity.clone()]));
+    insert(&mut blocklace, &candidate);
+    let hidden = hidden_equivocations(&blocklace, &candidate);
+    // The candidate block does not acknowledge any of the equivocation blocks e1 and e2, so both of them should be considered as hidden equivocations by the candidate block.
+
+    assert_eq!(hidden.len(), 1);
+    assert_eq!(hidden[0].creator, node(1));
+    assert_eq!(hidden[0].round, 0);
+    assert_eq!(hidden[0].hidden, vec![e2.identity.clone()]);
 
 }
