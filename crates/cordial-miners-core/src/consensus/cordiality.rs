@@ -160,3 +160,19 @@ pub fn hidden_equivocations(blocklace: &Blocklace, block: &Block) -> Vec<HiddenE
         })
         .collect()
 }
+
+// Return the validator tips ommitted by 'block'.
+pub fn missing_known_tips(
+    block: &Block,
+    known_tips: &HashMap<NodeId, BlockIdentity>,
+) -> Vec<BlockIdentity> {
+    let mut missing: Vec<BlockIdentity> = known_tips
+        .values()
+        .filter(|tip_id| {
+            block.identity != **tip_id && !block.content.predecessors.contains(*tip_id)
+        })
+        .cloned()
+        .collect();
+    missing.sort();
+    missing
+}
