@@ -172,3 +172,19 @@ fn cordiality_requires_tips_and_no_hidden_equivocations() {
     assert!(is_cordial_block(&blocklace, &cordial, &known_tips));
 
 }
+
+// Test that all_equivocations returns the correct creator, round, and blocks for each equivocation. We create multiple equivocations by different creators at different rounds and check that they are all reported correctly by the all_equivocations function.
+#[test]
+fn all_equivocations_reports_creator_and_round() {
+    let mut blocklace = Blocklace::new();
+    let e1 = create_mock_block(1, 1, HashSet::new());
+    let e2 = create_mock_block(1, 2, HashSet::new());
+    insert(&mut blocklace, &e1);
+    insert(&mut blocklace, &e2);
+
+    let equivocations = all_equivocations(&blocklace);
+    assert_eq!(equivocations.len(), 1);
+    assert_eq!(equivocations[0].creator, node(1));
+    assert_eq!(equivocations[0].round, 0);
+    assert_eq!(equivocations[0].blocks.len(), 2);
+}
