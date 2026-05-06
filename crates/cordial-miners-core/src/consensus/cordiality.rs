@@ -33,7 +33,7 @@ pub struct Equivocation {
 pub struct HiddenEquivocation {
     pub creator: NodeId,
     pub round: u64,
-    pub blocks: Vec<BlockIdentity>
+    pub hidden: Vec<BlockIdentity>
 }
 
 /// Return all blocks  created by 'creator' at exactly 'round' in the blocklace.
@@ -129,3 +129,34 @@ pub fn acknowledges_equivocation(
         .all(|equiv_block| observed.contains(&equiv_block.identity))
 }
 
+/// Return the globally known equivocations hidden by `block`.
+///
+/// This uses the local blocklace as the source of knowledge. If the blocklace
+/// already contains a same-round equivocation, then a candidate block is
+/// considered to hide it when its predecessor closure does not acknowledge all
+/// branches.
+pub fn hidden_equivocations(blocklace: &Blocklace, block: &Block) -> Vec<HiddenEquivocation> {
+    let observed = observed_block_ids(blocklace, block);
+
+    all_equivocations(blocklace)
+        .into_iter()
+        .filter_map(|equivocation| {
+            let hidden: Vec<BlockIdentity> = equivocation
+                .blocks
+                .iter()
+                .filter(|id| !observed.contains(*id))
+                .cloned()
+                .collect();
+
+            if hidden.is_empty() {
+                None
+            } else {
+                Some(HiddenEquivocation {
+                    creator: equivocation.creator,
+                    round: equivocation.round,
+                    hidden,
+                })
+            }
+        })
+        .collect()
+}
