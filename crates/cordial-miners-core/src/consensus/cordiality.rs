@@ -54,3 +54,42 @@ pub fn equivocation_blocks_at_round(blocklace: &Blocklace, creator: &NodeId, rou
         HashSet::new()
     }
 }
+
+/// Return every same-round equivocation currently present in the blocklace.
+pub fn all_equivocations(blocklace: &Blocklace) -> Vec<Equivocation> {
+    let Some(max_round) = blocklace
+        .dom()
+        .into_iter()
+        .filter_map(|id| depth(blocklace, id))
+        .max() 
+        else {
+            return Vec::new();
+        };
+    let creators: HashSet<NodeId> = blocklace
+        .dom()
+        .iter()
+        .map(|id| id.creator.clone())
+        .collect();
+
+    let mut equivocations = Vec::new();
+
+    for creator in creators {
+        for round in 0..=max_round {
+            let mut blocks:  Vec<BlockIdentity> = equivocation_blocks_at_round(blocklace, &creator, round)
+                .into_iter()
+                .map(|b| b.identity)
+                .collect();
+
+            if blocks.len() >= 2 {
+                blocks.sort();
+                equivocations.push(Equivocation {
+                    creator: creator.clone(),
+                    round,
+                    blocks,
+                });
+            }
+        }
+    }
+
+    equivocations
+}
