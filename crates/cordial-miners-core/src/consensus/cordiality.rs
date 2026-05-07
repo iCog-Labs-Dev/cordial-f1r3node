@@ -108,12 +108,11 @@ pub fn all_equivocations(blocklace: &Blocklace) -> Vec<Equivocation> {
 ///
 /// This is the reconstructed DAG view induced by the candidate's declared
 /// predecessors, without inserting the candidate into the blocklace.
-
 pub fn observed_block_ids(blocklace: &Blocklace, block: &Block) -> HashSet<BlockIdentity> {
     let mut observed = HashSet::new();
 
     for pred_id in &block.content.predecessors {
-        observed.extend(blocklace.observe(pred_id).into_iter());
+        observed.extend(blocklace.observe(pred_id));
     }
 
     observed
