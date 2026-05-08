@@ -2,7 +2,9 @@ use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
     FinalityStatus, can_be_finalized, check_finality, find_last_finalized,
 };
+use cordial_miners_core::cordiality::ValidatorSet;
 use cordial_miners_core::crypto::CryptoVerifier;
+use cordial_miners_core::finality::{ApprovalThreshold, approve, approves};
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -17,7 +19,41 @@ impl CryptoVerifier for MockVerifier {
         _sig: &[u8],
         _creator: &NodeId,
     ) -> Result<(), Self::Error> {
-        Ok(()) // Always allow in tests
+        Ok(())
+    }
+}
+
+// ── Mock ValidatorSet ──
+
+struct MockValidatorSet {
+    weights: HashMap<NodeId, u128>,
+    total: u128,
+}
+
+impl MockValidatorSet {
+    fn new() -> Self {
+        Self {
+            weights: HashMap::new(),
+            total: 0,
+        }
+    }
+
+    fn add_validator(mut self, node_id: NodeId, weight: u128) -> Self {
+        self.weights.insert(node_id, weight);
+        self.total += weight;
+        self
+    }
+}
+
+impl ValidatorSet<&NodeId> for MockValidatorSet {
+    type Weight = u128;
+
+    fn weight_of(&self, validator: &&NodeId) -> Option<Self::Weight> {
+        self.weights.get(*validator).copied()
+    }
+
+    fn total_weight(&self) -> Self::Weight {
+        self.total
     }
 }
 
@@ -59,6 +95,25 @@ fn child(creator: &NodeId, tag: u8, parents: &[&Block]) -> Block {
     }
 }
 
+/// Helper to create a block with unique hash and specified predecessors
+/// Used by the approval tests which need more control over hash bytes
+fn create_block(creator_id: u8, hash_byte: u8, predecessors: HashSet<BlockIdentity>) -> Block {
+    let mut content_hash = [0u8; 32];
+    content_hash[0] = hash_byte;
+
+    Block {
+        identity: BlockIdentity {
+            content_hash,
+            creator: NodeId(vec![creator_id]),
+            signature: vec![],
+        },
+        content: BlockContent {
+            payload: vec![],
+            predecessors,
+        },
+    }
+}
+
 fn insert(bl: &mut Blocklace, block: &Block) {
     let verifier = MockVerifier;
     bl.insert(block.clone(), &verifier).expect("insert failed");
@@ -88,7 +143,6 @@ fn single_validator_finalizes_own_genesis() {
     let g = genesis(&v1, 1);
     insert(&mut bl, &g);
 
-    // Single validator with 100% stake — trivially > 2/3
     let b = bonds(&[(1, 100)]);
     let status = check_finality(&bl, &g.identity, &b);
     assert!(status.is_finalized());
@@ -101,7 +155,6 @@ fn block_not_in_supermajority_ancestry_is_pending() {
     let v2 = node(2);
     let v3 = node(3);
 
-    // Each creates their own genesis
     let g1 = genesis(&v1, 1);
     let g2 = genesis(&v2, 2);
     let g3 = genesis(&v3, 3);
@@ -109,7 +162,6 @@ fn block_not_in_supermajority_ancestry_is_pending() {
     insert(&mut bl, &g2);
     insert(&mut bl, &g3);
 
-    // Equal stake — g1 is only supported by v1 (1/3), not > 2/3
     let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
     let status = check_finality(&bl, &g1.identity, &b);
     assert!(status.is_pending());
@@ -122,11 +174,9 @@ fn supermajority_support_finalizes_block() {
     let v2 = node(2);
     let v3 = node(3);
 
-    // v1 creates genesis
     let g = genesis(&v1, 1);
     insert(&mut bl, &g);
 
-    // v2 and v3 build on g — all three have g in their ancestry
     let b2 = child(&v2, 2, &[&g]);
     let b3 = child(&v3, 3, &[&g]);
     insert(&mut bl, &b2);
@@ -135,7 +185,6 @@ fn supermajority_support_finalizes_block() {
     let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
     let status = check_finality(&bl, &g.identity, &b);
 
-    // 3/3 validators support g — finalized
     assert!(status.is_finalized());
     match status {
         FinalityStatus::Finalized {
@@ -156,22 +205,18 @@ fn two_thirds_plus_one_is_enough() {
     let v2 = node(2);
     let v3 = node(3);
 
-    // v1 creates genesis
     let g = genesis(&v1, 1);
     insert(&mut bl, &g);
 
-    // Only v2 builds on g. v3 creates its own genesis.
     let b2 = child(&v2, 2, &[&g]);
     let g3 = genesis(&v3, 3);
     insert(&mut bl, &b2);
     insert(&mut bl, &g3);
 
-    // v1=100, v2=100, v3=100: g is supported by v1+v2 = 200/300 = 66.7% — NOT > 2/3
     let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
     let status = check_finality(&bl, &g.identity, &b);
     assert!(status.is_pending());
 
-    // v1=100, v2=100, v3=99: g is supported by 200/299 = 66.9% — > 2/3
     let b2 = bonds(&[(1, 100), (2, 100), (3, 99)]);
     let status2 = check_finality(&bl, &g.identity, &b2);
     assert!(status2.is_finalized());
@@ -184,22 +229,17 @@ fn equivocator_stake_excluded_from_total() {
     let v2 = node(2);
     let v3 = node(3);
 
-    // v1 creates genesis
     let g = genesis(&v1, 1);
     insert(&mut bl, &g);
 
-    // v2 builds on g
     let b2 = child(&v2, 2, &[&g]);
     insert(&mut bl, &b2);
 
-    // v3 equivocates (two genesis blocks)
     let g3a = genesis(&v3, 3);
     let g3b = genesis(&v3, 4);
     insert(&mut bl, &g3a);
     insert(&mut bl, &g3b);
 
-    // v1=100, v2=100, v3=1000 (equivocator)
-    // Honest stake = 200. Supporting = 200 (v1+v2). 200 > 2/3 * 200 — finalized
     let b = bonds(&[(1, 100), (2, 100), (3, 1000)]);
     let status = check_finality(&bl, &g.identity, &b);
     assert!(status.is_finalized());
@@ -221,7 +261,6 @@ fn find_last_finalized_returns_highest_finalized() {
     let v2 = node(2);
     let v3 = node(3);
 
-    // Linear chain: g -> b2 -> b3, all three validators build on it
     let g = genesis(&v1, 1);
     insert(&mut bl, &g);
 
@@ -231,20 +270,14 @@ fn find_last_finalized_returns_highest_finalized() {
     let b3 = child(&v3, 3, &[&b2]);
     insert(&mut bl, &b3);
 
-    // v1 also extends to see b3
     let b4 = child(&v1, 4, &[&b3]);
     insert(&mut bl, &b4);
 
     let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
     let lfb = find_last_finalized(&bl, &b);
 
-    // g is in everyone's ancestry — finalized.
-    // b2 is in v2, v3, v1's ancestry (via b3->b4) — finalized.
-    // The "highest" finalized block should be the most recent one
-    // that all validators have built upon.
     assert!(lfb.is_some());
     let lfb = lfb.unwrap();
-    // Both g and b2 are finalized. b2 is higher.
     assert!(check_finality(&bl, &lfb, &b).is_finalized());
 }
 
@@ -260,7 +293,6 @@ fn single_validator_last_finalized_is_tip() {
     let b = bonds(&[(1, 100)]);
     let lfb = find_last_finalized(&bl, &b).unwrap();
 
-    // With a single validator, the tip is always finalized
     assert_eq!(lfb, b2.identity);
 }
 
@@ -282,8 +314,6 @@ fn block_with_full_support_can_be_finalized() {
     insert(&mut bl, &g);
 
     let b = bonds(&[(1, 100), (2, 100)]);
-    // v2 has no tip yet — its stake counts as "undecided"
-    // supporting=100, undecided=100, total=200. (100+100)*3 > 200*2 — yes
     assert!(can_be_finalized(&bl, &g.identity, &b));
 }
 
@@ -294,7 +324,6 @@ fn orphaned_block_cannot_be_finalized() {
     let v2 = node(2);
     let v3 = node(3);
 
-    // v1 creates a genesis, but v2 and v3 create different ones
     let g1 = genesis(&v1, 1);
     let g2 = genesis(&v2, 2);
     let g3 = genesis(&v3, 3);
@@ -302,8 +331,6 @@ fn orphaned_block_cannot_be_finalized() {
     insert(&mut bl, &g2);
     insert(&mut bl, &g3);
 
-    // g1 supported only by v1 (100). v2 and v3 have their own tips.
-    // supporting=100, undecided=0, total=300. 100*3 = 300, not > 200. Cannot be finalized.
     let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
     assert!(!can_be_finalized(&bl, &g1.identity, &b));
 }
@@ -328,4 +355,195 @@ fn finality_status_helpers() {
 
     assert!(!unknown.is_finalized());
     assert!(!unknown.is_pending());
+}
+
+// ── approve / weighted_approve tests ──
+
+#[test]
+fn test_approve_returns_false_if_candidate_not_observed() {
+    let mut bl = Blocklace::new();
+
+    let genesis_b = create_block(1, 1, HashSet::new());
+    insert(&mut bl, &genesis_b);
+
+    // block_v2 points to genesis but NOT to unobserved_candidate
+    let block_v2 = create_block(2, 2, [genesis_b.identity.clone()].iter().cloned().collect());
+    insert(&mut bl, &block_v2);
+
+    // unobserved_candidate is a standalone block block_v2 cannot see
+    let unobserved_candidate = create_block(3, 3, HashSet::new());
+    insert(&mut bl, &unobserved_candidate);
+
+    assert!(!approves(
+        &bl,
+        &block_v2.identity,
+        &unobserved_candidate.identity
+    ));
+}
+
+#[test]
+fn test_weighted_approve_returns_false_below_threshold() {
+    let mut bl = Blocklace::new();
+
+    let genesis_b = create_block(1, 1, HashSet::new());
+    insert(&mut bl, &genesis_b);
+
+    let candidate = create_block(2, 2, [genesis_b.identity.clone()].iter().cloned().collect());
+    insert(&mut bl, &candidate);
+
+    // Only validator 1 (weight 1) observes the candidate
+    let approve_block = create_block(1, 3, [candidate.identity.clone()].iter().cloned().collect());
+    insert(&mut bl, &approve_block);
+
+    // Total weight = 3, supporting = 1 — well below 2/3
+    let validators = MockValidatorSet::new()
+        .add_validator(NodeId(vec![1]), 1)
+        .add_validator(NodeId(vec![2]), 1)
+        .add_validator(NodeId(vec![3]), 1);
+
+    let threshold = ApprovalThreshold::new(2, 3);
+
+    assert!(!approve(
+        &bl,
+        &approve_block.identity,
+        &candidate.identity,
+        threshold,
+        &validators
+    ));
+}
+
+#[test]
+fn test_weighted_approve_returns_true_above_threshold() {
+    let mut bl = Blocklace::new();
+
+    let genesis_b = create_block(1, 1, HashSet::new());
+    insert(&mut bl, &genesis_b);
+
+    let candidate = create_block(2, 2, [genesis_b.identity.clone()].iter().cloned().collect());
+    insert(&mut bl, &candidate);
+
+    // Validator 1 (weight 2) observes the candidate
+    let approve_block_a =
+        create_block(1, 3, [candidate.identity.clone()].iter().cloned().collect());
+    insert(&mut bl, &approve_block_a);
+
+    // Validator 3 (weight 2) observes approve_block_a (and thus candidate transitively)
+    let approve_block_c = create_block(
+        3,
+        4,
+        [approve_block_a.identity.clone()].iter().cloned().collect(),
+    );
+    insert(&mut bl, &approve_block_c);
+
+    // Total = 5, support = 4 (v1+v3), 4 * 3 > 5 * 2 → true
+    let validators = MockValidatorSet::new()
+        .add_validator(NodeId(vec![1]), 2)
+        .add_validator(NodeId(vec![2]), 1)
+        .add_validator(NodeId(vec![3]), 2);
+
+    let threshold = ApprovalThreshold::new(2, 3);
+
+    assert!(approve(
+        &bl,
+        &approve_block_c.identity,
+        &candidate.identity,
+        threshold,
+        &validators
+    ));
+}
+
+#[test]
+fn test_approve_returns_false_with_equivocation() {
+    let mut bl = Blocklace::new();
+
+    let genesis_b = create_block(1, 1, HashSet::new());
+    insert(&mut bl, &genesis_b);
+
+    // Validator 2 equivocates — two conflicting blocks both pointing to genesis
+    let equiv1 = create_block(2, 2, [genesis_b.identity.clone()].iter().cloned().collect());
+    let equiv2 = create_block(2, 3, [genesis_b.identity.clone()].iter().cloned().collect());
+    insert(&mut bl, &equiv1);
+    insert(&mut bl, &equiv2);
+
+    // approve_block observes BOTH equivocating blocks
+    let approve_block = create_block(
+        1,
+        4,
+        [equiv1.identity.clone(), equiv2.identity.clone()]
+            .iter()
+            .cloned()
+            .collect(),
+    );
+    insert(&mut bl, &approve_block);
+
+    // Must return false — approver sees the equivocation
+    assert!(!approves(&bl, &approve_block.identity, &equiv1.identity));
+}
+
+#[test]
+fn test_weighted_approve_returns_false_with_equivocation_despite_weight() {
+    let mut bl = Blocklace::new();
+
+    let genesis_b = create_block(1, 1, HashSet::new());
+    insert(&mut bl, &genesis_b);
+
+    // Validator 2 equivocates
+    let candidate_equiv1 =
+        create_block(2, 2, [genesis_b.identity.clone()].iter().cloned().collect());
+    let candidate_equiv2 =
+        create_block(2, 3, [genesis_b.identity.clone()].iter().cloned().collect());
+    insert(&mut bl, &candidate_equiv1);
+    insert(&mut bl, &candidate_equiv2);
+
+    // Both high-weight validators observe BOTH equivocating blocks
+    let approve_block_a = create_block(
+        1,
+        4,
+        [
+            candidate_equiv1.identity.clone(),
+            candidate_equiv2.identity.clone(),
+        ]
+        .iter()
+        .cloned()
+        .collect(),
+    );
+    insert(&mut bl, &approve_block_a);
+
+    let approve_block_c = create_block(
+        3,
+        5,
+        [
+            candidate_equiv1.identity.clone(),
+            candidate_equiv2.identity.clone(),
+        ]
+        .iter()
+        .cloned()
+        .collect(),
+    );
+    insert(&mut bl, &approve_block_c);
+
+    // Total = 5, support would be 4 — but equivocation disqualifies
+    let validators = MockValidatorSet::new()
+        .add_validator(NodeId(vec![1]), 2)
+        .add_validator(NodeId(vec![2]), 1)
+        .add_validator(NodeId(vec![3]), 2);
+
+    let threshold = ApprovalThreshold::new(2, 3);
+
+    assert!(!approve(
+        &bl,
+        &approve_block_c.identity,
+        &candidate_equiv1.identity,
+        threshold,
+        &validators
+    ));
+}
+
+#[test]
+fn test_approval_threshold_is_exceeded() {
+    let threshold = ApprovalThreshold::new(2, 3);
+
+    assert!(threshold.is_exceeded(3, 4)); // 3*3=9 > 4*2=8 ✓
+    assert!(!threshold.is_exceeded(2, 4)); // 2*3=6 NOT > 4*2=8 ✓
+    assert!(!threshold.is_exceeded(100, 150)); // 300 NOT > 300 ✓
 }
