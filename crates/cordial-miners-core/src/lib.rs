@@ -12,4 +12,5 @@ pub mod wave;
 
 pub use block::Block;
 pub use blocklace::Blocklace;
+pub use finality::{ApprovalThreshold, approve, approves};
 pub use types::{BlockContent, BlockIdentity, NodeId};
