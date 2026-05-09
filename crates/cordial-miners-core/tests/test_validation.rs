@@ -379,6 +379,38 @@ fn non_cordial_block_fails_strict_validation() {
     );
 }
 
+// Test that a block that hides a known equivocation fails strict validation. We create two equivocation blocks by the same creator and then create a candidate block that only acknowledges one of them. The candidate block should be considered as hiding the other equivocation block, and therefore should fail strict validation with an InvalidBlock::HiddenEquivocation error.
+#[test]
+fn block_hiding_known_equivocation_fails_strict_validation() {
+    let mut bl = Blocklace::new();
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+
+    let e1 = genesis_unsigned(&v1, 1);
+    let e2 = genesis_unsigned(&v1, 2);
+    let g2 = genesis_unsigned(&v2, 3);
+    insert(&mut bl, &e1);
+    insert(&mut bl, &e2);
+    insert(&mut bl, &g2);
+
+    let hidden = child_unsigned(&v3, 4, &[&e1, &g2]);
+    let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
+    let config = ValidationConfig {
+        check_cordial: true,
+        ..no_crypto_config()
+    };
+
+    let result = validate_block(&hidden, &bl, &b, &config);
+    assert!(!result.is_valid());
+    assert!(
+        result
+            .errors()
+            .iter()
+            .any(|e| matches!(e, InvalidBlock::HiddenEquivocation { .. }))
+    );
+}
+
 // ── validated_insert ──
 
 #[test]

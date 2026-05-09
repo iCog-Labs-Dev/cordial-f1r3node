@@ -121,6 +121,7 @@ pub enum InvalidBlock {
     NotOfInterest,
     /// Translation failure — block didn't decode against the wire format.
     InvalidFormat,
+    HiddenEquivocation,
 }
 
 /// Mirror of f1r3node's `ValidBlock`.
@@ -346,6 +347,7 @@ where
             CoreInvalidBlock::MissingPredecessors { .. } => InvalidBlock::InvalidParents,
             CoreInvalidBlock::Equivocation { .. } => InvalidBlock::AdmissibleEquivocation,
             CoreInvalidBlock::NotCordial { .. } => InvalidBlock::NotOfInterest,
+            CoreInvalidBlock::HiddenEquivocation { .. } => InvalidBlock::HiddenEquivocation,
         }
     }
 
