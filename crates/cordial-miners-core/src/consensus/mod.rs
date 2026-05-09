@@ -1,3 +1,4 @@
+pub mod approval;
 pub mod cordiality;
 pub mod finality;
 pub mod fork_choice;
@@ -5,6 +6,7 @@ pub mod round;
 pub mod validation;
 pub mod wave;
 
+pub use approval::{approves, approving_blocks};
 pub use cordiality::{
     Equivocation, HiddenEquivocation, acknowledges_equivocation, all_equivocations,
     creator_blocks_at_round, equivocation_blocks_at_round, hidden_equivocations, is_cordial_block,
