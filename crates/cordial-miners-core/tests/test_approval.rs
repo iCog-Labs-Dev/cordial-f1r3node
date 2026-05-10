@@ -73,6 +73,16 @@ fn approves_observed_target_without_equivocation() {
     assert!(approves(&blocklace, &approver.identity, &target.identity));
 }
 
+#[test]
+fn block_approves_itself_when_no_conflicting_branch_is_observed() {
+    let mut blocklace = Blocklace::new();
+
+    let target = create_mock_block(1, 1, HashSet::new());
+    insert(&mut blocklace, &target);
+
+    assert!(approves(&blocklace, &target.identity, &target.identity));
+}
+
 /// Test that a block does NOT approve a target when it also observes an equivocating sibling.
 ///
 /// Setup:
@@ -132,6 +142,30 @@ fn approves_target_when_equivocating_sibling_not_observed() {
 
     // The approver should approve the target because it does not observe the equivocating sibling
     assert!(approves(&blocklace, &approver.identity, &target.identity));
+}
+
+#[test]
+fn rejects_target_when_observed_conflict_is_at_different_round() {
+    let mut blocklace = Blocklace::new();
+
+    let genesis = create_mock_block(1, 1, HashSet::new());
+    insert(&mut blocklace, &genesis);
+
+    let target = create_mock_block(1, 2, HashSet::from([genesis.identity.clone()]));
+    insert(&mut blocklace, &target);
+
+    // Same creator, different depth, and incomparable with `target`.
+    let conflicting_branch = create_mock_block(1, 3, HashSet::new());
+    insert(&mut blocklace, &conflicting_branch);
+
+    let approver = create_mock_block(
+        2,
+        4,
+        HashSet::from([target.identity.clone(), conflicting_branch.identity.clone()]),
+    );
+    insert(&mut blocklace, &approver);
+
+    assert!(!approves(&blocklace, &approver.identity, &target.identity));
 }
 
 /// Test that approves returns false when the approver does not observe the target.
@@ -231,12 +265,13 @@ fn approves_through_transitive_predecessor_closure() {
 ///
 /// Setup:
 /// - Target block at round 0
+/// - Target observes itself → approves
 /// - Block A observes target → approves
 /// - Block B observes target → approves
 /// - Block C does not observe target → does not approve
 /// - Block D observes an equivocating sibling of target → does not approve
 ///
-/// Expected: approving_blocks returns {A, B}
+/// Expected: approving_blocks returns {target, A, B}
 #[test]
 fn approving_blocks_returns_correct_set() {
     let mut blocklace = Blocklace::new();
@@ -272,10 +307,11 @@ fn approving_blocks_returns_correct_set() {
 
     let approvers = approving_blocks(&blocklace, &target.identity);
 
-    // Expected: block_a and block_b approve the target
+    // Expected: target, block_a and block_b approve the target
     // block_c doesn't observe the target
     // block_d observes an equivocating sibling so doesn't approve
-    assert_eq!(approvers.len(), 2);
+    assert_eq!(approvers.len(), 3);
+    assert!(approvers.contains(&target));
     assert!(approvers.contains(&block_a));
     assert!(approvers.contains(&block_b));
     assert!(!approvers.contains(&block_c));
@@ -286,9 +322,10 @@ fn approving_blocks_returns_correct_set() {
 ///
 /// Setup:
 /// - Target block exists in the blocklace
+/// - The target exists and approves itself
 /// - Multiple other blocks exist but none observe the target
 ///
-/// Expected: approving_blocks returns an empty set
+/// Expected: approving_blocks returns only the target
 #[test]
 fn approving_blocks_returns_empty_when_no_block_observes_target() {
     let mut blocklace = Blocklace::new();
@@ -308,6 +345,7 @@ fn approving_blocks_returns_empty_when_no_block_observes_target() {
 
     let approvers = approving_blocks(&blocklace, &target.identity);
 
-    // No blocks observe the target, so the set should be empty
-    assert!(approvers.is_empty());
+    // No other blocks observe the target, but the target approves itself.
+    assert_eq!(approvers.len(), 1);
+    assert!(approvers.contains(&target));
 }
