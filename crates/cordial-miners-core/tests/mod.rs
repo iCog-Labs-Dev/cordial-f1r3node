@@ -1,3 +1,4 @@
+// Re-exported so individual test files can use `mod common;` and get these helpers.
 use cordial_miners_core::block::Block;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;

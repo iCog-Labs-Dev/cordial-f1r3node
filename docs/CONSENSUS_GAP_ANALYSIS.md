@@ -44,15 +44,13 @@ The paper's entire protocol revolves around **rounds** (depth-based layers of th
 
 ---
 
-### Gap 2: Block Approval (Critical)
+### Gap 2: Block Approval — ✅ IMPLEMENTED
 
 **Paper reference**: Def. A.5 — "Block b approves b' if b observes b' and does NOT observe any equivocating block of b'."
 
 This is a fundamental distinction the paper makes between **observing** and **approving**. Observation is transitive (if b observes b', and b' observes b'', then b observes b''). But **approval is NOT transitive** — even if b approves b' and b' approves b'', b may NOT approve b'' (if b also observes an equivocating sibling of b'').
 
-**Current state**: The codebase only has `precedes()` (observation). There is no approval concept. `check_finality()` counts validators whose tips have a block in their **ancestry** (observation), not those that **approve** it.
-
-**What's needed**: `fn approves(blocklace, b, b') -> bool` — b observes b' AND b does not observe any block that forms an equivocation with b'.
+**Implementation**: `pub fn approves(blocklace, b, target) -> bool` in `src/finality.rs`. Checks that `b` observes `target` AND does not observe any incomparable sibling of `target` from the same creator. Tests in `tests/test_tau.rs`.
 
 ---
 
@@ -90,23 +88,23 @@ Each wave's first round may contain a **leader block** — a block by the electe
 
 ---
 
-### Gap 5: The τ ordering function (Critical — **the core missing piece**)
+### Gap 5: The τ ordering function — ✅ IMPLEMENTED
 
 **Paper reference**: Def. 5.1, Alg. 2
 
 τ is THE output function of the protocol. It converts the partially-ordered blocklace into a totally-ordered sequence of blocks. Every miner runs τ locally on their blocklace to produce the same deterministic output.
 
-**Algorithm**:
-1. Find the **last final leader** block in the blocklace
-2. If none, output empty sequence
-3. Otherwise, recursively: for each final leader b, find the previous leader block that b ratifies, recurse on it, then append `xsort(b, B)` — a topological sort of all blocks **approved** by b that haven't been output yet
-4. Equivocating blocks are excluded during xsort (only approved blocks are included)
+**Implementation**: `pub fn tau(blocklace, bonds) -> Vec<BlockIdentity>` in `src/finality.rs`, along with:
+- `approves()` — equivocation-aware approval filter (Def. A.5)
+- `approved_causal_history()` — all blocks a leader approves
+- `xsort()` — deterministic topological sort (Kahn's algorithm + `BTreeSet` for canonical tiebreaking)
+- `finalized_leader_chain()` — collects finalized blocks in topological order
 
 **Key property**: τ is **monotonic** — once blocks are output, they stay in the output forever, in the same order. This is what provides finality.
 
-**Current state**: `find_last_finalized()` exists but produces only a single block identity, not the ordered sequence. There is no `xsort`, no recursive leader chaining, no monotonic output sequence.
+**Note**: Uses the `check_finality()` supermajority heuristic as a stand-in for wave-based leader finality. When Gaps 1, 3, 4 are implemented, only `finalized_leader_chain()` needs updating. See `docs/cordial-miners/11-tau-ordering.md` for full documentation.
 
-**What's needed**: Full implementation of Alg. 2 as `fn tau(blocklace, wave_config, n, f) -> Vec<Block>`
+**Tests**: 11 tests in `tests/test_tau.rs` covering determinism, monotonicity, equivocator exclusion, and unit tests for each sub-function.
 
 ---
 
@@ -156,14 +154,14 @@ The current model is a **reasonable approximation** but differs in important way
 
 ## Implementation Priority
 
-| Priority | Component | Effort |
-|----------|-----------|--------|
-| 1 | Round/depth computation (`rounds.rs`) | Small |
-| 2 | Block approval (`approval.rs`) | Small |
-| 3 | Ratification & super-ratification (in `approval.rs`) | Medium |
-| 4 | Wave structure & leader election (`waves.rs`) | Medium |
-| 5 | τ ordering function (`ordering.rs`) | Large |
-| 6 | Cordial dissemination updates (network) | Large |
-| 7 | Equivocator excommunication | Small |
+| Priority | Component | Effort | Status |
+|----------|-----------|--------|--------|
+| 1 | Round/depth computation (`rounds.rs`) | Small | ❌ Not started |
+| 2 | Block approval (`finality.rs`) | Small | ✅ Done — `approves()` |
+| 3 | Ratification & super-ratification | Medium | ❌ Not started |
+| 4 | Wave structure & leader election (`waves.rs`) | Medium | ❌ Not started |
+| 5 | τ ordering function (`finality.rs`) | Large | ✅ Done — `tau()`, `xsort()` |
+| 6 | Cordial dissemination updates (network) | Large | ❌ Not started |
+| 7 | Equivocator excommunication | Small | ❌ Not started |
 
 Components 1-5 belong in `consensus/`. Component 6 updates `network/`. Component 7 is a policy layer for block creation.
