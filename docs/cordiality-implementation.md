@@ -147,10 +147,48 @@ This is a deliberate engineering choice for now. It gives us a deterministic, te
 
 ## Next Step
 
-The next paper-aligned step is to build the approval and ratification predicates on top of this layer:
+The next paper-aligned step is to build leader finality and eventual `τ` ordering functions on top of this ratification layer, completing the consensus protocol implementation.
 
-- `approves`
-- `ratifies`
-- `super-ratifies`
+**Completed Implementation:**
+- ✅ `approves` - Block approval predicate (previously implemented)
+- ✅ `ratifies` - Ratification predicate implementing Definition 22
+- ✅ `super-ratifies` - Super-ratification predicate implementing Definition 23
 
-Those will feed into leader finality and the eventual `tau` ordering function described later in the paper.
+These three consensus layers now provide the complete foundation for:
+- Leader selection through super-ratification validation
+- Block finalization and ordering through `τ` function
+- Integration with existing validation and equivocation detection
+
+The consensus protocol implementation is ready for the final leader selection and τ ordering functions described later in the paper.
+
+## Ratification and Super-Ratification Implementation Details
+
+### 9. `ratifies` 
+
+Implements Definition 22 from Cordial Miners paper: A block `r` ratifies a block `b` if the closure of `r` contains a supermajority of blocks that approve `b`.
+
+**Key components:**
+- Uses `blocks_that_approve()` to find all approving blocks for target
+- Applies `is_supermajority()` to validate supermajority condition
+- Returns boolean indicating successful ratification
+
+**Mathematical foundation:**
+- Supermajority threshold: distinct creators > (n+f)/2
+- Closure includes all blocks reachable through predecessor relationships
+- Handles equivocation detection through `blocks_that_approve()` logic
+
+### 10. `super_ratifies`
+
+Implements Definition 23 from Cordial Miners paper: A set of blocks `S` super-ratifies a block `b` if `S` contains a supermajority of blocks that ratify `b`.
+
+**Key components:**
+- Iterates through each block in the set to check ratification
+- Counts distinct ratifying blocks for supermajority validation
+- Returns boolean indicating successful super-ratification
+
+**Consensus layer hierarchy:**
+1. **Approval** - Block observes target without equivocation conflicts
+2. **Ratification** - Supermajority of approving blocks in closure
+3. **Super-ratification** - Supermajority of ratifying blocks in set
+
+This completes the three-layer consensus protocol needed for final leader selection and block finalization.
