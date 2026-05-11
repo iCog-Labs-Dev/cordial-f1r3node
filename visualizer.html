@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cordial Miners | Blocklace Simulator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-deep: #0a0c10;
+            --bg-card: rgba(22, 27, 34, 0.7);
+            --accent-primary: #3fb950;
+            --accent-secondary: #58a6ff;
+            --accent-warning: #d29922;
+            --accent-error: #f85149;
+            --text-main: #c9d1d9;
+            --text-dim: #8b949e;
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --glow-green: 0 0 20px rgba(63, 185, 80, 0.4);
+            --glow-blue: 0 0 20px rgba(88, 166, 255, 0.4);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-deep);
+            color: var(--text-main);
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Background Animation */
+        .bg-mesh {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background: 
+                radial-gradient(circle at 20% 30%, rgba(63, 185, 80, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 80% 70%, rgba(88, 166, 255, 0.05) 0%, transparent 40%);
+            opacity: 0.8;
+        }
+
+        /* Header */
+        header {
+            padding: 1.5rem 2rem;
+            background: var(--bg-card);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--glass-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .logo-area h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-badge {
+            padding: 0.5rem 1rem;
+            border-radius: 99px;
+            background: rgba(63, 185, 80, 0.1);
+            border: 1px solid var(--accent-primary);
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--accent-primary);
+            box-shadow: var(--glow-green);
+        }
+
+        /* Main Layout */
+        main {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 320px 1fr 320px;
+            gap: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        /* Sidebar Panels */
+        .panel {
+            background: var(--bg-card);
+            backdrop-filter: blur(8px);
+            border-right: 1px solid var(--glass-border);
+            display: flex;
+            flex-direction: column;
+            padding: 1.5rem;
+        }
+
+        .panel-right {
+            border-right: none;
+            border-left: 1px solid var(--glass-border);
+        }
+
+        .panel-title {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-dim);
+            margin-bottom: 1.5rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Validator Cards */
+        .validator-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .validator-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 1rem;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .validator-card:hover {
+            background: rgba(255, 255, 255, 0.08);
+            transform: translateY(-2px);
+            border-color: var(--accent-secondary);
+        }
+
+        .validator-card.active {
+            border-color: var(--accent-primary);
+            box-shadow: var(--glow-green);
+        }
+
+        .v-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+        }
+
+        .v-name { font-weight: 600; }
+        .v-stake { color: var(--text-dim); font-size: 0.85rem; }
+
+        .progress-bar {
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--accent-primary);
+            width: 0%;
+            transition: width 0.5s ease;
+        }
+
+        /* DAG Canvas Container */
+        .viewport {
+            position: relative;
+            background: radial-gradient(circle at center, #111418 0%, #0a0c10 100%);
+            overflow: hidden;
+        }
+
+        #dag-canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Controls Overlay */
+        .controls {
+            position: absolute;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 1rem;
+            background: rgba(10, 12, 16, 0.8);
+            padding: 0.75rem;
+            border-radius: 16px;
+            border: 1px solid var(--glass-border);
+            backdrop-filter: blur(20px);
+        }
+
+        button {
+            padding: 0.75rem 1.5rem;
+            border-radius: 10px;
+            border: none;
+            background: var(--accent-primary);
+            color: #fff;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        button:hover {
+            filter: brightness(1.2);
+            transform: scale(1.02);
+        }
+
+        button.secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-main);
+            border: 1px solid var(--glass-border);
+        }
+
+        /* Console */
+        .console {
+            flex: 1;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 1rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+
+        .log-entry {
+            border-left: 2px solid var(--text-dim);
+            padding-left: 0.75rem;
+            color: var(--text-dim);
+        }
+
+        .log-entry.finalized { border-color: var(--accent-primary); color: var(--accent-primary); }
+        .log-entry.block { border-color: var(--accent-secondary); color: var(--accent-secondary); }
+
+        /* Floating Tooltip */
+        #tooltip {
+            position: absolute;
+            background: rgba(10, 12, 16, 0.95);
+            border: 1px solid var(--accent-secondary);
+            padding: 1rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            z-index: 1000;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        .tooltip-row { margin-bottom: 0.25rem; display: flex; justify-content: space-between; gap: 2rem; }
+        .tooltip-label { color: var(--text-dim); }
+        .tooltip-value { font-family: 'JetBrains Mono', monospace; font-weight: 500; }
+    </style>
+</head>
+<body>
+    <div class="bg-mesh"></div>
+
+    <header>
+        <div class="logo-area">
+            <h1>CORDIAL MINERS</h1>
+            <p style="font-size: 0.75rem; color: var(--text-dim);">BLOCKLACE CONSENSUS ENGINE v0.1.0</p>
+        </div>
+        <div class="status-badge">● LIVE SIMULATION</div>
+    </header>
+
+    <main>
+        <!-- Validators Panel -->
+        <div class="panel">
+            <div class="panel-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Bonded Validators
+            </div>
+            <div class="validator-list" id="validator-list">
+                <!-- Injected via JS -->
+            </div>
+            
+            <div style="margin-top: 2rem;">
+                <div class="panel-title">Consensus State</div>
+                <div style="font-size: 0.85rem; color: var(--text-dim);">
+                    <div class="tooltip-row"><span class="tooltip-label">Total Stake:</span> <span class="tooltip-value" id="total-stake">1000</span></div>
+                    <div class="tooltip-row"><span class="tooltip-label">Finality Threshold:</span> <span class="tooltip-value">667 (2/3)</span></div>
+                    <div class="tooltip-row"><span class="tooltip-label">LFB Height:</span> <span class="tooltip-value" id="lfb-height">0</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DAG Viewport -->
+        <div class="viewport">
+            <canvas id="dag-canvas"></canvas>
+            
+            <div id="tooltip">
+                <div class="tooltip-row"><span class="tooltip-label">Block ID:</span> <span class="tooltip-value" id="tt-id">-</span></div>
+                <div class="tooltip-row"><span class="tooltip-label">Creator:</span> <span class="tooltip-value" id="tt-creator">-</span></div>
+                <div class="tooltip-row"><span class="tooltip-label">Status:</span> <span class="tooltip-value" id="tt-status">-</span></div>
+                <div class="tooltip-row"><span class="tooltip-label">Approval:</span> <span class="tooltip-value" id="tt-approval">-</span></div>
+                <div class="tooltip-row"><span class="tooltip-label">Predecessors:</span> <span class="tooltip-value" id="tt-preds">0</span></div>
+            </div>
+
+            <div class="controls">
+                <button id="btn-mint">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                    Mint Block
+                </button>
+                <button id="btn-auto" class="secondary">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m5 3 14 9-14 9V3z"/></svg>
+                    Auto-Simulate
+                </button>
+                <button id="btn-clear" class="secondary">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    Reset
+                </button>
+            </div>
+        </div>
+
+        <!-- Console Panel -->
+        <div class="panel panel-right">
+            <div class="panel-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                Node Console
+            </div>
+            <div class="console" id="console">
+                <div class="log-entry">Booting Cordial Miners Engine...</div>
+                <div class="log-entry">Loading genesis configuration...</div>
+                <div class="log-entry">Waiting for blocks...</div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // --- Core Simulation Logic ---
+        
+        class Block {
+            constructor(id, creator, predecessors, stake) {
+                this.id = id;
+                this.creator = creator; // Validator object
+                this.predecessors = predecessors; // Array of Block objects
+                this.ancestors = new Set();
+                this.isFinalized = false;
+                this.isApproved = false; // Threshold Approval
+                this.supportingStake = 0;
+                this.approvalStake = 0;
+                
+                // Compute transitive ancestors
+                predecessors.forEach(p => {
+                    this.ancestors.add(p);
+                    p.ancestors.forEach(a => this.ancestors.add(a));
+                });
+
+                // Visual properties
+                this.x = 0;
+                this.y = 0;
+                this.targetX = 0;
+                this.targetY = 0;
+                this.opacity = 0;
+                this.glow = 0;
+            }
+        }
+
+        const validators = [
+            { id: 'v1', name: 'Alpha-Node', stake: 350, color: '#3fb950' },
+            { id: 'v2', name: 'Beta-Node', stake: 250, color: '#58a6ff' },
+            { id: 'v3', name: 'Gamma-Validator', stake: 200, color: '#d29922' },
+            { id: 'v4', name: 'Delta-Relay', stake: 200, color: '#f85149' }
+        ];
+
+        let blocks = [];
+        let tips = new Map(); // Validator ID -> Block
+        let autoSimInterval = null;
+        const totalStake = validators.reduce((a, b) => a + b.stake, 0);
+
+        // --- Visualizer Engine ---
+
+        const canvas = document.getElementById('dag-canvas');
+        const ctx = canvas.getContext('2d');
+        let width, height;
+
+        function resize() {
+            width = canvas.parentElement.clientWidth;
+            height = canvas.parentElement.clientHeight;
+            canvas.width = width * window.devicePixelRatio;
+            canvas.height = height * window.devicePixelRatio;
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        function log(msg, type = '') {
+            const consoleEl = document.getElementById('console');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            consoleEl.appendChild(entry);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        function updateUI() {
+            const list = document.getElementById('validator-list');
+            list.innerHTML = '';
+            validators.forEach(v => {
+                const tip = tips.get(v.id);
+                const card = document.createElement('div');
+                card.className = `validator-card ${activeValidator === v ? 'active' : ''}`;
+                card.innerHTML = `
+                    <div class="v-info">
+                        <span class="v-name" style="color: ${v.color}">${v.name}</span>
+                        <span class="v-stake">${v.stake} STAKE</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${(v.stake/totalStake*100).toFixed(1)}%; background: ${v.color}"></div>
+                    </div>
+                    <div style="font-size: 0.7rem; color: var(--text-dim); margin-top: 0.4rem;">
+                        TIP: ${tip ? tip.id : 'NONE'}
+                    </div>
+                `;
+                card.onclick = () => { activeValidator = v; updateUI(); };
+                list.appendChild(card);
+            });
+
+            document.getElementById('total-stake').textContent = totalStake;
+            document.getElementById('lfb-height').textContent = blocks.filter(b => b.isFinalized).length;
+        }
+
+        let activeValidator = validators[0];
+
+        function mintBlock() {
+            const id = 'B' + (blocks.length + 1);
+            const currentTips = Array.from(tips.values());
+            
+            const newBlock = new Block(id, activeValidator, currentTips, activeValidator.stake);
+            
+            // Positioning (layered DAG)
+            const height = blocks.length > 0 ? Math.max(...currentTips.map(t => t.height || 0)) + 1 : 0;
+            newBlock.height = height;
+            
+            newBlock.targetX = 100 + height * 120;
+            newBlock.targetY = 100 + (validators.indexOf(activeValidator) * (canvas.parentElement.clientHeight - 200) / (validators.length - 1));
+            
+            // If genesis, place at start
+            if (currentTips.length === 0) {
+                newBlock.targetX = 80;
+                newBlock.targetY = canvas.parentElement.clientHeight / 2;
+            }
+
+            newBlock.x = newBlock.targetX;
+            newBlock.y = newBlock.targetY - 50; // Slide in animation
+
+            blocks.push(newBlock);
+            tips.set(activeValidator.id, newBlock);
+            
+            log(`Validator ${activeValidator.name} minted block ${id}`, 'block');
+            checkFinality();
+            updateUI();
+        }
+
+        function checkFinality() {
+            // A block is finalized if > 2/3 stake has it in their ancestry
+            blocks.forEach(b => {
+                if (b.isFinalized) return;
+
+                let supportingStake = 0;
+                const activeTips = Array.from(tips.values());
+                
+                // For each validator's current tip, if it has 'b' in its ancestors (or IS b), add that validator's stake
+                validators.forEach(v => {
+                    const tip = tips.get(v.id);
+                    if (tip && (tip === b || tip.ancestors.has(b))) {
+                        supportingStake += v.stake;
+                    }
+                });
+
+                b.supportingStake = supportingStake;
+                if (supportingStake > totalStake * 0.667) {
+                    b.isFinalized = true;
+                    log(`Block ${b.id} reached finality (>2/3 stake support)`, 'finalized');
+                }
+            });
+            checkApproval();
+        }
+
+        function checkApproval() {
+            // A block b reaches "Threshold Approval" if the sum of weights
+            // of unique validators whose tips approve b exceeds 2/3.
+            blocks.forEach(b => {
+                if (b.isApproved) return;
+
+                let approvalStake = 0;
+                validators.forEach(v => {
+                    const tip = tips.get(v.id);
+                    // Validator v approves b if their tip observes b and no equivocation is seen
+                    // (In this simple sim, we assume no equivocations unless manually triggered)
+                    if (tip && (tip === b || tip.ancestors.has(b))) {
+                        approvalStake += v.stake;
+                    }
+                });
+
+                b.approvalStake = approvalStake;
+                if (approvalStake > totalStake * 0.667) {
+                    b.isApproved = true;
+                    log(`Block ${b.id} reached Approval Threshold (${approvalStake} stake)`, 'block');
+                }
+            });
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, width, height);
+
+            // Draw connections
+            ctx.lineWidth = 1.5;
+            blocks.forEach(b => {
+                b.predecessors.forEach(p => {
+                    ctx.beginPath();
+                    ctx.strokeStyle = b.isFinalized && p.isFinalized ? 'rgba(63, 185, 80, 0.4)' : 'rgba(255, 255, 255, 0.1)';
+                    
+                    // Bezier curve
+                    ctx.moveTo(p.x, p.y);
+                    const cp1x = p.x + (b.x - p.x) / 2;
+                    ctx.bezierCurveTo(cp1x, p.y, cp1x, b.y, b.x, b.y);
+                    ctx.stroke();
+                });
+            });
+
+            // Draw blocks
+            blocks.forEach(b => {
+                // Smooth animation
+                b.x += (b.targetX - b.x) * 0.1;
+                b.y += (b.targetY - b.y) * 0.1;
+                b.opacity = Math.min(1, b.opacity + 0.05);
+
+                ctx.save();
+                ctx.translate(b.x, b.y);
+                ctx.globalAlpha = b.opacity;
+
+                // Shadow/Glow
+                if (b.isFinalized) {
+                    ctx.shadowBlur = 15;
+                    ctx.shadowColor = 'rgba(63, 185, 80, 0.8)';
+                } else if (b.isApproved) {
+                    ctx.shadowBlur = 15;
+                    ctx.shadowColor = 'rgba(88, 166, 255, 0.8)'; // Blue glow for approved but not finalized
+                } else {
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = 'rgba(255, 255, 255, 0.1)';
+                }
+
+                // Node Shape
+                ctx.beginPath();
+                ctx.roundRect(-20, -20, 40, 40, 8);
+                ctx.fillStyle = b.isFinalized ? '#3fb950' : '#161b22';
+                ctx.fill();
+                ctx.strokeStyle = b.creator.color;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Text
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = b.isFinalized ? '#000' : '#fff';
+                ctx.font = 'bold 12px JetBrains Mono';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(b.id, 0, 0);
+
+                ctx.restore();
+            });
+
+            requestAnimationFrame(draw);
+        }
+
+        // --- Interaction ---
+        
+        document.getElementById('btn-mint').onclick = mintBlock;
+        
+        document.getElementById('btn-auto').onclick = () => {
+            if (autoSimInterval) {
+                clearInterval(autoSimInterval);
+                autoSimInterval = null;
+                document.getElementById('btn-auto').innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m5 3 14 9-14 9V3z"/></svg> Auto-Simulate`;
+                log("Auto-simulation stopped.");
+            } else {
+                autoSimInterval = setInterval(() => {
+                    activeValidator = validators[Math.floor(Math.random() * validators.length)];
+                    mintBlock();
+                }, 2000);
+                document.getElementById('btn-auto').innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause`;
+                log("Auto-simulation started.");
+            }
+        };
+
+        document.getElementById('btn-clear').onclick = () => {
+            blocks = [];
+            tips = new Map();
+            log("Simulation reset.");
+            updateUI();
+        };
+
+        // Tooltip logic
+        canvas.onmousemove = (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            let found = null;
+            blocks.forEach(b => {
+                const dist = Math.sqrt((b.x - mouseX)**2 + (b.y - mouseY)**2);
+                if (dist < 25) found = b;
+            });
+
+            const tt = document.getElementById('tooltip');
+            if (found) {
+                tt.style.opacity = 1;
+                tt.style.left = (e.clientX + 15) + 'px';
+                tt.style.top = (e.clientY + 15) + 'px';
+                document.getElementById('tt-id').textContent = found.id;
+                document.getElementById('tt-creator').textContent = found.creator.name;
+                document.getElementById('tt-status').textContent = found.isFinalized ? 'FINALIZED' : 'PENDING';
+                document.getElementById('tt-approval').textContent = `${found.approvalStake} / ${totalStake} (${((found.approvalStake/totalStake)*100).toFixed(0)}%)`;
+                document.getElementById('tt-preds').textContent = found.predecessors.length;
+                
+                document.getElementById('tt-status').style.color = found.isFinalized ? 'var(--accent-primary)' : 'var(--accent-warning)';
+                document.getElementById('tt-approval').style.color = found.isApproved ? 'var(--accent-secondary)' : 'var(--text-dim)';
+            } else {
+                tt.style.opacity = 0;
+            }
+        };
+
+        // Initial Setup
+        updateUI();
+        draw();
+        
+        // Create Genesis
+        setTimeout(() => {
+            log("Generating Genesis Block...");
+            mintBlock();
+        }, 1000);
+
+    </script>
+</body>
+</html>
