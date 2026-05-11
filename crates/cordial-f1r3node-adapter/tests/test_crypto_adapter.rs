@@ -9,7 +9,7 @@ use cordial_f1r3node_adapter::crypto_impl::{CryptoAlgorithm, F1r3flyCryptoAdapte
 
 // Import the tools we need to create test data
 use cordial_miners_core::{
-    crypto::{hash_content,sign, CryptoVerifier},
+    crypto::{CryptoVerifier, hash_content, sign},
     types::{BlockContent, NodeId},
 };
 
@@ -21,7 +21,6 @@ fn make_content(payload: &[u8]) -> BlockContent {
     BlockContent {
         payload: payload.to_vec(), // the data we want to put in the block changed to vec of bytes
         predecessors: HashSet::new(), // no parent blocks for simplicity (for testing)
-        
     }
 }
 
@@ -29,7 +28,7 @@ fn make_content(payload: &[u8]) -> BlockContent {
 // Private key = 32 bytes (the secret, used to sign)
 // Public key  = 33 bytes compressed (the shareable one, used to verify
 
-fn secp256k1_keypair() -> (Vec<u8>, Vec<u8>){
+fn secp256k1_keypair() -> (Vec<u8>, Vec<u8>) {
     use k256::ecdsa::SigningKey;
 
     // Generate a random signing key (private key) using OS randomness
@@ -43,11 +42,9 @@ fn secp256k1_keypair() -> (Vec<u8>, Vec<u8>){
         .as_bytes()
         .to_vec();
 
-
-    // Return the key pair as (private_key, public_key)    
+    // Return the key pair as (private_key, public_key)
     (private_key, public_key)
 }
-
 
 // Generates a fresh Ed25519 key pair. Returns: (private_key, public_key)
 // Private key = 32 bytes (the secret, used to sign)
@@ -60,15 +57,11 @@ fn ed25519_keypair() -> (Vec<u8>, Vec<u8>) {
     // Get Private Key as bytes
     let private_key = signing_key.to_bytes().to_vec();
     // Get Public Key as bytes
-    let public_key = signing_key
-        .verifying_key()
-        .to_bytes()
-        .to_vec();
+    let public_key = signing_key.verifying_key().to_bytes().to_vec();
 
     // Return the key pair as (private_key, public_key)
     (private_key, public_key)
 }
-
 
 //----------------------------------------------------
 // SECP256K1 TESTS
@@ -99,10 +92,12 @@ fn secp256k1_valid_signature_returns_ok() {
     let result = adapter.verify_block(&content, &signature, &creator);
 
     // Assert that the result is Ok(()), meaning the signature was valid.
-    assert!(result.is_ok(), "Expected Ok(()), got Err: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Expected Ok(()), got Err: {:?}",
+        result.err()
+    );
 }
-
-
 
 // TEST 2 — Acceptance Criterion 2: "Adapter returns Err(msg) for an corrupted signature."
 // "The adapter returns Err for a block with a corrupted signature."
@@ -124,7 +119,7 @@ fn secp256k1_corrupted_signature_returns_err() {
 
     // Flip the last byte intentionally.
     let last_byte = signature.last_mut().unwrap(); // safe because signature should never be empty as we defined out logic inside crypto_impl.rs to return error if signature is empty.
-    *last_byte = last_byte.wrapping_add(1); 
+    *last_byte = last_byte.wrapping_add(1);
 
     // Create the adapter configured for Secp256k1 and verify the block.
     let adapter = F1r3flyCryptoAdapter::secp256k1();
@@ -134,7 +129,6 @@ fn secp256k1_corrupted_signature_returns_err() {
     // Assert that the result is Err, meaning the signature was invalid.
     assert!(result.is_err(), "Expected Err, got Ok(())");
 }
-
 
 // TEST 3 — acceptance criterion 2:
 // "The adapter returns Err for a block with a forged signature."
@@ -146,21 +140,23 @@ fn secp256k1_forged_signature_returns_err() {
     let content = make_content(b" This is test block we made for testing the secp256k1 signature verification in F1r3flyCryptoAdapter."); // using byte string literal for payload(content data)
     let hash = hash_content(&content);
 
-    // Real creator's key pair and signature 
+    // Real creator's key pair and signature
     let (_real_private_key, real_public_key) = secp256k1_keypair();
 
     // Forger's key pair and signature (forging the content)
     let (forger_private_key, _forger_public_key) = secp256k1_keypair();
-    let forged_signature = sign(&hash, &forger_private_key); 
+    let forged_signature = sign(&hash, &forger_private_key);
 
     // The block is claiming to be from the real creator, but the signature is from the forger.
     let creator = NodeId(real_public_key);
     let adapter = F1r3flyCryptoAdapter::secp256k1();
     let result = adapter.verify_block(&content, &forged_signature, &creator);
 
-    assert!(result.is_err(), "Expected Err for forged signature, got Ok(())");
+    assert!(
+        result.is_err(),
+        "Expected Err for forged signature, got Ok(())"
+    );
 }
-
 
 // TEST 4:
 // An empty signature slice (zero bytes) must always be rejected.
@@ -173,14 +169,18 @@ fn secp256k1_empty_signature_returns_err() {
     let adapter = F1r3flyCryptoAdapter::secp256k1();
     let result = adapter.verify_block(&content, &[], &creator); // empty signature
 
-    assert!(result.is_err(), "Expected Err for empty signature, got Ok(())");
+    assert!(
+        result.is_err(),
+        "Expected Err for empty signature, got Ok(())"
+    );
 
     // check the error message contains the word "empty" so it's readable.
     let err_msg = result.unwrap_err();
-    assert!(err_msg.contains("empty"), "Error should say 'empty', got: {err_msg}");
+    assert!(
+        err_msg.contains("empty"),
+        "Error should say 'empty', got: {err_msg}"
+    );
 }
-
-
 
 // TEST 5:
 //If the content was tampered with after signing, verification fails.
@@ -199,11 +199,11 @@ fn secp256k1_tampered_content_returns_err() {
     let adapter = F1r3flyCryptoAdapter::secp256k1();
     let result = adapter.verify_block(&tampered_content, &signature, &creator);
 
-    assert!(result.is_err(), "Expected Err for tampered content, got Ok(())");
+    assert!(
+        result.is_err(),
+        "Expected Err for tampered content, got Ok(())"
+    );
 }
-
-
-
 
 //----------------------------------------------------
 // ED25519 TESTS
@@ -213,23 +213,20 @@ fn secp256k1_tampered_content_returns_err() {
 #[test]
 fn ed25519_valid_signature_returns_ok() {
     use ed25519_dalek::Signer; // needed to call .sign() on an Ed25519 key
- 
+
     let content = make_content(b"ed25519 test block");
     let hash = hash_content(&content);
- 
+
     // Generate a key pair and sign.
     let (private_key_bytes, public_key_bytes) = ed25519_keypair();
     let key_array: [u8; 32] = private_key_bytes.try_into().unwrap();
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_array);
-    let signature = signing_key
-        .sign(&hash)
-        .to_bytes()
-        .to_vec();
- 
+    let signature = signing_key.sign(&hash).to_bytes().to_vec();
+
     let creator = NodeId(public_key_bytes);
     let adapter = F1r3flyCryptoAdapter::ed25519();
     let result = adapter.verify_block(&content, &signature, &creator);
- 
+
     assert!(result.is_ok(), "Expected Ok(()), got: {:?}", result);
 }
 
@@ -245,20 +242,19 @@ fn ed25519_corrupted_signature_returns_err() {
     let (private_key, public_key) = ed25519_keypair();
     let key_array: [u8; 32] = private_key.try_into().unwrap();
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_array);
-    let mut signature = signing_key
-        .sign(&hash)
-        .to_bytes()
-        .to_vec();
+    let mut signature = signing_key.sign(&hash).to_bytes().to_vec();
 
-     // Flip the first byte.
+    // Flip the first byte.
     signature[0] = signature[0].wrapping_add(1);
     let creator = NodeId(public_key);
     let adapter = F1r3flyCryptoAdapter::ed25519();
-    let result  = adapter.verify_block(&content, &signature, &creator); 
+    let result = adapter.verify_block(&content, &signature, &creator);
 
-    assert!(result.is_err(), "Expected Err for corrupted Ed25519 signature");
+    assert!(
+        result.is_err(),
+        "Expected Err for corrupted Ed25519 signature"
+    );
 }
-
 
 //----------------------------------------------------
 // from_algorithm_str TESTS
@@ -268,7 +264,6 @@ fn ed25519_corrupted_signature_returns_err() {
 fn from_str_secp256k1_gives_secp256k1_adapter() {
     let adapter = F1r3flyCryptoAdapter::from_algorithm_str("secp256k1").unwrap();
     assert_eq!(adapter.algorithm(), CryptoAlgorithm::Secp256k1);
-
 }
 
 // TEST 9: "ed25519" string → Ed25519 adapter.
@@ -293,6 +288,8 @@ fn from_str_unknown_returns_err() {
 
     let err = result.unwrap_err();
     // The error should mention what we received as its mentioned.
-    assert!(err.contains("rsa"), "Error should mention 'rsa', got: {err}");
+    assert!(
+        err.contains("rsa"),
+        "Error should mention 'rsa', got: {err}"
+    );
 }
-
