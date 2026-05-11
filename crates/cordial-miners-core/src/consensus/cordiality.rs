@@ -196,3 +196,97 @@ pub fn is_cordial_block(
     missing_known_tips(block, known_tips).is_empty()
         && hidden_equivocations(blocklace, block).is_empty()
 }
+
+/// Check whether a block b ratifies block b' when:
+/// closure of b includes a supermajority of blocks that approve b'.
+///
+/// A set of blocks B super-ratifies a block b' if it includes a
+/// supermajority of blocks that ratify b'.
+pub fn ratifies(
+    blocklace: &Blocklace,
+    ratifier: &Block,
+    target: &Block,
+    n: usize,
+    f: usize,
+) -> bool {
+    let observed_ids = observed_block_ids(blocklace, ratifier);
+    let mut approving_blocks = HashSet::new();
+
+    for id in observed_ids {
+        if let Some(block) = blocklace.get(&id) {
+            let approvals = blocks_that_approve(blocklace, &block, target);
+            approving_blocks.extend(approvals);
+        }
+    }
+
+    is_supermajority(&approving_blocks, n, f)
+}
+
+/// Check whether a set of blocks super-ratifies a block b' when:
+///
+/// A set B super-ratifies a block b' if it includes a supermajority of blocks that ratify b'.
+pub fn super_ratifies(
+    blocklace: &Blocklace,
+    blocks: &HashSet<Block>,
+    target: &Block,
+    n: usize,
+    f: usize,
+) -> bool {
+    let ratifying_blocks: HashSet<Block> = blocks
+        .iter()
+        .filter(|b| ratifies(blocklace, b, target, n, f))
+        .cloned()
+        .collect();
+
+    is_supermajority(&ratifying_blocks, n, f)
+}
+
+/// Return all blocks that approve a given target block.
+///
+/// A block approves target when:
+/// - It observes/acknowledges target block, AND
+/// - It does not observe an equivocating sibling of target block
+pub fn blocks_that_approve(
+    blocklace: &Blocklace,
+    approver: &Block,
+    target: &Block,
+) -> HashSet<Block> {
+    let approver_observed = observed_block_ids(blocklace, approver);
+
+    // Check if approver observes target
+    if !approver_observed.contains(&target.identity) {
+        return HashSet::new();
+    }
+
+    // Check for equivocating blocks by same creator at the same depth as target
+    let target_depth = depth(blocklace, &target.identity).unwrap_or(0);
+
+    // Get all blocks by same creator that could conflict with target
+    let potential_conflicts: Vec<Block> = blocks_at_depth(blocklace, target_depth)
+        .into_iter()
+        .filter(|b| b.identity.creator == target.identity.creator && b.identity != target.identity)
+        .collect();
+
+    // Approver approves target if no conflicting blocks are observed
+    let conflicts_observed = potential_conflicts
+        .iter()
+        .any(|conflict| approver_observed.contains(&conflict.identity));
+
+    if conflicts_observed {
+        HashSet::new()
+    } else {
+        let mut approving_blocks = HashSet::new();
+        approving_blocks.insert(approver.clone());
+        approving_blocks
+    }
+}
+
+/// Check if a set of blocks constitutes a supermajority.
+///
+/// Supermajority: > (n+f)/2 distinct creators
+pub fn is_supermajority(blocks: &HashSet<Block>, n: usize, f: usize) -> bool {
+    let distinct_creators: HashSet<_> =
+        blocks.iter().map(|block| &block.identity.creator).collect();
+
+    distinct_creators.len() > (n + f) / 2
+}
