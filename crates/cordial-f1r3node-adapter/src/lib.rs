@@ -22,6 +22,7 @@
 pub mod block_translation;
 pub mod casper_adapter;
 pub mod crypto_bridge;
+pub mod crypto_impl;
 pub mod grpc_ingest;
 pub mod proposer;
 pub mod repository;
