@@ -213,15 +213,12 @@ pub fn ratifies(
     let observed_ids = observed_block_ids(blocklace, ratifier);
 
     // find all blocks in ratifier's closure that approve target
-    // Exclude the ratifier itself from counting as an approving block
+    // Blocks can vote for themselves
     let approving: HashSet<Block> = observed_ids
         .iter()
         .filter_map(|id| blocklace.get(id))
         .filter(|block| {
-            // Exclude the ratifier itself and the target block
-            block.identity != ratifier.identity
-                && block.identity != target.identity
-                && approves(blocklace, &block.identity, &target.identity)
+            approves(blocklace, &block.identity, &target.identity)
         })
         .collect();
 
