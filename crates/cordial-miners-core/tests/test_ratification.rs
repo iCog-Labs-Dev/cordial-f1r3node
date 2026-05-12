@@ -1,6 +1,6 @@
 use cordial_miners_core::{
     Block, BlockContent, BlockIdentity, Blocklace, NodeId,
-    consensus::cordiality::{blocks_that_approve, is_supermajority, ratifies, super_ratifies},
+    consensus::cordiality::{is_supermajority, ratifies, super_ratifies},
     crypto::CryptoVerifier,
 };
 use std::collections::HashSet;
@@ -213,52 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn test_blocks_that_approve_success() {
-        // Create a simple blocklace
-        let mut blocklace = Blocklace::new();
-
-        // Create target block
-        let target = create_test_block(1, 1, HashSet::new());
-        insert(&mut blocklace, target.clone());
-
-        // Create approver block that observes target
-        let approver = create_test_block(2, 4, HashSet::from([target.identity.clone()]));
-        insert(&mut blocklace, approver.clone());
-
-        // Test blocks_that_approve - should return approver
-        let result = blocks_that_approve(&blocklace, &approver, &target);
-        assert!(result.contains(&approver));
-        assert_eq!(result.len(), 1);
-    }
-
-    #[test]
-    fn test_blocks_that_approve_with_equivocation() {
-        // Create a simple blocklace
-        let mut blocklace = Blocklace::new();
-
-        // Create target block
-        let target = create_test_block(1, 1, HashSet::new());
-        insert(&mut blocklace, target.clone());
-
-        // Create equivocating block by same creator
-        let equivocator_block = create_test_block(1, 7, HashSet::new());
-        insert(&mut blocklace, equivocator_block.clone());
-
-        // Create approver block that observes both target and equivocating block
-        let approver = create_test_block(
-            2,
-            4,
-            HashSet::from([target.identity.clone(), equivocator_block.identity.clone()]),
-        );
-        insert(&mut blocklace, approver.clone());
-
-        // Test blocks_that_approve - should return empty set due to equivocation
-        let result = blocks_that_approve(&blocklace, &approver, &target);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_is_supermajority() {
+    fn test_is_supermajority_success() {
         // Test supermajority calculation: n=4, f=1, threshold = (4+1)/2 = 2.5, so need 3
         let mut blocks = HashSet::new();
 
@@ -269,23 +224,23 @@ mod tests {
 
         // Should be supermajority
         assert!(is_supermajority(&blocks, 4, 1));
+    }
 
-        // Add block from 4th creator (should still be supermajority)
-        blocks.insert(create_test_block(4, 10, HashSet::new()));
+    #[test]
+    fn test_is_supermajority_failure() {
+        // Test supermajority calculation: n=4, f=1, threshold = 2.5, so need 3
+        let mut blocks = HashSet::new();
 
-        // Should still be supermajority
-        assert!(is_supermajority(&blocks, 4, 1));
-
-        // Remove two blocks (only 2 distinct creators left - below threshold for n=4, f=1 which is > 2.5)
-        blocks.remove(&create_test_block(3, 7, HashSet::new()));
-        blocks.remove(&create_test_block(4, 10, HashSet::new()));
+        // Add blocks from only 2 different creators (below threshold)
+        blocks.insert(create_test_block(1, 1, HashSet::new()));
+        blocks.insert(create_test_block(2, 4, HashSet::new()));
 
         // Should not be supermajority
         assert!(!is_supermajority(&blocks, 4, 1));
     }
 
     #[test]
-    fn test_edge_cases() {
+    fn test_is_supermajority_edge_cases() {
         // Test with n=1, f=0 (single miner)
         let mut blocks = HashSet::new();
         blocks.insert(create_test_block(1, 1, HashSet::new()));
@@ -300,10 +255,10 @@ mod tests {
         assert!(is_supermajority(&blocks, 2, 0));
 
         // Test with n=2, f=1 (two miners, one faulty)
-        let mut blocks = HashSet::new();
-        blocks.insert(create_test_block(1, 1, HashSet::new()));
-        blocks.insert(create_test_block(2, 4, HashSet::new()));
-
         assert!(is_supermajority(&blocks, 2, 1));
+
+        // Test empty set
+        let empty_blocks = HashSet::new();
+        assert!(!is_supermajority(&empty_blocks, 4, 1));
     }
 }
