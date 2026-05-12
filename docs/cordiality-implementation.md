@@ -175,7 +175,8 @@ Implements Definition 22 from Cordial Miners paper: A block `r` ratifies a block
 **Mathematical foundation:**
 - Supermajority threshold: distinct creators > (n+f)/2
 - Closure includes all blocks reachable through predecessor relationships
-- Handles equivocation detection through `blocks_that_approve()` logic
+- Handles equivocation detection through existing `approves()` logic
+- Flattened to single scan to avoid recursion per Definition 22
 
 ### 10. `super_ratifies`
 
