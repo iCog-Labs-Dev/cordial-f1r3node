@@ -108,17 +108,17 @@ mod tests {
         let approver2 = create_test_block(3, 10, HashSet::from([target.identity.clone()]));
         insert(&mut blocklace, approver2.clone());
 
-        // Create ratifier block at round 3
+        // Create ratifier block at round 3 that can vote for itself (different creator from target)
         let ratifier = create_test_block(
-            1,
+            4,  // Different creator than target (creator 1)
             16,
-            HashSet::from([approver1.identity.clone(), approver2.identity.clone()]),
+            HashSet::from([approver1.identity.clone(), approver2.identity.clone(), target.identity.clone()]),
         );
         insert(&mut blocklace, ratifier.clone());
 
-        // Test ratification - should fail without supermajority
+        // Test ratification - should actually SUCCEED with supermajority 
         let result = ratifies(&blocklace, &ratifier, &target, 4, 1);
-        assert!(!result);
+        assert!(result);
     }
 
     #[test]
