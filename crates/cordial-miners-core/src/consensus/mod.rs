@@ -9,9 +9,8 @@ pub mod wave;
 pub use approval::{approves, approving_blocks};
 pub use cordiality::{
     Equivocation, HiddenEquivocation, acknowledges_equivocation, all_equivocations,
-    blocks_that_approve, creator_blocks_at_round, equivocation_blocks_at_round,
-    hidden_equivocations, is_cordial_block, is_supermajority, missing_known_tips,
-    observed_block_ids, ratifies, super_ratifies,
+    creator_blocks_at_round, equivocation_blocks_at_round, hidden_equivocations, is_cordial_block,
+    is_supermajority, missing_known_tips, observed_block_ids, ratifies, super_ratifies,
 };
 pub use finality::{FinalityStatus, can_be_finalized, check_finality, find_last_finalized};
 pub use fork_choice::{ForkChoice, collect_validator_tips, fork_choice, is_cordial};
