@@ -116,9 +116,50 @@ mod tests {
         );
         insert(&mut blocklace, ratifier.clone());
 
-        // Test ratification - should actually SUCCEED with supermajority 
+        // Test ratification - succeeds because the ratifier itself is included
+        // in its closure, giving 3 distinct approving creators: {2, 3, 4}.
         let result = ratifies(&blocklace, &ratifier, &target, 4, 1);
         assert!(result);
+    }
+
+    #[test]
+    fn test_ratification_fails_when_ratifier_self_vote_is_needed_but_absent() {
+        let mut blocklace = Blocklace::new();
+
+        let genesis = create_test_block(1, 1, HashSet::new());
+        insert(&mut blocklace, genesis.clone());
+
+        let target = create_test_block(1, 4, HashSet::from([genesis.identity.clone()]));
+        insert(&mut blocklace, target.clone());
+
+        let approver1 = create_test_block(2, 7, HashSet::from([target.identity.clone()]));
+        insert(&mut blocklace, approver1.clone());
+
+        let approver2 = create_test_block(3, 10, HashSet::from([target.identity.clone()]));
+        insert(&mut blocklace, approver2.clone());
+
+        // Creator 1 does not approve target because it also observes an
+        // incomparable same-creator branch.
+        let conflicting_branch = create_test_block(1, 12, HashSet::new());
+        insert(&mut blocklace, conflicting_branch.clone());
+
+        let ratifier = create_test_block(
+            1,
+            16,
+            HashSet::from([
+                approver1.identity.clone(),
+                approver2.identity.clone(),
+                conflicting_branch.identity.clone(),
+            ]),
+        );
+        insert(&mut blocklace, ratifier.clone());
+
+        // The ratifier's inclusive closure still contains the target itself
+        // through the approver branches, so approving creators are {1, 2, 3}.
+        // Use n=5, f=2 so the supermajority threshold is > (5 + 2) / 2 = 3.5,
+        // which requires 4 distinct creators and should therefore fail.
+        let result = ratifies(&blocklace, &ratifier, &target, 5, 2);
+        assert!(!result);
     }
 
     #[test]
