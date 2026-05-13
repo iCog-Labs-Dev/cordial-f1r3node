@@ -210,16 +210,15 @@ pub fn ratifies(
     n: usize,
     f: usize,
 ) -> bool {
-    let observed_ids = observed_block_ids(blocklace, ratifier);
+    // Ratification is defined over the closure [b] of the ratifier block,
+    // which is inclusive of the ratifier itself.
+    let observed_ids = blocklace.observe(&ratifier.identity);
 
     // find all blocks in ratifier's closure that approve target
-    // Blocks can vote for themselves
     let approving: HashSet<Block> = observed_ids
         .iter()
         .filter_map(|id| blocklace.get(id))
-        .filter(|block| {
-            approves(blocklace, &block.identity, &target.identity)
-        })
+        .filter(|block| approves(blocklace, &block.identity, &target.identity))
         .collect();
 
     is_supermajority(&approving, n, f)
