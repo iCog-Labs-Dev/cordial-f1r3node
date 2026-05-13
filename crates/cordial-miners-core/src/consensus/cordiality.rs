@@ -17,6 +17,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
+use crate::consensus::approval::approves;
 use crate::consensus::round::{blocks_at_depth, depth};
 use crate::types::{BlockIdentity, NodeId};
 
@@ -195,4 +196,59 @@ pub fn is_cordial_block(
 ) -> bool {
     missing_known_tips(block, known_tips).is_empty()
         && hidden_equivocations(blocklace, block).is_empty()
+}
+
+/// Check whether a block b ratifies block b' when:
+/// closure of b includes a supermajority of blocks that approve b'.
+///
+/// Per Definition 22 from Cordial Miners paper: "A block b ratifies b' if the closure
+/// of b includes a supermajority of blocks that approve b'"
+pub fn ratifies(
+    blocklace: &Blocklace,
+    ratifier: &Block,
+    target: &Block,
+    n: usize,
+    f: usize,
+) -> bool {
+    // Ratification is defined over the closure [b] of the ratifier block,
+    // which is inclusive of the ratifier itself.
+    let observed_ids = blocklace.observe(&ratifier.identity);
+
+    // find all blocks in ratifier's closure that approve target
+    let approving: HashSet<Block> = observed_ids
+        .iter()
+        .filter_map(|id| blocklace.get(id))
+        .filter(|block| approves(blocklace, &block.identity, &target.identity))
+        .collect();
+
+    is_supermajority(&approving, n, f)
+}
+
+/// Check whether a set of blocks super-ratifies a block b' when:
+///
+/// A set B super-ratifies a block b' if it includes a supermajority of blocks that ratify b'.
+pub fn super_ratifies(
+    blocklace: &Blocklace,
+    blocks: &HashSet<Block>,
+    target: &Block,
+    n: usize,
+    f: usize,
+) -> bool {
+    let ratifying_blocks: HashSet<Block> = blocks
+        .iter()
+        .filter(|b| ratifies(blocklace, b, target, n, f))
+        .cloned()
+        .collect();
+
+    is_supermajority(&ratifying_blocks, n, f)
+}
+
+/// Check if a set of blocks constitutes a supermajority.
+///
+/// Supermajority: > (n+f)/2 distinct creators
+pub fn is_supermajority(blocks: &HashSet<Block>, n: usize, f: usize) -> bool {
+    let distinct_creators: HashSet<_> =
+        blocks.iter().map(|block| &block.identity.creator).collect();
+
+    distinct_creators.len() > (n + f) / 2
 }
