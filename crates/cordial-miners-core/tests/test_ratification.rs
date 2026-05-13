@@ -110,9 +110,13 @@ mod tests {
 
         // Create ratifier block at round 3 that can vote for itself (different creator from target)
         let ratifier = create_test_block(
-            4,  // Different creator than target (creator 1)
+            4, // Different creator than target (creator 1)
             16,
-            HashSet::from([approver1.identity.clone(), approver2.identity.clone(), target.identity.clone()]),
+            HashSet::from([
+                approver1.identity.clone(),
+                approver2.identity.clone(),
+                target.identity.clone(),
+            ]),
         );
         insert(&mut blocklace, ratifier.clone());
 
