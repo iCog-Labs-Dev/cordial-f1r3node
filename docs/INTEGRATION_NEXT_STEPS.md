@@ -91,7 +91,7 @@ with the translated result.
 
 ## Task 3 — Richer `SystemDeployRequest::Slash` carrying invalid-block hash
 
-**Status:** API limitation, documented.
+**Status:** ✅ **COMPLETED** - Breaking change implemented with real invalid_block_hash field.
 
 **Why it matters.** Our `SystemDeployRequest::Slash { validator: NodeId }` only names the validator being slashed. f1r3node's real `SlashDeploy` requires *both* the validator's public key *and* the hash of the block that's being slashed for (the equivocating block). The current adapter uses the validator bytes as a placeholder for the block hash, which is wrong but at least doesn't panic.
 

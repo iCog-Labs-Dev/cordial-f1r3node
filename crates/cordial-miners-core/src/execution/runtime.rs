@@ -58,9 +58,28 @@ pub struct ExecutionRequest {
 #[derive(Debug, Clone)]
 pub enum SystemDeployRequest {
     /// Slash an equivocator.
-    Slash { validator: NodeId },
+    Slash {
+        validator: NodeId,
+        invalid_block_hash: Vec<u8>,
+    },
     /// Close the block (seal state transitions).
     CloseBlock,
+}
+
+impl SystemDeployRequest {
+    /// Guard to ensure invalid_block_hash is exactly 32 bytes.
+    ///
+    /// f1r3node expects 32-byte block hashes (SHA-256/Blake2b).
+    /// Call this before creating Slash requests to prevent invalid hashes.
+    pub fn validate_invalid_block_hash(hash: &[u8]) -> Result<(), String> {
+        if hash.len() != 32 {
+            return Err(format!(
+                "invalid_block_hash must be exactly 32 bytes, got {} bytes",
+                hash.len()
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Output of runtime execution.
@@ -219,7 +238,10 @@ impl RuntimeManager for MockRuntime {
 
         for sd in &request.system_deploys {
             match sd {
-                SystemDeployRequest::Slash { validator } => {
+                SystemDeployRequest::Slash {
+                    validator,
+                    invalid_block_hash: _,
+                } => {
                     // Remove the slashed validator's bond
                     let prior_stake = new_bonds
                         .iter()
