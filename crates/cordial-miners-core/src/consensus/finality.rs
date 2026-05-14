@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use crate::block::Block;
 use crate::consensus::cordiality::super_ratifies;
 use crate::consensus::round::blocks_at_depth;
-use crate::consensus::wave::{last_round_of_wave, leader_round_of_wave};
+use crate::consensus::wave::{last_round_of_wave, leader_blocks_of_wave};
 
 /// The finality status of a block in the blocklace.
 ///
@@ -207,18 +207,15 @@ pub fn can_be_finalized(
     (supporting_stake + undecided_stake) * 3 > total_honest_stake * 2
 }
 
-/// Return the single deterministic leader block for a wave.
+/// Return the unique leader block for a wave when exactly one exists.
 ///
 /// Per Definition A.10 of arXiv:2205.09174, a leader block is a block by
 /// the elected leader validator in the first round of the wave.
 ///
-/// If the leader equivocated (produced multiple blocks in the leader round),
-/// tie-break deterministically by selecting the block with the
-/// lexicographically lowest `content_hash` byte value.
-///
 /// Returns `None` if:
 /// - the wavelength is zero
 /// - the leader round has no block by the elected leader
+/// - the elected leader equivocated and produced multiple leader blocks
 /// - `leader_selection` returns `None` for this wave
 pub fn leader_block_for_wave<F>(
     blocklace: &Blocklace,
@@ -229,28 +226,17 @@ pub fn leader_block_for_wave<F>(
 where
     F: Fn(u64) -> Option<NodeId>,
 {
-    // Find the elected leader for this wave
-    let leader = leader_selection(wave)?;
+    let mut leader_blocks: Vec<BlockIdentity> =
+        leader_blocks_of_wave(blocklace, wave, wavelength, leader_selection)
+            .into_iter()
+            .map(|block| block.identity)
+            .collect();
 
-    // Find the first round of the wave — that is where leader blocks live
-    let leader_round = leader_round_of_wave(wave, wavelength)?;
-
-    // Collect all blocks by the leader in the leader round
-    let mut leader_blocks: Vec<Block> = blocks_at_depth(blocklace, leader_round)
-        .into_iter()
-        .filter(|block| block.identity.creator == leader)
-        .collect();
-
-    if leader_blocks.is_empty() {
+    if leader_blocks.len() != 1 {
         return None;
     }
 
-    // Deterministic tie-break: lowest content_hash byte value
-    // This ensures identical inputs always produce identical output
-    // regardless of iteration order, even when the leader equivocated.
-    leader_blocks.sort_by_key(|a| a.identity.content_hash);
-
-    Some(leader_blocks[0].identity.clone())
+    leader_blocks.pop()
 }
 
 /// Check whether a leader block has achieved finality within its wave.
@@ -289,15 +275,17 @@ where
         None => return false,
     };
 
-    // The candidate must actually be the leader block for its wave
+    // The candidate must actually be one of the leader blocks for its wave.
     let wave = match crate::consensus::wave::wave_of_round(candidate_round, wavelength) {
         Some(w) => w,
         None => return false,
     };
 
-    // Verify this is actually the leader block for this wave
-    let expected_leader_id = leader_block_for_wave(blocklace, wave, wavelength, &leader_selection);
-    if expected_leader_id.as_ref() != Some(candidate) {
+    let leader_blocks = leader_blocks_of_wave(blocklace, wave, wavelength, &leader_selection);
+    if !leader_blocks
+        .iter()
+        .any(|leader_block| leader_block.identity == *candidate)
+    {
         return false;
     }
 
