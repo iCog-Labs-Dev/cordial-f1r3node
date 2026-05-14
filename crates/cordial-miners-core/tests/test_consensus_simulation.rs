@@ -6,8 +6,7 @@
 
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    ValidationConfig, check_finality, collect_validator_tips, find_last_finalized, fork_choice,
-    is_cordial, validated_insert,
+    ValidationConfig, collect_validator_tips, fork_choice, is_cordial, validated_insert,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
@@ -117,15 +116,6 @@ fn three_validators_linear_cordial_chain() {
     let fc = fork_choice(&bl, &b).unwrap();
     assert!(!fc.tips.is_empty());
 
-    // Genesis should be finalized — all 3 validators have it in ancestry
-    assert!(check_finality(&bl, &g.identity, &b).is_finalized());
-
-    // r2 should also be finalized — v2, v3, v1 all have it in ancestry
-    assert!(check_finality(&bl, &r2.identity, &b).is_finalized());
-
-    // LFB should be the highest finalized block
-    let lfb = find_last_finalized(&bl, &b).unwrap();
-    assert!(check_finality(&bl, &lfb, &b).is_finalized());
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -158,15 +148,9 @@ fn two_forks_heavier_wins_then_convergence() {
     let light_tip_score = fc.scores.get(&b1.identity).copied().unwrap_or(0);
     assert!(heavy_tip_score > light_tip_score);
 
-    // Genesis is finalized (all 3 validators have it)
-    assert!(check_finality(&bl, &g.identity, &b).is_finalized());
-
     // Now v3 converges: sees the heavy fork and builds on it
     let converge = child(&node(3), 21, &[&a2, &b1]);
     insert(&mut bl, &converge);
-
-    // After convergence, a1 should be finalized (all validators have it in ancestry)
-    assert!(check_finality(&bl, &a1.identity, &b).is_finalized());
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -201,9 +185,6 @@ fn equivocator_excluded_from_consensus() {
     let fc = fork_choice(&bl, &b).unwrap();
     assert_eq!(fc.tips.len(), 2); // only v1 and v2
 
-    // With v3 excluded, honest stake = 200 (v1=100 + v2=100)
-    // g is in both v1 and v2's ancestry — 200/200 > 2/3 — finalized
-    assert!(check_finality(&bl, &g.identity, &b).is_finalized());
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -213,7 +194,6 @@ fn equivocator_excluded_from_consensus() {
 #[test]
 fn cordial_round_all_validators_see_all_tips() {
     let mut bl = Blocklace::new();
-    let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
 
     // Round 1: each validator creates their own genesis
     let g1 = genesis(&node(1), 1);
@@ -222,9 +202,6 @@ fn cordial_round_all_validators_see_all_tips() {
     insert(&mut bl, &g1);
     insert(&mut bl, &g2);
     insert(&mut bl, &g3);
-
-    // No block is finalized yet — each only has 1/3 support
-    assert!(check_finality(&bl, &g1.identity, &b).is_pending());
 
     // Round 2: each validator creates a cordial block referencing ALL tips
     let r2_v1 = child(&node(1), 10, &[&g1, &g2, &g3]);
@@ -246,11 +223,6 @@ fn cordial_round_all_validators_see_all_tips() {
     assert!(is_cordial(&r2_v2, &tips_before_r2));
     assert!(is_cordial(&r2_v3, &tips_before_r2));
 
-    // After the cordial round, ALL genesis blocks should be finalized
-    // because every validator's tip (r2_vX) has all genesis blocks in ancestry
-    assert!(check_finality(&bl, &g1.identity, &b).is_finalized());
-    assert!(check_finality(&bl, &g2.identity, &b).is_finalized());
-    assert!(check_finality(&bl, &g3.identity, &b).is_finalized());
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -278,11 +250,11 @@ fn validation_prevents_equivocation_in_simulation() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Scenario 6: 4 validators, one offline, finality still possible
+// Scenario 6: 4 validators, one offline, tip collection still works
 // ═══════════════════════════════════════════════════════════════
 
 #[test]
-fn finality_with_one_validator_offline() {
+fn tip_collection_with_one_validator_offline() {
     let mut bl = Blocklace::new();
     // v4 is offline (never creates blocks) but has stake
     let b = bonds(&[(1, 100), (2, 100), (3, 100), (4, 100)]);
@@ -297,114 +269,12 @@ fn finality_with_one_validator_offline() {
     let b3 = child(&node(3), 3, &[&b2]);
     insert(&mut bl, &b3);
 
-    // 3 out of 4 validators (75%) have g in ancestry — > 2/3 — finalized
-    assert!(check_finality(&bl, &g.identity, &b).is_finalized());
-
-    // v4 is offline but finality is still achieved
+    // v4 is offline but validator tip collection still works
     let tips = collect_validator_tips(&bl, &b);
     assert_eq!(tips.len(), 3); // v4 has no tip
 }
-
 // ═══════════════════════════════════════════════════════════════
-// Scenario 7: Exactly 2/3 stake is NOT enough (need strictly more)
-// ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn exactly_two_thirds_is_not_finalized() {
-    let mut bl = Blocklace::new();
-    let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
-
-    // v1 creates genesis
-    let g = genesis(&node(1), 1);
-    insert(&mut bl, &g);
-
-    // v2 builds on g
-    let b2 = child(&node(2), 2, &[&g]);
-    insert(&mut bl, &b2);
-
-    // v3 creates its own separate genesis (does NOT see g)
-    let g3 = genesis(&node(3), 3);
-    insert(&mut bl, &g3);
-
-    // g is in v1 and v2's ancestry = 200/300 = exactly 2/3
-    // Strictly > 2/3 required, so NOT finalized
-    let status = check_finality(&bl, &g.identity, &b);
-    assert!(status.is_pending());
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Scenario 8: Finality advances monotonically through chain
-// ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn finality_advances_through_chain() {
-    let mut bl = Blocklace::new();
-    let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
-
-    // Build a chain that all validators participate in
-    let g = genesis(&node(1), 1);
-    insert(&mut bl, &g);
-
-    let r1 = child(&node(2), 2, &[&g]);
-    insert(&mut bl, &r1);
-
-    let r2 = child(&node(3), 3, &[&r1]);
-    insert(&mut bl, &r2);
-
-    // At this point: g is finalized (all 3 have it in ancestry)
-    let lfb1 = find_last_finalized(&bl, &b).unwrap();
-    assert!(check_finality(&bl, &lfb1, &b).is_finalized());
-
-    // Continue the chain
-    let r3 = child(&node(1), 4, &[&r2]);
-    insert(&mut bl, &r3);
-
-    let r4 = child(&node(2), 5, &[&r3]);
-    insert(&mut bl, &r4);
-
-    let r5 = child(&node(3), 6, &[&r4]);
-    insert(&mut bl, &r5);
-
-    // More blocks are now finalized
-    let lfb2 = find_last_finalized(&bl, &b).unwrap();
-    assert!(check_finality(&bl, &lfb2, &b).is_finalized());
-
-    // LFB should have advanced (lfb2 is higher than lfb1)
-    if lfb1 != lfb2 {
-        assert!(bl.precedes(&lfb1, &lfb2));
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Scenario 9: Weighted validators — minority can't finalize alone
-// ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn minority_stake_cannot_finalize() {
-    let mut bl = Blocklace::new();
-    // v1 has majority but doesn't participate in v2+v3's fork
-    let b = bonds(&[(1, 500), (2, 100), (3, 100)]);
-
-    // v2 and v3 build their own chain
-    let g2 = genesis(&node(2), 1);
-    insert(&mut bl, &g2);
-
-    let b3 = child(&node(3), 2, &[&g2]);
-    insert(&mut bl, &b3);
-
-    // v1 creates a separate genesis
-    let g1 = genesis(&node(1), 3);
-    insert(&mut bl, &g1);
-
-    // g2 has support from v2+v3 = 200/700 = 28.6% — NOT finalized
-    assert!(check_finality(&bl, &g2.identity, &b).is_pending());
-
-    // g1 has support from only v1 = 500/700 = 71.4% — > 2/3 — finalized!
-    assert!(check_finality(&bl, &g1.identity, &b).is_finalized());
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Scenario 10: Full simulation — 5 rounds of cordial consensus
+// Scenario 7: Full simulation — 5 rounds of cordial consensus
 // ═══════════════════════════════════════════════════════════════
 
 #[test]
@@ -438,14 +308,7 @@ fn five_round_cordial_consensus() {
     assert!(bl.is_closed());
     assert!(bl.satisfies_chain_axiom_all());
 
-    // Finality: r1 (genesis) should be finalized
-    assert!(check_finality(&bl, &r1.identity, &b).is_finalized());
-
     // Fork choice should exist
     let fc = fork_choice(&bl, &b).unwrap();
     assert!(!fc.tips.is_empty());
-
-    // LFB should exist and be finalized
-    let lfb = find_last_finalized(&bl, &b).unwrap();
-    assert!(check_finality(&bl, &lfb, &b).is_finalized());
 }
