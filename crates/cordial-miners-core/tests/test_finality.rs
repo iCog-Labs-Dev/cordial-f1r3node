@@ -388,30 +388,22 @@ fn leader_block_for_wave_returns_none_when_leader_has_no_block() {
     assert!(result.is_none());
 }
 
-/// leader_block_for_wave is deterministic: same inputs always
-/// produce the same output even when leader equivocated.
+/// leader_block_for_wave returns None when the elected leader equivocated.
 #[test]
-fn leader_block_for_wave_is_deterministic_on_equivocation() {
+fn leader_block_for_wave_returns_none_on_equivocation() {
     let mut bl = Blocklace::new();
     let wavelength = 3u64;
     let wave = 0u64;
 
-    // Leader equivocates — two blocks at round 0
-    // hash [1, 20, 0...] vs [1, 10, 0...] — lower hash wins
+    // Leader equivocates — two blocks in the leader round.
     let v1 = node(1);
     let block_a = genesis(&v1, 20);
     let block_b = genesis(&v1, 10);
     insert(&mut bl, &block_a);
     insert(&mut bl, &block_b);
 
-    let result1 = leader_block_for_wave(&bl, wave, wavelength, leader_node1);
-    let result2 = leader_block_for_wave(&bl, wave, wavelength, leader_node1);
-
-    // Must be equal across calls — deterministic
-    assert_eq!(result1, result2);
-
-    // Must pick block_b — it has the lower content_hash
-    assert_eq!(result1, Some(block_b.identity));
+    let result = leader_block_for_wave(&bl, wave, wavelength, leader_node1);
+    assert!(result.is_none());
 }
 
 // ── is_final_leader tests ──
@@ -487,4 +479,57 @@ fn is_final_leader_returns_false_for_non_leader_block() {
 
     let result = is_final_leader(&bl, &non_leader.identity, wavelength, n, f, leader_node1);
     assert!(!result);
+}
+
+/// An equivocating leader should not get an arbitrary leader branch selected
+/// by the finality layer.
+#[test]
+fn is_final_leader_returns_false_for_equivocating_leader_branch() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4;
+    let f = 1;
+
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+
+    let leader_a = genesis(&v1, 1);
+    let leader_b = genesis(&v1, 2);
+    insert(&mut bl, &leader_a);
+    insert(&mut bl, &leader_b);
+
+    // All later blocks observe both leader branches, so neither branch should
+    // be approvable / super-ratifiable under the current approval semantics.
+    let r1_v2 = child(&v2, 3, &[&leader_a, &leader_b]);
+    let r1_v3 = child(&v3, 4, &[&leader_a, &leader_b]);
+    let r1_v4 = child(&v4, 5, &[&leader_a, &leader_b]);
+    insert(&mut bl, &r1_v2);
+    insert(&mut bl, &r1_v3);
+    insert(&mut bl, &r1_v4);
+
+    let r2_v2 = child(&v2, 6, &[&r1_v2, &r1_v3, &r1_v4]);
+    let r2_v3 = child(&v3, 7, &[&r1_v2, &r1_v3, &r1_v4]);
+    let r2_v4 = child(&v4, 8, &[&r1_v2, &r1_v3, &r1_v4]);
+    insert(&mut bl, &r2_v2);
+    insert(&mut bl, &r2_v3);
+    insert(&mut bl, &r2_v4);
+
+    assert!(!is_final_leader(
+        &bl,
+        &leader_a.identity,
+        wavelength,
+        n,
+        f,
+        leader_node1
+    ));
+    assert!(!is_final_leader(
+        &bl,
+        &leader_b.identity,
+        wavelength,
+        n,
+        f,
+        leader_node1
+    ));
 }
