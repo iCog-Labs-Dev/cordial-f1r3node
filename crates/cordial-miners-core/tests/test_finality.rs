@@ -1,6 +1,7 @@
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    FinalityStatus, can_be_finalized, check_finality, find_last_finalized,
+    FinalityStatus, can_be_finalized, check_finality, find_last_finalized, is_final_leader,
+    leader_block_for_wave,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
@@ -69,6 +70,17 @@ fn bonds(entries: &[(u8, u64)]) -> HashMap<NodeId, u64> {
         .iter()
         .map(|(id, stake)| (node(*id), *stake))
         .collect()
+}
+
+// Always elect node(1) as leader
+fn leader_node1(wave: u64) -> Option<NodeId> {
+    let _ = wave;
+    Some(node(1))
+}
+
+// No leader ever elected
+fn no_leader(_wave: u64) -> Option<NodeId> {
+    None
 }
 
 // ── check_finality tests ──
@@ -328,4 +340,151 @@ fn finality_status_helpers() {
 
     assert!(!unknown.is_finalized());
     assert!(!unknown.is_pending());
+}
+
+// ── leader_block_for_wave tests ──
+
+/// leader_block_for_wave returns the correct block when
+/// the leader has exactly one block in the leader round.
+#[test]
+fn leader_block_for_wave_returns_correct_block() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let wave = 0u64; // leader round = 0
+
+    // Leader (node 1) creates a genesis block at round 0
+    let v1 = node(1);
+    let leader_block = genesis(&v1, 10);
+    insert(&mut bl, &leader_block);
+
+    let result = leader_block_for_wave(&bl, wave, wavelength, leader_node1);
+    assert_eq!(result, Some(leader_block.identity));
+}
+
+/// leader_block_for_wave returns None when no leader is elected.
+#[test]
+fn leader_block_for_wave_returns_none_when_no_leader() {
+    let mut bl = Blocklace::new();
+    let v1 = node(1);
+    let block = genesis(&v1, 1);
+    insert(&mut bl, &block);
+
+    let result = leader_block_for_wave(&bl, 0, 3, no_leader);
+    assert!(result.is_none());
+}
+
+/// leader_block_for_wave returns None when the leader has
+/// no block in the leader round.
+#[test]
+fn leader_block_for_wave_returns_none_when_leader_has_no_block() {
+    let mut bl = Blocklace::new();
+
+    // Only node 2 has a block — not the elected leader (node 1)
+    let v2 = node(2);
+    let block = genesis(&v2, 1);
+    insert(&mut bl, &block);
+
+    let result = leader_block_for_wave(&bl, 0, 3, leader_node1);
+    assert!(result.is_none());
+}
+
+/// leader_block_for_wave is deterministic: same inputs always
+/// produce the same output even when leader equivocated.
+#[test]
+fn leader_block_for_wave_is_deterministic_on_equivocation() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let wave = 0u64;
+
+    // Leader equivocates — two blocks at round 0
+    // hash [1, 20, 0...] vs [1, 10, 0...] — lower hash wins
+    let v1 = node(1);
+    let block_a = genesis(&v1, 20);
+    let block_b = genesis(&v1, 10);
+    insert(&mut bl, &block_a);
+    insert(&mut bl, &block_b);
+
+    let result1 = leader_block_for_wave(&bl, wave, wavelength, leader_node1);
+    let result2 = leader_block_for_wave(&bl, wave, wavelength, leader_node1);
+
+    // Must be equal across calls — deterministic
+    assert_eq!(result1, result2);
+
+    // Must pick block_b — it has the lower content_hash
+    assert_eq!(result1, Some(block_b.identity));
+}
+
+// ── is_final_leader tests ──
+
+/// is_final_leader returns true when the leader block is
+/// super-ratified within its wave.
+#[test]
+fn is_final_leader_returns_true_when_super_ratified() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4;
+    let f = 1;
+
+    // Wave 0: rounds 0, 1, 2
+    // Round 0: leader block by node 1
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+    let leader = genesis(&v1, 1);
+    insert(&mut bl, &leader);
+
+    // Round 1: nodes 2, 3, 4 all observe leader
+    let b2r1 = child(&v2, 2, &[&leader]);
+    let b3r1 = child(&v3, 3, &[&leader]);
+    let b4r1 = child(&v4, 4, &[&leader]);
+    insert(&mut bl, &b2r1);
+    insert(&mut bl, &b3r1);
+    insert(&mut bl, &b4r1);
+
+    // Round 2: nodes 2, 3, 4 observe all of round 1
+    let b2r2 = child(&v2, 5, &[&b2r1, &b3r1, &b4r1]);
+    let b3r2 = child(&v3, 6, &[&b2r1, &b3r1, &b4r1]);
+    let b4r2 = child(&v4, 7, &[&b2r1, &b3r1, &b4r1]);
+    insert(&mut bl, &b2r2);
+    insert(&mut bl, &b3r2);
+    insert(&mut bl, &b4r2);
+
+    let result = is_final_leader(&bl, &leader.identity, wavelength, n, f, leader_node1);
+    assert!(result);
+}
+
+/// is_final_leader returns false when super-ratification is not achieved.
+#[test]
+fn is_final_leader_returns_false_when_not_super_ratified() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4;
+    let f = 1;
+
+    // Only the leader block exists — no ratifying blocks at all
+    let v1 = node(1);
+    let leader = genesis(&v1, 1);
+    insert(&mut bl, &leader);
+
+    let result = is_final_leader(&bl, &leader.identity, wavelength, n, f, leader_node1);
+    assert!(!result);
+}
+
+/// is_final_leader returns false for a block that is not
+/// the elected leader block for its wave.
+#[test]
+fn is_final_leader_returns_false_for_non_leader_block() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4;
+    let f = 1;
+
+    // node 2 is NOT the elected leader — node 1 is
+    let v2 = node(2);
+    let non_leader = genesis(&v2, 1);
+    insert(&mut bl, &non_leader);
+
+    let result = is_final_leader(&bl, &non_leader.identity, wavelength, n, f, leader_node1);
+    assert!(!result);
 }
