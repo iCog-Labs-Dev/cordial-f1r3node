@@ -1,11 +1,126 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
 use crate::consensus::cordiality::super_ratifies;
+use crate::consensus::fork_choice::collect_validator_tips;
 use crate::consensus::round::{blocks_at_depth, depth};
 use crate::consensus::wave::{last_round_of_wave, leader_blocks_of_wave, wave_of_round};
 use crate::types::{BlockIdentity, NodeId};
+
+/// Finality status for the f1r3node compatibility detector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FinalityStatus {
+    Finalized {
+        supporting_stake: u64,
+        total_honest_stake: u64,
+    },
+    Pending {
+        supporting_stake: u64,
+        total_honest_stake: u64,
+    },
+    Unknown,
+}
+
+/// Check whether a block is finalized by weighted ancestry support.
+///
+/// This compatibility detector is separate from the paper-native leader
+/// finality predicate below. It mirrors f1r3node's need for a single last
+/// finalized block by treating a block as finalized when more than two thirds
+/// of non-equivocating bonded stake has that block in its validator tip
+/// ancestry.
+pub fn check_finality(
+    blocklace: &Blocklace,
+    block_id: &BlockIdentity,
+    bonds: &HashMap<NodeId, u64>,
+) -> FinalityStatus {
+    if blocklace.get(block_id).is_none() {
+        return FinalityStatus::Unknown;
+    }
+
+    let total_honest_stake = total_honest_stake(blocklace, bonds);
+    if total_honest_stake == 0 {
+        return FinalityStatus::Unknown;
+    }
+
+    let supporting_stake = supporting_stake(blocklace, block_id, bonds);
+    if strict_two_thirds(supporting_stake, total_honest_stake) {
+        FinalityStatus::Finalized {
+            supporting_stake,
+            total_honest_stake,
+        }
+    } else {
+        FinalityStatus::Pending {
+            supporting_stake,
+            total_honest_stake,
+        }
+    }
+}
+
+/// Return the highest finalized block in the current blocklace.
+///
+/// If several finalized blocks have the same depth, the lexicographically
+/// lowest content hash is selected for deterministic adapter behavior.
+pub fn find_last_finalized(
+    blocklace: &Blocklace,
+    bonds: &HashMap<NodeId, u64>,
+) -> Option<BlockIdentity> {
+    let mut finalized: Vec<(u64, BlockIdentity)> = blocklace
+        .dom()
+        .into_iter()
+        .filter_map(|id| {
+            if matches!(
+                check_finality(blocklace, id, bonds),
+                FinalityStatus::Finalized { .. }
+            ) {
+                depth(blocklace, id).map(|d| (d, id.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    finalized.sort_by(|(depth_a, id_a), (depth_b, id_b)| {
+        depth_b
+            .cmp(depth_a)
+            .then_with(|| id_a.content_hash.cmp(&id_b.content_hash))
+    });
+
+    finalized.into_iter().map(|(_, id)| id).next()
+}
+
+/// Return true if `block_id` either is finalized now or can still become
+/// finalized once validators without current tips publish blocks.
+pub fn can_be_finalized(
+    blocklace: &Blocklace,
+    block_id: &BlockIdentity,
+    bonds: &HashMap<NodeId, u64>,
+) -> bool {
+    if blocklace.get(block_id).is_none() {
+        return false;
+    }
+
+    let total_honest_stake = total_honest_stake(blocklace, bonds);
+    if total_honest_stake == 0 {
+        return false;
+    }
+
+    let current_support = supporting_stake(blocklace, block_id, bonds);
+    let validator_tips = collect_validator_tips(blocklace, bonds);
+    let equivocators = blocklace.find_equivacators();
+    let undecided_stake: u64 = bonds
+        .iter()
+        .filter(|(validator, _)| {
+            !equivocators.contains(*validator) && !validator_tips.contains_key(*validator)
+        })
+        .map(|(_, stake)| *stake)
+        .sum();
+
+    strict_two_thirds(
+        current_support.saturating_add(undecided_stake),
+        total_honest_stake,
+    )
+}
 
 /// Return the unique leader block for a wave when exactly one exists.
 ///
@@ -97,4 +212,30 @@ where
         .collect();
 
     super_ratifies(blocklace, &witness_blocks, &candidate_block, n, f)
+}
+
+fn total_honest_stake(blocklace: &Blocklace, bonds: &HashMap<NodeId, u64>) -> u64 {
+    let equivocators = blocklace.find_equivacators();
+    bonds
+        .iter()
+        .filter(|(validator, _)| !equivocators.contains(*validator))
+        .map(|(_, stake)| *stake)
+        .sum()
+}
+
+fn supporting_stake(
+    blocklace: &Blocklace,
+    block_id: &BlockIdentity,
+    bonds: &HashMap<NodeId, u64>,
+) -> u64 {
+    collect_validator_tips(blocklace, bonds)
+        .into_iter()
+        .filter(|(_, tip_id)| blocklace.observe(tip_id).contains(block_id))
+        .filter_map(|(validator, _)| bonds.get(&validator))
+        .copied()
+        .sum()
+}
+
+fn strict_two_thirds(supporting_stake: u64, total_stake: u64) -> bool {
+    u128::from(supporting_stake) * 3 > u128::from(total_stake) * 2
 }
