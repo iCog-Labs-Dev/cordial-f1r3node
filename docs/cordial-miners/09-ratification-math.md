@@ -25,10 +25,13 @@ networking, crypto, and runtime crates. It only needs:
   inclusive causal closure of a block id.
 - `ValidatorSet<VId>`: active stake weight for each validator and the total
   active weight for the decision context.
-- `ApprovalThreshold`: a rational threshold such as strict two-thirds.
+- `ApprovalThreshold`: a validated rational threshold such as strict
+  two-thirds.
 
 Adapters are responsible for mapping real DAG/storage data and epoch validator
-weights into these pure interfaces.
+weights into these pure interfaces. The denominator for weighted ratification
+is always `ValidatorSet::total_weight()`: the active validator weight for the
+decision context, not locally observed non-equivocating stake.
 
 ## Base Approval Predicate
 
@@ -43,7 +46,9 @@ approve(approver, candidate) is true iff:
 
 Approval is local to the approver's observed closure. A conflicting candidate
 that exists elsewhere in the blocklace but is not observed by the approver does
-not invalidate that approver's approval.
+not invalidate that approver's approval. The module exposes one canonical
+generic approval predicate for this math layer: `approve_with_memo` delegates to
+the same approval logic used by `approve`.
 
 ## Weighted Ratify
 
@@ -79,8 +84,10 @@ super_ratify(witness_set, candidate) =
   sum(weight(v) for v in RatifyingValidators) / total_weight > threshold
 ```
 
-The caller supplies the witness set. Wave selection, leader choice, total
-ordering, pruning, storage, and networking are outside this math module.
+The caller supplies the witness set for the relevant Cordial Miners wave or
+round. Wave selection, leader choice, total ordering, pruning, storage, and
+networking are outside this math module. Missing witness ids are ignored and do
+not contribute support.
 
 ## Strict Threshold Arithmetic
 
@@ -96,7 +103,17 @@ because `6 * 3 <= 10 * 2`.
 
 The implementation avoids floating point nondeterminism and uses a small
 wide-multiplication helper so the comparison remains exact for `u128` inputs.
-Zero total weight and zero threshold denominator never pass.
+The helper is covered by direct boundary tests, including cases that would
+overflow direct `u128` multiplication.
+
+Invalid thresholds are configuration errors. Use `ApprovalThreshold::try_new`
+or the built-in `strict_two_thirds()` constructor; zero denominators and
+thresholds greater than or equal to `1` are rejected. Zero total active weight
+never passes.
+
+Support weights are accumulated with checked addition. If a validator set would
+overflow `u128` support accumulation, the query fails closed instead of
+saturating and accidentally creating apparent finality.
 
 ## Memoization Strategy
 
@@ -111,6 +128,10 @@ ratify_cache[(witness_id, candidate_id)] -> bool
 The public convenience wrappers allocate a fresh memo. The `_with_memo`
 functions accept a mutable memo so callers can reuse cached results while
 evaluating several witness sets or candidates over the same blocklace.
+
+A `FinalityMemo` is scoped to one immutable blocklace snapshot, one active
+validator set, and one threshold. Reusing a memo after changing any of those
+inputs can return stale results because cache keys are only block pairs.
 
 Expected behavior:
 
@@ -135,7 +156,11 @@ The focused tests in `finality.rs` cover:
 - weighted super-ratification success and failure,
 - duplicate blocks by the same validator,
 - unknown and zero-weight validators,
+- missing candidates, witnesses, and closure parents,
 - zero total weight,
+- invalid threshold construction,
+- support overflow fail-closed behavior,
+- wide multiplication boundary cases,
 - strict threshold boundaries,
 - same-leader same-round candidate safety, and
 - memo reuse across repeated `super_ratify_with_memo` calls.
