@@ -1,5 +1,7 @@
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::{is_final_leader, leader_block_for_wave};
+use cordial_miners_core::consensus::{
+    final_leader_for_wave, is_final_leader, leader_block_for_wave, latest_final_leader,
+};
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
@@ -262,4 +264,91 @@ fn is_final_leader_returns_false_for_equivocating_leader_branch() {
         f,
         leader_node1
     ));
+}
+
+#[test]
+fn final_leader_for_wave_returns_unique_final_leader() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let wave = 0u64;
+    let n = 4;
+    let f = 1;
+
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+    let leader = genesis(&v1, 1);
+    insert(&mut bl, &leader);
+
+    let b2r1 = child(&v2, 2, &[&leader]);
+    let b3r1 = child(&v3, 3, &[&leader]);
+    let b4r1 = child(&v4, 4, &[&leader]);
+    insert(&mut bl, &b2r1);
+    insert(&mut bl, &b3r1);
+    insert(&mut bl, &b4r1);
+
+    let b2r2 = child(&v2, 5, &[&b2r1, &b3r1, &b4r1]);
+    let b3r2 = child(&v3, 6, &[&b2r1, &b3r1, &b4r1]);
+    let b4r2 = child(&v4, 7, &[&b2r1, &b3r1, &b4r1]);
+    insert(&mut bl, &b2r2);
+    insert(&mut bl, &b3r2);
+    insert(&mut bl, &b4r2);
+
+    assert_eq!(
+        final_leader_for_wave(&bl, wave, wavelength, n, f, leader_node1),
+        Some(leader.identity)
+    );
+}
+
+#[test]
+fn latest_final_leader_returns_most_recent_final_wave() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4;
+    let f = 1;
+
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+
+    let w0_leader = genesis(&v1, 1);
+    insert(&mut bl, &w0_leader);
+
+    let w0_r1_v2 = child(&v2, 2, &[&w0_leader]);
+    let w0_r1_v3 = child(&v3, 3, &[&w0_leader]);
+    let w0_r1_v4 = child(&v4, 4, &[&w0_leader]);
+    insert(&mut bl, &w0_r1_v2);
+    insert(&mut bl, &w0_r1_v3);
+    insert(&mut bl, &w0_r1_v4);
+
+    let w0_r2_v2 = child(&v2, 5, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    let w0_r2_v3 = child(&v3, 6, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    let w0_r2_v4 = child(&v4, 7, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    insert(&mut bl, &w0_r2_v2);
+    insert(&mut bl, &w0_r2_v3);
+    insert(&mut bl, &w0_r2_v4);
+
+    let w1_leader = child(&v1, 8, &[&w0_r2_v2, &w0_r2_v3, &w0_r2_v4]);
+    insert(&mut bl, &w1_leader);
+
+    let w1_r1_v2 = child(&v2, 9, &[&w1_leader]);
+    let w1_r1_v3 = child(&v3, 10, &[&w1_leader]);
+    let w1_r1_v4 = child(&v4, 11, &[&w1_leader]);
+    insert(&mut bl, &w1_r1_v2);
+    insert(&mut bl, &w1_r1_v3);
+    insert(&mut bl, &w1_r1_v4);
+
+    let w1_r2_v2 = child(&v2, 12, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    let w1_r2_v3 = child(&v3, 13, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    let w1_r2_v4 = child(&v4, 14, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    insert(&mut bl, &w1_r2_v2);
+    insert(&mut bl, &w1_r2_v3);
+    insert(&mut bl, &w1_r2_v4);
+
+    assert_eq!(
+        latest_final_leader(&bl, wavelength, n, f, leader_node1),
+        Some(w1_leader.identity)
+    );
 }
