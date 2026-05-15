@@ -51,8 +51,8 @@
 //! | `get_dependency_free_from_buffer` | Buffer entries whose preds all exist        |
 //! | `get_all_from_buffer`         | All buffer entries                               |
 //!
-//! `MultiParentCasper` adds `last_finalized_block` (from
-//! [`find_last_finalized`]), `block_dag` (rebuilt from snapshot), and
+//! `MultiParentCasper` adds `last_finalized_block` (from the adapter's
+//! paper-native final-leader lookup), `block_dag` (rebuilt from snapshot), and
 //! `has_pending_deploys_in_storage` (DeployPool emptiness check). The
 //! RSpace-specific `runtime_manager`, `block_store`, and
 //! `get_history_exporter` methods are stubbed — they return adapter-local
@@ -67,8 +67,8 @@ use either::Either;
 use cordial_miners_core::block::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    InvalidBlock as CoreInvalidBlock, ValidationConfig, ValidationResult, find_last_finalized,
-    fork_choice, validate_block as core_validate_block,
+    InvalidBlock as CoreInvalidBlock, ValidationConfig, ValidationResult, fork_choice,
+    validate_block as core_validate_block,
 };
 use cordial_miners_core::execution::{
     DeployPool, DeployPoolConfig, PoolError, SignedDeploy as CmSignedDeploy,
@@ -79,7 +79,7 @@ use crate::block_translation::{
     BlockMessage, SignedDeployData, TranslationError, block_to_message, message_to_block,
 };
 use crate::shard_conf::CasperShardConf;
-use crate::snapshot::{CasperSnapshot, SnapshotError, build_snapshot};
+use crate::snapshot::{CasperSnapshot, SnapshotError, build_snapshot, latest_finalized_block_id};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Mirror types for the trait surface
@@ -640,7 +640,7 @@ where
 {
     async fn last_finalized_block(&self) -> Result<BlockMessage, CasperError> {
         let bl = self.blocklace.lock().await;
-        let id: BlockIdentity = match find_last_finalized(&bl, &self.bonds) {
+        let id: BlockIdentity = match latest_finalized_block_id(&bl, &self.bonds) {
             Some(id) => id,
             None => return Err(CasperError::InvalidState("no finalized block yet")),
         };
