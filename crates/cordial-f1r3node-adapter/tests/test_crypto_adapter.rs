@@ -227,7 +227,7 @@ fn ed25519_valid_signature_returns_ok() {
     let adapter = F1r3flyCryptoAdapter::ed25519();
     let result = adapter.verify_block(&content, &signature, &creator);
 
-    assert!(result.is_ok(), "Expected Ok(()), got: {:?}", result);
+    assert!(result.is_ok(), "Expected Ok(()), got: {result:?}");
 }
 
 // TEST 7 — Acceptance criterion 2 for Ed25519:

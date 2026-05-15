@@ -108,7 +108,7 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
     pub fn from_protobuf(&self, block_msg: &BlockMessage) -> Result<Block> {
         // 1. Translate protobuf message to internal Block format
         let block = message_to_block(block_msg)
-            .map_err(|e| anyhow!("Failed to translate BlockMessage to Block: {:?}", e))?;
+            .map_err(|e| anyhow!("Failed to translate BlockMessage to Block: {e:?}"))?;
 
         // 2. Extract signature algorithm (case-insensitive, default to secp256k1)
         let sig_algo = block_msg.sig_algorithm.to_lowercase();
@@ -157,9 +157,7 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
         wire_hash.copy_from_slice(&block_msg.block_hash);
         if wire_hash != recomputed {
             return Err(anyhow!(
-                "Content hash mismatch: wire block_hash {:?} does not match recomputed {:?}",
-                wire_hash,
-                recomputed
+                "Content hash mismatch: wire block_hash {wire_hash:?} does not match recomputed {recomputed:?}"
             ));
         }
 
@@ -209,17 +207,14 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
             "ed25519" => Ed25519Scheme.verify(hash_array, creator_key, signature),
             other => {
                 return Err(anyhow!(
-                    "Unknown signature algorithm: {} (expected 'secp256k1' or 'ed25519')",
-                    other
+                    "Unknown signature algorithm: {other} (expected 'secp256k1' or 'ed25519')"
                 ));
             }
         };
 
         if !valid {
             return Err(anyhow!(
-                "Signature verification failed for creator {:?} using algorithm '{}'",
-                creator_key,
-                sig_algorithm
+                "Signature verification failed for creator {creator_key:?} using algorithm '{sig_algorithm}'"
             ));
         }
 
@@ -245,8 +240,7 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
             let key_len = parent_id.creator.0.len();
             if key_len != 33 && key_len != 65 {
                 return Err(anyhow!(
-                    "Parent creator has invalid key length: {} bytes (expected 33 or 65)",
-                    key_len
+                    "Parent creator has invalid key length: {key_len} bytes (expected 33 or 65)"
                 ));
             }
 

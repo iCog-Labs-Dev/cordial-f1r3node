@@ -61,8 +61,7 @@ impl F1r3flyCryptoAdapter {
             "ed25519" => Ok(Self::ed25519()),
             // anything else is an error
             other => Err(format!(
-                "Unknown algorithm: '{}' — expected 'secp256k1' or 'ed25519'",
-                other
+                "Unknown algorithm: '{other}' — expected 'secp256k1' or 'ed25519'"
             )),
         }
     }
