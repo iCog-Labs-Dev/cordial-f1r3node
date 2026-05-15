@@ -1,6 +1,6 @@
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    final_leader_for_wave, is_final_leader, leader_block_for_wave, latest_final_leader,
+    final_leader_for_wave, is_final_leader, latest_final_leader, leader_block_for_wave,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
