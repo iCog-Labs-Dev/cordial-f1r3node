@@ -115,7 +115,6 @@ fn three_validators_linear_cordial_chain() {
     // Fork choice: r4 is v1's tip, r3 is v3's tip, r2 is v2's tip
     let fc = fork_choice(&bl, &b).unwrap();
     assert!(!fc.tips.is_empty());
-
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -184,7 +183,6 @@ fn equivocator_excluded_from_consensus() {
     // Fork choice should exclude v3
     let fc = fork_choice(&bl, &b).unwrap();
     assert_eq!(fc.tips.len(), 2); // only v1 and v2
-
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -222,7 +220,6 @@ fn cordial_round_all_validators_see_all_tips() {
     assert!(is_cordial(&r2_v1, &tips_before_r2));
     assert!(is_cordial(&r2_v2, &tips_before_r2));
     assert!(is_cordial(&r2_v3, &tips_before_r2));
-
 }
 
 // ═══════════════════════════════════════════════════════════════
