@@ -1,166 +1,139 @@
-# 09 - Weighted Ratification Math
+# 09 - Ratification Math
 
-## Paper Reference
+## Scope
 
-Definition 22 of the Cordial Miners paper defines two recursive finality
-operators:
+Issue 2 adds weighted ratification and weighted super-ratification for the
+f1r3node compatibility path. The paper-native Cordial Miners implementation is
+kept intact, and the weighted path is added beside it.
 
-- A block is **ratified** when the closure of a witness contains a
-  supermajority of blocks that approve it.
-- A block is **super-ratified** when the supplied blocklace or witness set
-  contains a supermajority of blocks that ratify it.
+Leader selection and leader finality are separate concerns and live in
+`crates/cordial-miners-core/src/consensus/finality.rs`. Ratification remains a
+cordiality concern, with approval-specific helpers in the approval module.
 
-The paper counts miners. F1R3Node consensus is proof-of-stake based, so the
-implementation in `cordial-miners-core/src/finality.rs` uses validator weight
-instead of one-validator-one-vote counting.
+## Paper-Native Functions
 
-## Pure Inputs
+The original paper-native functions stay unchanged:
 
-The weighted finality module is deliberately isolated from node, storage,
-networking, crypto, and runtime crates. It only needs:
+- `approves(...)` in `crates/cordial-miners-core/src/consensus/approval.rs`
+- `ratifies(...)` in `crates/cordial-miners-core/src/consensus/cordiality.rs`
+- `super_ratifies(...)` in `crates/cordial-miners-core/src/consensus/cordiality.rs`
+- `is_supermajority(...)` in `crates/cordial-miners-core/src/consensus/cordiality.rs`
 
-- `CordialBlock<VId, P, Id>`: block id, creator, round, parents, and opaque
-  payload.
-- `Blocklace<VId, P, Id>`: a read-only way to resolve blocks and request the
-  inclusive causal closure of a block id.
-- `ValidatorSet<VId>`: active stake weight for each validator and the total
-  active weight for the decision context.
-- `ApprovalThreshold`: a validated rational threshold such as strict
-  two-thirds.
+These functions use the Cordial Miners paper's distinct-creator supermajority
+semantics. They are still the implementation used by paper-native leader
+finality checks.
 
-Adapters are responsible for mapping real DAG/storage data and epoch validator
-weights into these pure interfaces. The denominator for weighted ratification
-is always `ValidatorSet::total_weight()`: the active validator weight for the
-decision context, not locally observed non-equivocating stake.
+## Weighted Variants
 
-## Base Approval Predicate
+The weighted compatibility path adds these functions:
 
-Ratification depends on approval. In the weighted finality module:
+- `weighted_approving_creators(...)` in
+  `crates/cordial-miners-core/src/consensus/approval.rs`
+- `weighted_ratifies(...)` in
+  `crates/cordial-miners-core/src/consensus/cordiality.rs`
+- `weighted_super_ratifies(...)` in
+  `crates/cordial-miners-core/src/consensus/cordiality.rs`
+- `is_weighted_supermajority(...)` in
+  `crates/cordial-miners-core/src/consensus/cordiality.rs`
+
+These functions reuse the same approval relation as the paper-native path, then
+replace distinct-creator counting with bonded stake.
+
+## Approval
+
+Ratification depends on approval. A block approves a target when:
 
 ```text
-approve(approver, candidate) is true iff:
-  candidate is in closure(approver), and
-  closure(approver) contains no different block with the same
-  candidate creator and candidate round.
+approves(approver, target) is true iff:
+  target is in closure(approver), and
+  closure(approver) does not include an incomparable conflicting block
+  by the target creator.
 ```
 
-Approval is local to the approver's observed closure. A conflicting candidate
-that exists elsewhere in the blocklace but is not observed by the approver does
-not invalidate that approver's approval. The module exposes one canonical
-generic approval predicate for this math layer: `approve_with_memo` delegates to
-the same approval logic used by `approve`.
+`weighted_approving_creators(...)` does not redefine approval. It filters a
+provided block set through `approves(...)`, then returns only creators that have
+positive bond weight.
 
-## Weighted Ratify
+Unknown validators and zero-weight validators may produce approving blocks, but
+they contribute no weighted support.
 
-`ratify(witness, candidate)` asks whether the witness observes enough weighted
-approval:
+## Weighted Ratification
+
+`weighted_ratifies(ratifier, target, bonds)` asks whether the ratifier's
+inclusive closure contains enough bonded approval:
 
 ```text
-ApprovingValidators(witness, candidate) = {
+ApprovingCreators(ratifier, target) = {
   creator(block) |
-  block in closure(witness) and approve(block, candidate)
+  block in closure(ratifier) and approves(block, target)
 }
 
-ratify(witness, candidate) =
-  sum(weight(v) for v in ApprovingValidators) / total_weight > threshold
+weighted_ratifies(ratifier, target, bonds) =
+  sum(bonds[v] for v in ApprovingCreators) / total_bond_weight > 2/3
 ```
 
-Each validator is counted at most once. If the closure contains several
-approving blocks from validator `A`, only `weight(A)` is added. Unknown
-validators and validators with zero weight may approve, but they add no support.
+Each validator is counted at most once. If a validator has multiple approving
+blocks in the closure, its bond weight is added once.
 
-## Weighted Super-Ratify
+## Weighted Super-Ratification
 
-`super_ratify(witness_set, candidate)` applies the same weighted support rule
-one level higher:
+`weighted_super_ratifies(blocks, target, bonds)` applies the same weighted
+support rule one level higher:
 
 ```text
-RatifyingValidators(witness_set, candidate) = {
-  creator(witness) |
-  witness in witness_set and ratify(witness, candidate)
+RatifyingCreators(blocks, target) = {
+  creator(block) |
+  block in blocks and weighted_ratifies(block, target, bonds)
 }
 
-super_ratify(witness_set, candidate) =
-  sum(weight(v) for v in RatifyingValidators) / total_weight > threshold
+weighted_super_ratifies(blocks, target, bonds) =
+  sum(bonds[v] for v in RatifyingCreators) / total_bond_weight > 2/3
 ```
 
-The caller supplies the witness set for the relevant Cordial Miners wave or
-round. Wave selection, leader choice, total ordering, pruning, storage, and
-networking are outside this math module. Missing witness ids are ignored and do
-not contribute support.
+The caller supplies the block set for the relevant round, wave, or adapter
+context. The weighted helper does not select leaders or wave boundaries.
 
-## Strict Threshold Arithmetic
+## Threshold Arithmetic
 
-Threshold checks use exact integer comparison:
+Weighted supermajority is strict two-thirds:
 
 ```text
-support_weight * denominator > total_weight * numerator
+support_weight * 3 > total_weight * 2
 ```
 
-For strict two-thirds, the threshold is `2/3`. With total weight `10`, support
-weight `7` passes because `7 * 3 > 10 * 2`, while support weight `6` fails
-because `6 * 3 <= 10 * 2`.
+With total bond weight `10`, support weight `7` passes because `7 * 3 > 10 * 2`.
+Support weight `6` fails because `6 * 3 <= 10 * 2`.
 
-The implementation avoids floating point nondeterminism and uses a small
-wide-multiplication helper so the comparison remains exact for `u128` inputs.
-The helper is covered by direct boundary tests, including cases that would
-overflow direct `u128` multiplication.
+The implementation uses integer arithmetic instead of floating point. Weight
+accumulation and multiplication are checked; if arithmetic overflows, the query
+fails closed.
 
-Invalid thresholds are configuration errors. Use `ApprovalThreshold::try_new`
-or the built-in `strict_two_thirds()` constructor; zero denominators and
-thresholds greater than or equal to `1` are rejected. Zero total active weight
-never passes.
+Zero total bond weight never passes.
 
-Support weights are accumulated with checked addition. If a validator set would
-overflow `u128` support accumulation, the query fails closed instead of
-saturating and accidentally creating apparent finality.
+## Implementation Plan
 
-## Memoization Strategy
+1. Keep the paper-native functions unchanged so existing protocol tests and
+   leader finality behavior continue to use distinct-creator supermajority.
+2. Add weighted approval support in `consensus/approval.rs` through
+   `weighted_approving_creators(...)`.
+3. Add weighted ratification support in `consensus/cordiality.rs` through
+   `weighted_ratifies(...)`, `weighted_super_ratifies(...)`, and
+   `is_weighted_supermajority(...)`.
+4. Use validator bond weights from the f1r3node compatibility layer.
+5. Count each validator at most once, matching the distinct-creator behavior of
+   the paper-native implementation while replacing creator cardinality with
+   bonded stake.
+6. Keep finality code focused on finality. Do not place weighted ratification
+   logic or tests inside finality.
+7. Cover the weighted path with tests beside the existing approval and
+   ratification tests.
 
-Ratification and super-ratification reuse many of the same graph questions. A
-single `FinalityMemo<Id>` is passed through the recursive calls:
+## Tests
 
-```rust
-approve_cache[(approver_id, candidate_id)] -> bool
-ratify_cache[(witness_id, candidate_id)] -> bool
-```
+The focused weighted ratification tests cover:
 
-The public convenience wrappers allocate a fresh memo. The `_with_memo`
-functions accept a mutable memo so callers can reuse cached results while
-evaluating several witness sets or candidates over the same blocklace.
-
-A `FinalityMemo` is scoped to one immutable blocklace snapshot, one active
-validator set, and one threshold. Reusing a memo after changing any of those
-inputs can return stale results because cache keys are only block pairs.
-
-Expected behavior:
-
-- Each approval pair is computed once per memo.
-- Each ratification pair is computed once per memo.
-- Memoization does not affect results; it only prevents repeated closure scans.
-- With unique closure ids, one candidate, and a fixed witness set, runtime is
-  approximately linear in the number of visited block pairs plus the cost of
-  closure traversal.
-
-## Safety Regression
-
-Two different candidates from the same leader and round must not both
-super-ratify in the same decision context. A witness that observes both
-same-leader, same-round candidates approves neither. Weighted strict
-supermajorities also count validator creators only once, so duplicate blocks by
-one validator cannot manufacture extra support.
-
-The focused tests in `finality.rs` cover:
-
+- positive-weight approving creators,
 - weighted ratification success and failure,
 - weighted super-ratification success and failure,
-- duplicate blocks by the same validator,
-- unknown and zero-weight validators,
-- missing candidates, witnesses, and closure parents,
-- zero total weight,
-- invalid threshold construction,
-- support overflow fail-closed behavior,
-- wide multiplication boundary cases,
-- strict threshold boundaries,
-- same-leader same-round candidate safety, and
-- memo reuse across repeated `super_ratify_with_memo` calls.
+- strict two-thirds threshold behavior, and
+- zero total bond weight.
