@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-use crate::consensus::cordiality::super_ratifies;
+use crate::consensus::cordiality::{super_ratifies, weighted_super_ratifies};
 use crate::consensus::round::{blocks_at_depth, depth};
 use crate::consensus::wave::{last_round_of_wave, leader_blocks_of_wave, wave_of_round};
 use crate::types::{BlockIdentity, NodeId};
@@ -150,6 +151,130 @@ where
     for wave in (0..=latest_wave).rev() {
         if let Some(leader) =
             final_leader_for_wave(blocklace, wave, wavelength, n, f, leader_selection)
+        {
+            return Some(leader);
+        }
+    }
+
+    None
+}
+
+/// Check whether a leader block has achieved weighted finality within its wave.
+///
+/// This is the stake-weighted parallel to `is_final_leader`. It uses
+/// `weighted_super_ratifies` instead of `super_ratifies`, meaning the
+/// supermajority threshold is measured over bonded stake rather than
+/// distinct creator count.
+///
+/// Use `is_final_leader` for paper-native unweighted verification.
+/// Use `is_weighted_final_leader` for PoS stake-based consensus.
+///
+/// Returns `false` if:
+/// - the candidate block is not in the blocklace
+/// - the candidate is not one of the actual leader blocks for its wave
+/// - the wave boundaries cannot be computed
+/// - weighted super-ratification is not achieved
+pub fn is_weighted_final_leader<F>(
+    blocklace: &Blocklace,
+    candidate: &BlockIdentity,
+    wavelength: u64,
+    bonds: &HashMap<NodeId, u64>,
+    leader_selection: F,
+) -> bool
+where
+    F: Fn(u64) -> Option<NodeId>,
+{
+    let candidate_block = match blocklace.get(candidate) {
+        Some(block) => block,
+        None => return false,
+    };
+
+    let candidate_round = match depth(blocklace, candidate) {
+        Some(d) => d,
+        None => return false,
+    };
+
+    let wave = match wave_of_round(candidate_round, wavelength) {
+        Some(w) => w,
+        None => return false,
+    };
+
+    // Candidate must be one of the actual leader blocks for its wave
+    let leader_blocks = leader_blocks_of_wave(blocklace, wave, wavelength, &leader_selection);
+    if !leader_blocks
+        .iter()
+        .any(|leader_block| leader_block.identity == *candidate)
+    {
+        return false;
+    }
+
+    let last_round = match last_round_of_wave(wave, wavelength) {
+        Some(r) => r,
+        None => return false,
+    };
+
+    // PERF/PAPER NOTE:
+    // Same optimization as is_final_leader — blocks before candidate_round
+    // cannot observe the candidate and therefore cannot ratify it.
+    // Collecting from candidate_round..=last_round is mathematically
+    // equivalent to B(r + w - 1) per Definition 24.
+    let witness_blocks: HashSet<Block> = (candidate_round..=last_round)
+        .flat_map(|round| blocks_at_depth(blocklace, round))
+        .collect();
+
+    weighted_super_ratifies(blocklace, &witness_blocks, &candidate_block, bonds)
+}
+
+/// Return the weighted final leader block for a wave, if one exists.
+///
+/// Resolves the unique leader block for the wave then checks whether
+/// that block is weighted-final under bonded stake.
+pub fn weighted_final_leader_for_wave<F>(
+    blocklace: &Blocklace,
+    wave: u64,
+    wavelength: u64,
+    bonds: &HashMap<NodeId, u64>,
+    leader_selection: F,
+) -> Option<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    let leader = leader_block_for_wave(blocklace, wave, wavelength, leader_selection)?;
+    if is_weighted_final_leader(blocklace, &leader, wavelength, bonds, leader_selection) {
+        Some(leader)
+    } else {
+        None
+    }
+}
+
+/// Return the latest weighted final leader currently known in the blocklace.
+///
+/// Scans backward from the highest known wave, returning the newest wave
+/// whose unique leader block achieves weighted finality.
+pub fn latest_weighted_final_leader<F>(
+    blocklace: &Blocklace,
+    wavelength: u64,
+    bonds: &HashMap<NodeId, u64>,
+    leader_selection: F,
+) -> Option<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    if wavelength == 0 || blocklace.dom().is_empty() {
+        return None;
+    }
+
+    let max_round = blocklace
+        .dom()
+        .iter()
+        .filter_map(|id| depth(blocklace, id))
+        .max()?;
+
+    let latest_wave = wave_of_round(max_round, wavelength)?;
+
+    for wave in (0..=latest_wave).rev() {
+        if let Some(leader) =
+            weighted_final_leader_for_wave(blocklace, wave, wavelength, bonds, leader_selection)
         {
             return Some(leader);
         }
