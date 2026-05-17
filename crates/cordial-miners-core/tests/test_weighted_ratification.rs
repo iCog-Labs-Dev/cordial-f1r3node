@@ -171,6 +171,9 @@ fn weighted_ratifies_uses_inclusive_ratifier_closure() {
 
     let weights = bonds(&[(2, 7), (3, 3)]);
 
+    // This intentionally follows paper-native approval semantics. The
+    // ratifier's own block contributes when it is in the inclusive closure and
+    // approves the target under `approves(...)`.
     assert!(weighted_ratifies(&blocklace, &ratifier, &target, &weights));
 }
 
@@ -406,6 +409,40 @@ fn weighted_supermajority_returns_false_for_zero_total_weight() {
 }
 
 #[test]
+fn weighted_supermajority_denominator_is_supplied_bond_map_only() {
+    let weights = bonds(&[(1, 4), (2, 3), (3, 3)]);
+
+    assert!(is_weighted_supermajority(
+        &HashSet::from([node(1), node(2), node(9)]),
+        &weights,
+    ));
+
+    assert!(!is_weighted_supermajority(
+        &HashSet::from([node(1), node(9)]),
+        &weights,
+    ));
+}
+
+#[test]
+fn weighted_supermajority_handles_large_u64_weights_with_u128_math() {
+    let weights = HashMap::from([
+        (node(1), u64::MAX),
+        (node(2), u64::MAX),
+        (node(3), u64::MAX),
+    ]);
+
+    assert!(!is_weighted_supermajority(
+        &HashSet::from([node(1), node(2)]),
+        &weights,
+    ));
+
+    assert!(is_weighted_supermajority(
+        &HashSet::from([node(1), node(2), node(3)]),
+        &weights,
+    ));
+}
+
+#[test]
 fn weighted_super_ratifies_same_creator_conflicts_cannot_both_pass() {
     let mut blocklace = Blocklace::new();
 
@@ -429,6 +466,45 @@ fn weighted_super_ratifies_same_creator_conflicts_cannot_both_pass() {
     let x_prime_super = weighted_super_ratifies(&blocklace, &witnesses, &x_prime, &weights);
 
     assert!(!x_super);
+    assert!(!x_prime_super);
+    assert!(!(x_super && x_prime_super));
+}
+
+#[test]
+fn weighted_super_ratifies_one_side_of_conflict_but_not_both() {
+    let mut blocklace = Blocklace::new();
+
+    let x = block(1, 1, HashSet::new());
+    let x_prime = block(1, 2, HashSet::new());
+    insert(&mut blocklace, &x);
+    insert(&mut blocklace, &x_prime);
+
+    let approver2 = block(2, 3, HashSet::from([x.identity.clone()]));
+    let approver3 = block(3, 4, HashSet::from([x.identity.clone()]));
+    let approver4 = block(4, 5, HashSet::from([x.identity.clone()]));
+    insert(&mut blocklace, &approver2);
+    insert(&mut blocklace, &approver3);
+    insert(&mut blocklace, &approver4);
+
+    let predecessors = HashSet::from([
+        approver2.identity.clone(),
+        approver3.identity.clone(),
+        approver4.identity.clone(),
+    ]);
+    let ratifier2 = block(2, 6, predecessors.clone());
+    let ratifier3 = block(3, 7, predecessors.clone());
+    let ratifier4 = block(4, 8, predecessors);
+    insert(&mut blocklace, &ratifier2);
+    insert(&mut blocklace, &ratifier3);
+    insert(&mut blocklace, &ratifier4);
+
+    let witnesses = HashSet::from([ratifier2, ratifier3, ratifier4]);
+    let weights = bonds(&[(2, 4), (3, 3), (4, 3)]);
+
+    let x_super = weighted_super_ratifies(&blocklace, &witnesses, &x, &weights);
+    let x_prime_super = weighted_super_ratifies(&blocklace, &witnesses, &x_prime, &weights);
+
+    assert!(x_super);
     assert!(!x_prime_super);
     assert!(!(x_super && x_prime_super));
 }
