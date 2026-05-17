@@ -360,13 +360,13 @@ pub fn is_weighted_supermajority(creators: &HashSet<NodeId>, bonds: &HashMap<Nod
     strict_two_thirds(support_weight, total_weight)
 }
 
-fn checked_bond_weight(weights: impl IntoIterator<Item = u64>) -> Option<u64> {
+fn checked_bond_weight(weights: impl IntoIterator<Item = u64>) -> Option<u128> {
     weights
         .into_iter()
-        .try_fold(0u64, |total, weight| total.checked_add(weight))
+        .try_fold(0u128, |total, weight| total.checked_add(u128::from(weight)))
 }
 
-fn strict_two_thirds(support_weight: u64, total_weight: u64) -> bool {
+fn strict_two_thirds(support_weight: u128, total_weight: u128) -> bool {
     let Some(weighted_support) = support_weight.checked_mul(3) else {
         return false;
     };

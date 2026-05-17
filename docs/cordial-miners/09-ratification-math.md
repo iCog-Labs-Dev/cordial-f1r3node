@@ -56,8 +56,9 @@ boundary. For total stake 10:
 - support 6 fails because `6 * 3 == 10 * 2`
 - support 7 passes because `7 * 3 > 10 * 2`
 
-Checked arithmetic is used for accumulation and multiplication. Overflow fails
-closed by returning `false`.
+The implementation converts `u64` bond weights to `u128` for accumulation and
+cross-multiplication. Checked arithmetic is still used, so overflow fails closed
+by returning `false`.
 
 ## Closure and Witness Sets
 
