@@ -157,7 +157,7 @@ where
 /// Check whether a leader block has achieved finality within its wave.
 ///
 /// Per Definition 24 of arXiv:2205.09174, a leader block `b` of round `r`
-/// is final if it is super-ratified within `B(r + w - 1)` — the prefix of
+/// is final if it is super-ratified within `B(r + w - 1)` -- the prefix of
 /// the blocklace up to the last round of the wave.
 ///
 /// Returns `false` if:
@@ -212,6 +212,65 @@ where
         .collect();
 
     super_ratifies(blocklace, &witness_blocks, &candidate_block, n, f)
+}
+
+/// Return the final leader block for a wave, if one exists.
+///
+/// This first resolves the unique leader block for the wave, then checks
+/// whether that block is final under Definition 24.
+pub fn final_leader_for_wave<F>(
+    blocklace: &Blocklace,
+    wave: u64,
+    wavelength: u64,
+    n: usize,
+    f: usize,
+    leader_selection: F,
+) -> Option<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    let leader = leader_block_for_wave(blocklace, wave, wavelength, leader_selection)?;
+    if is_final_leader(blocklace, &leader, wavelength, n, f, leader_selection) {
+        Some(leader)
+    } else {
+        None
+    }
+}
+
+/// Return the latest final leader currently known in the blocklace.
+///
+/// This scans backward from the highest known round, returning the newest wave
+/// whose unique leader block is final.
+pub fn latest_final_leader<F>(
+    blocklace: &Blocklace,
+    wavelength: u64,
+    n: usize,
+    f: usize,
+    leader_selection: F,
+) -> Option<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    if wavelength == 0 || blocklace.dom().is_empty() {
+        return None;
+    }
+
+    let max_round = blocklace
+        .dom()
+        .iter()
+        .filter_map(|id| depth(blocklace, id))
+        .max()?;
+    let latest_wave = wave_of_round(max_round, wavelength)?;
+
+    for wave in (0..=latest_wave).rev() {
+        if let Some(leader) =
+            final_leader_for_wave(blocklace, wave, wavelength, n, f, leader_selection)
+        {
+            return Some(leader);
+        }
+    }
+
+    None
 }
 
 fn total_honest_stake(blocklace: &Blocklace, bonds: &HashMap<NodeId, u64>) -> u64 {

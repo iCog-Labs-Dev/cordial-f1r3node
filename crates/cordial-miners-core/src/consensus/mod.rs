@@ -13,8 +13,8 @@ pub use cordiality::{
     is_supermajority, missing_known_tips, observed_block_ids, ratifies, super_ratifies,
 };
 pub use finality::{
-    FinalityStatus, can_be_finalized, check_finality, find_last_finalized, is_final_leader,
-    leader_block_for_wave,
+    FinalityStatus, can_be_finalized, check_finality, final_leader_for_wave, find_last_finalized,
+    is_final_leader, latest_final_leader, leader_block_for_wave,
 };
 pub use fork_choice::{ForkChoice, collect_validator_tips, fork_choice, is_cordial};
 pub use round::{
