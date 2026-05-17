@@ -6,11 +6,12 @@ pub mod round;
 pub mod validation;
 pub mod wave;
 
-pub use approval::{approves, approving_blocks};
+pub use approval::{approves, approving_blocks, weighted_approving_creators};
 pub use cordiality::{
     Equivocation, HiddenEquivocation, acknowledges_equivocation, all_equivocations,
     creator_blocks_at_round, equivocation_blocks_at_round, hidden_equivocations, is_cordial_block,
-    is_supermajority, missing_known_tips, observed_block_ids, ratifies, super_ratifies,
+    is_supermajority, is_weighted_supermajority, missing_known_tips, observed_block_ids, ratifies,
+    super_ratifies, weighted_ratifies, weighted_super_ratifies,
 };
 pub use finality::{
     FinalityStatus, can_be_finalized, check_finality, final_leader_for_wave, find_last_finalized,

@@ -6,11 +6,11 @@
 //! See Definition 18 of "Cordial Miners: Voluntary Participation in Blockchains"
 //! (arXiv:2205.09174) for the formal specification.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-use crate::types::BlockIdentity;
+use crate::types::{BlockIdentity, NodeId};
 
 /// A block `approver` approves a `target` block if:
 /// 1. The approver observes the target (i.e., target is in the approver's predecessor closure)
@@ -75,5 +75,30 @@ pub fn approving_blocks(blocklace: &Blocklace, target: &BlockIdentity) -> HashSe
         .into_iter()
         .filter_map(|block_id| blocklace.get(block_id))
         .filter(|block| approves(blocklace, &block.identity, target))
+        .collect()
+}
+
+/// Return bonded creators from `blocks` that approve `target`.
+///
+/// This is the approval-side helper for weighted ratification. It preserves the
+/// existing paper-native `approves` predicate, then filters support to validators
+/// with positive bond weight so unknown and zero-weight creators cannot
+/// contribute stake.
+pub fn weighted_approving_creators(
+    blocklace: &Blocklace,
+    blocks: &HashSet<Block>,
+    target: &BlockIdentity,
+    bonds: &HashMap<NodeId, u64>,
+) -> HashSet<NodeId> {
+    blocks
+        .iter()
+        .filter(|block| approves(blocklace, &block.identity, target))
+        .filter_map(|block| {
+            let creator = &block.identity.creator;
+            match bonds.get(creator).copied() {
+                Some(weight) if weight > 0 => Some(creator.clone()),
+                _ => None,
+            }
+        })
         .collect()
 }

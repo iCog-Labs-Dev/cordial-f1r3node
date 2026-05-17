@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-use crate::consensus::approval::approves;
+use crate::consensus::approval::{approves, weighted_approving_creators};
 use crate::consensus::round::{blocks_at_depth, depth};
 use crate::types::{BlockIdentity, NodeId};
 
@@ -243,6 +243,57 @@ pub fn super_ratifies(
     is_supermajority(&ratifying_blocks, n, f)
 }
 
+/// Weighted variant of [`ratifies`] for the f1r3node compatibility path.
+///
+/// The paper-native `ratifies` predicate remains unchanged. This version uses
+/// the same approval relation and inclusive ratifier closure, but it replaces
+/// distinct-creator cardinality with strict two-thirds bonded stake.
+pub fn weighted_ratifies(
+    blocklace: &Blocklace,
+    ratifier: &Block,
+    target: &Block,
+    bonds: &HashMap<NodeId, u64>,
+) -> bool {
+    if blocklace.get(&ratifier.identity).is_none() || blocklace.get(&target.identity).is_none() {
+        return false;
+    }
+
+    let observed_ids = blocklace.observe(&ratifier.identity);
+    let observed_blocks: HashSet<Block> = observed_ids
+        .iter()
+        .filter_map(|id| blocklace.get(id))
+        .collect();
+    let approving_creators =
+        weighted_approving_creators(blocklace, &observed_blocks, &target.identity, bonds);
+
+    is_weighted_supermajority(&approving_creators, bonds)
+}
+
+/// Weighted variant of [`super_ratifies`] for the f1r3node compatibility path.
+///
+/// A set of blocks weighted-super-ratifies `target` when a strict two-thirds
+/// bonded stake of distinct block creators in that set weighted-ratify it.
+pub fn weighted_super_ratifies(
+    blocklace: &Blocklace,
+    blocks: &HashSet<Block>,
+    target: &Block,
+    bonds: &HashMap<NodeId, u64>,
+) -> bool {
+    let ratifying_creators: HashSet<NodeId> = blocks
+        .iter()
+        .filter(|block| weighted_ratifies(blocklace, block, target, bonds))
+        .filter_map(|block| {
+            let creator = &block.identity.creator;
+            match bonds.get(creator).copied() {
+                Some(weight) if weight > 0 => Some(creator.clone()),
+                _ => None,
+            }
+        })
+        .collect();
+
+    is_weighted_supermajority(&ratifying_creators, bonds)
+}
+
 /// Check if a set of blocks constitutes a supermajority.
 ///
 /// Supermajority: > (n+f)/2 distinct creators
@@ -251,4 +302,38 @@ pub fn is_supermajority(blocks: &HashSet<Block>, n: usize, f: usize) -> bool {
         blocks.iter().map(|block| &block.identity.creator).collect();
 
     distinct_creators.len() > (n + f) / 2
+}
+
+/// Check whether `creators` hold a strict two-thirds majority of bonded stake.
+pub fn is_weighted_supermajority(creators: &HashSet<NodeId>, bonds: &HashMap<NodeId, u64>) -> bool {
+    let Some(total_weight) = checked_bond_weight(bonds.values().copied()) else {
+        return false;
+    };
+    if total_weight == 0 {
+        return false;
+    }
+
+    let Some(support_weight) = checked_bond_weight(
+        creators
+            .iter()
+            .filter_map(|creator| bonds.get(creator))
+            .copied(),
+    ) else {
+        return false;
+    };
+
+    strict_two_thirds(support_weight, total_weight)
+}
+
+fn checked_bond_weight(weights: impl IntoIterator<Item = u64>) -> Option<u128> {
+    weights
+        .into_iter()
+        .try_fold(0u128, |total, weight| total.checked_add(u128::from(weight)))
+}
+
+fn strict_two_thirds(support_weight: u128, total_weight: u128) -> bool {
+    match (support_weight.checked_mul(3), total_weight.checked_mul(2)) {
+        (Some(support), Some(threshold)) => support > threshold,
+        _ => false,
+    }
 }
