@@ -49,7 +49,7 @@ use sha2::{Digest, Sha256};
 
 use crate::block_translation::BlockMessage;
 
-use cordial_miners_core::crypto::{hash_content, CryptoVerifier};
+use cordial_miners_core::crypto::{CryptoVerifier, hash_content};
 use cordial_miners_core::types::{BlockContent, NodeId}; // The data types we need to work with
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -393,9 +393,8 @@ fn put_bytes(buf: &mut Vec<u8>, b: &[u8]) {
     buf.extend_from_slice(b);
 }
 
-
 // ═══════════════════════════════════════════════════════════════════════════
-// The F1r2flyCrypto Adapter 
+// The F1r2flyCrypto Adapter
 // ═══════════════════════════════════════════════════════════════════════════
 #[derive(Debug)]
 pub struct F1r3flyCryptoAdapter {
@@ -405,12 +404,12 @@ pub struct F1r3flyCryptoAdapter {
 // This implementation in here are the functions that belong to F1r3flyCryptoAdapter struct".
 impl F1r3flyCryptoAdapter {
     // Creates new adapter based on chosen algorithm
-    pub fn new(algorithm:SigAlgorithm) -> Self {
+    pub fn new(algorithm: SigAlgorithm) -> Self {
         Self { algorithm }
     }
     // return the chosen algorithm for the adapter
     pub fn algorithm(&self) -> SigAlgorithm {
-            self.algorithm
+        self.algorithm
     }
     // Create adapter from algorithm string ("secp256k1", "ed25519"). Returns Ok or Error
     pub fn from_algorithm_str(s: &str) -> Result<Self, CryptoError> {
@@ -439,19 +438,21 @@ impl CryptoVerifier for F1r3flyCryptoAdapter {
         signature: &[u8],
         creator: &NodeId,
     ) -> Result<(), Self::Error> {
-        
         // Recompute the content hash; the creator's signature must match it, so changed content fails verification.
         let hash: [u8; 32] = hash_content(content); // Get the 32-byte hash of the block content.
 
-        // reject empty signatures 
+        // reject empty signatures
         if signature.is_empty() {
-            return Err(CryptoError::InvalidSignatureLength { expected: 1, actual: 0 });
+            return Err(CryptoError::InvalidSignatureLength {
+                expected: 1,
+                actual: 0,
+            });
         }
 
         // Verify the signature with the chosen algorithm.
         let is_valid = match self.algorithm {
             SigAlgorithm::Secp256k1 => Secp256k1.verify(&hash, &creator.0, signature)?,
-            SigAlgorithm::Ed25519   => Ed25519.verify(&hash, &creator.0, signature)?,
+            SigAlgorithm::Ed25519 => Ed25519.verify(&hash, &creator.0, signature)?,
         };
 
         if is_valid {
