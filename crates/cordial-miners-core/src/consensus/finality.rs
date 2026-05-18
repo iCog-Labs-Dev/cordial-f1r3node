@@ -1,203 +1,159 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 
+use crate::block::Block;
 use crate::blocklace::Blocklace;
+use crate::consensus::cordiality::super_ratifies;
+use crate::consensus::round::{blocks_at_depth, depth};
+use crate::consensus::wave::{last_round_of_wave, leader_blocks_of_wave, wave_of_round};
 use crate::types::{BlockIdentity, NodeId};
 
-/// The finality status of a block in the blocklace.
+/// Return the unique leader block for a wave when exactly one exists.
 ///
-/// From the paper: a block is finalized when a supermajority (> 2/3) of
-/// the total honest stake has that block in their causal history (ancestry).
+/// Per Definition A.10 of arXiv:2205.09174, a leader block is a block by
+/// the elected leader validator in the first round of the wave.
 ///
-/// This replaces CBC Casper's clique oracle, which requires NP-hard clique
-/// enumeration bounded by MAX_CLIQUE_CANDIDATES. The blocklace structure
-/// makes finality a simple stake summation.
-#[derive(Debug, Clone, PartialEq)]
-pub enum FinalityStatus {
-    /// Block is finalized: > 2/3 of honest stake supports it.
-    Finalized {
-        /// Total stake of validators supporting this block.
-        supporting_stake: u64,
-        /// Total honest stake (excluding equivocators).
-        total_honest_stake: u64,
-    },
-
-    /// Block is not yet finalized but could become so.
-    Pending {
-        /// Total stake of validators supporting this block so far.
-        supporting_stake: u64,
-        /// Total honest stake (excluding equivocators).
-        total_honest_stake: u64,
-    },
-
-    /// Block is not known in the blocklace.
-    Unknown,
-}
-
-impl FinalityStatus {
-    pub fn is_finalized(&self) -> bool {
-        matches!(self, FinalityStatus::Finalized { .. })
-    }
-
-    pub fn is_pending(&self) -> bool {
-        matches!(self, FinalityStatus::Pending { .. })
-    }
-}
-
-/// Check the finality status of a single block.
-///
-/// From the paper: a block `b` is finalized when the set of validators
-/// whose tips have `b` in their ancestry holds > 2/3 of the total
-/// honest stake.
-///
-/// Algorithm:
-/// 1. Compute total honest stake (exclude equivocators)
-/// 2. For each bonded, non-equivocating validator, check if their tip
-///    has `b` in its ancestry (using `precedes_or_equals`)
-/// 3. Sum the stake of supporting validators
-/// 4. If supporting_stake * 3 > total_honest_stake * 2, block is finalized
-pub fn check_finality(
+/// Returns `None` if:
+/// - the wavelength is zero
+/// - the leader round has no block by the elected leader
+/// - the elected leader equivocated and produced multiple leader blocks
+/// - `leader_selection` returns `None` for this wave
+pub fn leader_block_for_wave<F>(
     blocklace: &Blocklace,
-    block_id: &BlockIdentity,
-    bonds: &HashMap<NodeId, u64>,
-) -> FinalityStatus {
-    // Block must exist in the blocklace
-    if blocklace.content(block_id).is_none() {
-        return FinalityStatus::Unknown;
-    }
+    wave: u64,
+    wavelength: u64,
+    leader_selection: F,
+) -> Option<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId>,
+{
+    let mut leader_blocks: Vec<BlockIdentity> =
+        leader_blocks_of_wave(blocklace, wave, wavelength, leader_selection)
+            .into_iter()
+            .map(|block| block.identity)
+            .collect();
 
-    let equivocators = blocklace.find_equivacators();
-
-    // Total honest stake = sum of all bonded validators minus equivocators
-    let total_honest_stake: u64 = bonds
-        .iter()
-        .filter(|(node, _)| !equivocators.contains(node))
-        .map(|(_, stake)| stake)
-        .sum();
-
-    if total_honest_stake == 0 {
-        return FinalityStatus::Pending {
-            supporting_stake: 0,
-            total_honest_stake: 0,
-        };
-    }
-
-    // Sum stake of validators whose tip has block_id in its ancestry
-    let supporting_stake: u64 = bonds
-        .iter()
-        .filter(|(node, _)| !equivocators.contains(node))
-        .filter(|(node, _)| {
-            blocklace
-                .tip_of(node)
-                .is_some_and(|tip| blocklace.preceedes_or_equals(block_id, &tip.identity))
-        })
-        .map(|(_, stake)| stake)
-        .sum();
-
-    // Supermajority: supporting > 2/3 of total
-    // Use integer arithmetic to avoid floating point: s * 3 > t * 2
-    if supporting_stake * 3 > total_honest_stake * 2 {
-        FinalityStatus::Finalized {
-            supporting_stake,
-            total_honest_stake,
-        }
-    } else {
-        FinalityStatus::Pending {
-            supporting_stake,
-            total_honest_stake,
-        }
-    }
-}
-
-/// Scan the blocklace for the most recent finalized block.
-///
-/// This replaces CBC Casper's `Finalizer::run()` which does a two-phase
-/// scan with work budgets and clique oracle calls. In Cordial Miners,
-/// we simply check each block for supermajority support.
-///
-/// Algorithm:
-/// 1. Collect all blocks in the blocklace
-/// 2. Check finality for each
-/// 3. Among finalized blocks, return the one that is an ancestor of no
-///    other finalized block (the "highest" finalized block)
-///
-/// Returns `None` if no block is finalized yet.
-pub fn find_last_finalized(
-    blocklace: &Blocklace,
-    bonds: &HashMap<NodeId, u64>,
-) -> Option<BlockIdentity> {
-    let dom: Vec<BlockIdentity> = blocklace.dom().into_iter().cloned().collect();
-
-    let finalized: Vec<BlockIdentity> = dom
-        .into_iter()
-        .filter(|id| check_finality(blocklace, id, bonds).is_finalized())
-        .collect();
-
-    if finalized.is_empty() {
+    if leader_blocks.len() != 1 {
         return None;
     }
 
-    // Find the "highest" finalized block: the one not preceded by any
-    // other finalized block (no other finalized block has it as ancestor)
-    finalized
-        .iter()
-        .find(|candidate| {
-            !finalized
-                .iter()
-                .any(|other| other != *candidate && blocklace.precedes(candidate, other))
-        })
-        .cloned()
+    leader_blocks.pop()
 }
 
-/// Check if a block can still potentially be finalized, or if it has been
-/// orphaned (impossible to reach 2/3 even if all remaining validators support it).
+/// Check whether a leader block has achieved finality within its wave.
 ///
-/// Analogous to CBC Casper's `cannot_be_orphaned` pre-filter, but inverted:
-/// returns `true` if the block CAN still be finalized.
+/// Per Definition 24 of arXiv:2205.09174, a leader block `b` of round `r`
+/// is final if it is super-ratified within `B(r + w - 1)` — the prefix of
+/// the blocklace up to the last round of the wave.
 ///
-/// A block is orphaned when: supporting_stake + remaining_stake <= 2/3 * total
-/// where remaining_stake is the stake of validators who haven't yet expressed
-/// a view (no tip in the blocklace).
-pub fn can_be_finalized(
+/// Returns `false` if:
+/// - the candidate block is not in the blocklace
+/// - the candidate is not one of the actual leader blocks for its wave
+/// - the wave boundaries cannot be computed
+/// - super-ratification is not achieved
+pub fn is_final_leader<F>(
     blocklace: &Blocklace,
-    block_id: &BlockIdentity,
-    bonds: &HashMap<NodeId, u64>,
-) -> bool {
-    if blocklace.content(block_id).is_none() {
+    candidate: &BlockIdentity,
+    wavelength: u64,
+    n: usize,
+    f: usize,
+    leader_selection: F,
+) -> bool
+where
+    F: Fn(u64) -> Option<NodeId>,
+{
+    let candidate_block = match blocklace.get(candidate) {
+        Some(block) => block,
+        None => return false,
+    };
+
+    let candidate_round = match depth(blocklace, candidate) {
+        Some(d) => d,
+        None => return false,
+    };
+
+    let wave = match wave_of_round(candidate_round, wavelength) {
+        Some(w) => w,
+        None => return false,
+    };
+
+    let leader_blocks = leader_blocks_of_wave(blocklace, wave, wavelength, &leader_selection);
+    if !leader_blocks
+        .iter()
+        .any(|leader_block| leader_block.identity == *candidate)
+    {
         return false;
     }
 
-    let equivocators = blocklace.find_equivacators();
+    let last_round = match last_round_of_wave(wave, wavelength) {
+        Some(r) => r,
+        None => return false,
+    };
 
-    let total_honest_stake: u64 = bonds
-        .iter()
-        .filter(|(node, _)| !equivocators.contains(node))
-        .map(|(_, stake)| stake)
-        .sum();
+    // Def. 24 checks B(r + w - 1). Restricting the witness set to rounds from
+    // the candidate round through the end of the wave is equivalent for the
+    // candidate, because earlier rounds cannot observe and ratify it.
+    let witness_blocks: HashSet<Block> = (candidate_round..=last_round)
+        .flat_map(|round| blocks_at_depth(blocklace, round))
+        .collect();
 
-    if total_honest_stake == 0 {
-        return false;
+    super_ratifies(blocklace, &witness_blocks, &candidate_block, n, f)
+}
+
+/// Return the final leader block for a wave, if one exists.
+///
+/// This first resolves the unique leader block for the wave, then checks
+/// whether that block is final under Definition 24.
+pub fn final_leader_for_wave<F>(
+    blocklace: &Blocklace,
+    wave: u64,
+    wavelength: u64,
+    n: usize,
+    f: usize,
+    leader_selection: F,
+) -> Option<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    let leader = leader_block_for_wave(blocklace, wave, wavelength, leader_selection)?;
+    if is_final_leader(blocklace, &leader, wavelength, n, f, leader_selection) {
+        Some(leader)
+    } else {
+        None
+    }
+}
+
+/// Return the latest final leader currently known in the blocklace.
+///
+/// This scans backward from the highest known round, returning the newest wave
+/// whose unique leader block is final.
+pub fn latest_final_leader<F>(
+    blocklace: &Blocklace,
+    wavelength: u64,
+    n: usize,
+    f: usize,
+    leader_selection: F,
+) -> Option<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    if wavelength == 0 || blocklace.dom().is_empty() {
+        return None;
     }
 
-    // Current supporting stake
-    let supporting_stake: u64 = bonds
+    let max_round = blocklace
+        .dom()
         .iter()
-        .filter(|(node, _)| !equivocators.contains(node))
-        .filter(|(node, _)| {
-            blocklace
-                .tip_of(node)
-                .is_some_and(|tip| blocklace.preceedes_or_equals(block_id, &tip.identity))
-        })
-        .map(|(_, stake)| stake)
-        .sum();
+        .filter_map(|id| depth(blocklace, id))
+        .max()?;
+    let latest_wave = wave_of_round(max_round, wavelength)?;
 
-    // Stake from validators with no tip yet (could still support)
-    let undecided_stake: u64 = bonds
-        .iter()
-        .filter(|(node, _)| !equivocators.contains(node))
-        .filter(|(node, _)| blocklace.tip_of(node).is_none())
-        .map(|(_, stake)| stake)
-        .sum();
+    for wave in (0..=latest_wave).rev() {
+        if let Some(leader) =
+            final_leader_for_wave(blocklace, wave, wavelength, n, f, leader_selection)
+        {
+            return Some(leader);
+        }
+    }
 
-    // Can be finalized if max possible support > 2/3
-    (supporting_stake + undecided_stake) * 3 > total_honest_stake * 2
+    None
 }

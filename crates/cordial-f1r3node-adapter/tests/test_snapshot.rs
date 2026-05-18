@@ -267,16 +267,36 @@ fn last_finalized_block_matches_finality_detector() {
     let mut bl = Blocklace::new();
     let v1 = node(1);
     let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
 
-    // v1 genesis, v2 builds on it → g finalizes under (v1, v2) both supporting
+    // The adapter now uses paper-native leader finality, so we need a full
+    // wave where the elected leader (node 1 under the round-robin default)
+    // is super-ratified.
     let g = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 1);
     bl.insert(g.clone(), &MockVerifier).unwrap();
-    let mut preds = HashSet::new();
-    preds.insert(g.identity.clone());
-    let b2 = make_block(v2.clone(), simple_payload(1, vec![]), preds, 2);
-    bl.insert(b2.clone(), &MockVerifier).unwrap();
 
-    let bonds_map = bonds(&[(1, 100), (2, 100)]);
+    let mut r1_preds = HashSet::new();
+    r1_preds.insert(g.identity.clone());
+    let b2 = make_block(v2.clone(), simple_payload(1, vec![]), r1_preds.clone(), 2);
+    let b3 = make_block(v3.clone(), simple_payload(1, vec![]), r1_preds.clone(), 3);
+    let b4 = make_block(v4.clone(), simple_payload(1, vec![]), r1_preds, 4);
+    bl.insert(b2.clone(), &MockVerifier).unwrap();
+    bl.insert(b3.clone(), &MockVerifier).unwrap();
+    bl.insert(b4.clone(), &MockVerifier).unwrap();
+
+    let mut r2_preds = HashSet::new();
+    r2_preds.insert(b2.identity.clone());
+    r2_preds.insert(b3.identity.clone());
+    r2_preds.insert(b4.identity.clone());
+    let c2 = make_block(v2.clone(), simple_payload(2, vec![]), r2_preds.clone(), 5);
+    let c3 = make_block(v3.clone(), simple_payload(2, vec![]), r2_preds.clone(), 6);
+    let c4 = make_block(v4.clone(), simple_payload(2, vec![]), r2_preds, 7);
+    bl.insert(c2, &MockVerifier).unwrap();
+    bl.insert(c3, &MockVerifier).unwrap();
+    bl.insert(c4, &MockVerifier).unwrap();
+
+    let bonds_map = bonds(&[(1, 100), (2, 100), (3, 100), (4, 100)]);
     let snap = build_snapshot(&bl, &bonds_map, default_shard_conf(), "root").unwrap();
 
     // Last finalized block should be non-empty (some block is finalized)
