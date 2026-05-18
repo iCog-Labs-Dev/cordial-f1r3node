@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-use crate::consensus::approval::approves;
+use crate::consensus::approval::{approves, weighted_approving_creators};
 use crate::consensus::round::{blocks_at_depth, depth};
 use crate::types::{BlockIdentity, NodeId};
 
@@ -35,6 +35,11 @@ pub struct HiddenEquivocation {
     pub creator: NodeId,
     pub round: u64,
     pub hidden: Vec<BlockIdentity>,
+}
+
+#[derive(Default)]
+struct WeightedRatificationMemo {
+    weighted_ratifies_cache: HashMap<(BlockIdentity, BlockIdentity), bool>,
 }
 
 /// Return all blocks  created by 'creator' at exactly 'round' in the blocklace.
@@ -241,6 +246,135 @@ pub fn super_ratifies(
         .collect();
 
     is_supermajority(&ratifying_blocks, n, f)
+}
+
+/// Check whether `ratifier` ratifies `target` using bonded stake.
+///
+/// This is the f1r3node-compatible weighted variant of [`ratifies`]. It keeps
+/// the same approval relation and inclusive ratifier closure, but measures a
+/// strict two-thirds threshold over `bonds` instead of creator cardinality.
+pub fn weighted_ratifies(
+    blocklace: &Blocklace,
+    ratifier: &Block,
+    target: &Block,
+    bonds: &HashMap<NodeId, u64>,
+) -> bool {
+    let mut memo = WeightedRatificationMemo::default();
+    weighted_ratifies_with_memo(blocklace, ratifier, target, bonds, &mut memo)
+}
+
+fn weighted_ratifies_with_memo(
+    blocklace: &Blocklace,
+    ratifier: &Block,
+    target: &Block,
+    bonds: &HashMap<NodeId, u64>,
+    memo: &mut WeightedRatificationMemo,
+) -> bool {
+    let cache_key = (ratifier.identity.clone(), target.identity.clone());
+    if let Some(result) = memo.weighted_ratifies_cache.get(&cache_key) {
+        return *result;
+    }
+
+    let result = if blocklace.get(&ratifier.identity).is_none()
+        || blocklace.get(&target.identity).is_none()
+    {
+        false
+    } else {
+        let observed_ids = blocklace.observe(&ratifier.identity);
+        let observed_blocks: HashSet<Block> = observed_ids
+            .iter()
+            .filter_map(|id| blocklace.get(id))
+            .collect();
+
+        let approving_creators =
+            weighted_approving_creators(blocklace, &observed_blocks, &target.identity, bonds);
+
+        is_weighted_supermajority(&approving_creators, bonds)
+    };
+
+    memo.weighted_ratifies_cache.insert(cache_key, result);
+    result
+}
+
+/// Check whether the supplied witness set super-ratifies `target` using bonded
+/// stake.
+///
+/// The caller must pass the block set for the relevant round, wave, or
+/// f1r3node adapter context. This function does not select leaders, waves, or
+/// finality windows.
+pub fn weighted_super_ratifies(
+    blocklace: &Blocklace,
+    blocks: &HashSet<Block>,
+    target: &Block,
+    bonds: &HashMap<NodeId, u64>,
+) -> bool {
+    let mut memo = WeightedRatificationMemo::default();
+    weighted_super_ratifies_with_memo(blocklace, blocks, target, bonds, &mut memo)
+}
+
+fn weighted_super_ratifies_with_memo(
+    blocklace: &Blocklace,
+    blocks: &HashSet<Block>,
+    target: &Block,
+    bonds: &HashMap<NodeId, u64>,
+    memo: &mut WeightedRatificationMemo,
+) -> bool {
+    let ratifying_creators: HashSet<NodeId> = blocks
+        .iter()
+        .filter(|block| weighted_ratifies_with_memo(blocklace, block, target, bonds, memo))
+        .filter_map(|block| {
+            let creator = &block.identity.creator;
+            match bonds.get(creator).copied() {
+                Some(weight) if weight > 0 => Some(creator.clone()),
+                _ => None,
+            }
+        })
+        .collect();
+
+    is_weighted_supermajority(&ratifying_creators, bonds)
+}
+
+/// Check whether `creators` hold strictly more than two-thirds of total bonded
+/// stake.
+///
+/// `bonds` is the full active validator set for the decision context. Unknown
+/// creators do not contribute support. Overflow returns `false`.
+pub fn is_weighted_supermajority(creators: &HashSet<NodeId>, bonds: &HashMap<NodeId, u64>) -> bool {
+    let Some(total_weight) = checked_bond_weight(bonds.values().copied()) else {
+        return false;
+    };
+
+    if total_weight == 0 {
+        return false;
+    }
+
+    let Some(support_weight) = checked_bond_weight(
+        creators
+            .iter()
+            .filter_map(|creator| bonds.get(creator))
+            .copied(),
+    ) else {
+        return false;
+    };
+
+    strict_two_thirds(support_weight, total_weight)
+}
+
+fn checked_bond_weight(weights: impl IntoIterator<Item = u64>) -> Option<u128> {
+    weights
+        .into_iter()
+        .try_fold(0u128, |total, weight| total.checked_add(u128::from(weight)))
+}
+
+fn strict_two_thirds(support_weight: u128, total_weight: u128) -> bool {
+    let Some(weighted_support) = support_weight.checked_mul(3) else {
+        return false;
+    };
+    let Some(threshold) = total_weight.checked_mul(2) else {
+        return false;
+    };
+
+    weighted_support > threshold
 }
 
 /// Check if a set of blocks constitutes a supermajority.
