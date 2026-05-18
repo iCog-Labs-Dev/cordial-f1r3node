@@ -5,12 +5,12 @@ use cordial_f1r3node_adapter::block_translation::{
     BlockMessage, Body, F1r3flyState, Header, ProcessedSystemDeploy,
 };
 use cordial_f1r3node_adapter::crypto_bridge::{
-    Blake2b256Hasher, CryptoError, Ed25519, Hasher, Secp256k1, Sha256Hasher, SigAlgorithm, Signer,
-    Verifier, compute_block_hash,F1r3flyCryptoAdapter,
+    Blake2b256Hasher, CryptoError, Ed25519, F1r3flyCryptoAdapter, Hasher, Secp256k1, Sha256Hasher,
+    SigAlgorithm, Signer, Verifier, compute_block_hash,
 };
 
-use cordial_miners_core::crypto::{hash_content as core_hash,CryptoVerifier};
-use cordial_miners_core::types::{NodeId,BlockContent};
+use cordial_miners_core::crypto::{CryptoVerifier, hash_content as core_hash};
+use cordial_miners_core::types::{BlockContent, NodeId};
 use std::collections::HashSet;
 
 // ── Hasher correctness ───────────────────────────────────────────────────
@@ -359,12 +359,11 @@ fn block_hash_includes_system_deploys() {
     assert_ne!(compute_block_hash(&b), compute_block_hash(&c));
 }
 
-
 // ── F1r3flyCryptoAdapter tests ───────────────────────────────────────────
 // sk means private key and pk means public key
 // I used core_hash since it comes from cordial_miners_core::crypto::hash_content
-fn make_content(payload: &[u8]) ->BlockContent {
-    BlockContent{
+fn make_content(payload: &[u8]) -> BlockContent {
+    BlockContent {
         payload: payload.to_vec(),
         predecessors: HashSet::new(),
     }
@@ -379,51 +378,59 @@ fn adapter_secp256k1_valid_signature_returns_ok() {
     let signature = Secp256k1.sign(&hash, &sk).unwrap();
     let creator = NodeId(pk);
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Secp256k1);
-    assert!(adapter.verify_block(&content,&signature,&creator).is_ok());
+    assert!(adapter.verify_block(&content, &signature, &creator).is_ok());
 }
 
 // TEST 2 — Acceptance Criterion : "Adapter returns CryptoError for an corrupted signature."
 #[test]
 fn adapter_secp256k1_corrupted_signature_returns_err() {
-    let (sk,pk) = secp256k1_keypair();
+    let (sk, pk) = secp256k1_keypair();
     let content = make_content(b"test block");
     let hash = core_hash(&content);
-    let mut signature = Secp256k1.sign(&hash,&sk).unwrap();
-    *signature.last_mut().unwrap()^=0xff; //flip last byte
+    let mut signature = Secp256k1.sign(&hash, &sk).unwrap();
+    *signature.last_mut().unwrap() ^= 0xff; //flip last byte
     let creator = NodeId(pk);
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Secp256k1);
-    assert!(adapter.verify_block(&content,&signature,&creator).is_err());
+    assert!(
+        adapter
+            .verify_block(&content, &signature, &creator)
+            .is_err()
+    );
 }
 
 // TEST 3 — acceptance criterion : "The adapter returns Err for a block with a forged signature." forged means pretending real creator".
 #[test]
 fn adapter_secp256k1_forged_signature_returns_err() {
-    let (sk,pk) = secp256k1_keypair();
+    let (sk, pk) = secp256k1_keypair();
     let content = make_content(b"test block");
     let hash = core_hash(&content);
     let _signature = Secp256k1.sign(&hash, &sk).unwrap();
     // let try our fake creater trying forging the content
-    let (forger_sk,_forger_pk) = secp256k1_keypair();
+    let (forger_sk, _forger_pk) = secp256k1_keypair();
     let forged_signature = Secp256k1.sign(&hash, &forger_sk).unwrap();
     let creator = NodeId(pk); //real creator
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Secp256k1);
-    assert!(adapter.verify_block(&content, &forged_signature, &creator).is_err());
+    assert!(
+        adapter
+            .verify_block(&content, &forged_signature, &creator)
+            .is_err()
+    );
 }
 
 // TEST 4 — acceptance criterion : "An empty signature slice (zero bytes) must always be rejected".
 #[test]
 fn adapter_secp256k1_empty_signature_returns_err() {
-    let (_sk,pk) = secp256k1_keypair();
+    let (_sk, pk) = secp256k1_keypair();
     let content = make_content(b"test block");
     let creator = NodeId(pk);
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Secp256k1);
-    assert!(adapter.verify_block(&content,&[],&creator).is_err());
+    assert!(adapter.verify_block(&content, &[], &creator).is_err());
 }
 
 // TEST 5 — acceptance criterion: "Tampered_content with the original signature must always be rejected".
 #[test]
 fn adapter_secp256k1_tampered_content_returns_err() {
-    let (sk,pk) = secp256k1_keypair();
+    let (sk, pk) = secp256k1_keypair();
     let content = make_content(b"test block");
     let hash = core_hash(&content);
     let signature = Secp256k1.sign(&hash, &sk).unwrap();
@@ -431,15 +438,18 @@ fn adapter_secp256k1_tampered_content_returns_err() {
     let tampered_content = make_content(b"I changed but I used the previous signature");
     let creator = NodeId(pk);
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Secp256k1);
-    assert!(adapter.verify_block(&tampered_content, &signature, &creator).is_err());
+    assert!(
+        adapter
+            .verify_block(&tampered_content, &signature, &creator)
+            .is_err()
+    );
 }
-
 
 // ED25519 TESTS
 // TEST 6 — acceptance criterion: "A valid Ed25519 signature must return Ok(())".
 #[test]
 fn adapter_ed25519_valid_signature_returns_ok() {
-    let (sk,pk) = ed25519_keypair();
+    let (sk, pk) = ed25519_keypair();
     let content = make_content(b"test block for ed25519");
     let hash = core_hash(&content);
     let signature = Ed25519.sign(&hash, &sk).unwrap();
@@ -451,14 +461,18 @@ fn adapter_ed25519_valid_signature_returns_ok() {
 // TEST 7 — acceptance criterion: "A corrupted Ed25519 signature must return Err".
 #[test]
 fn adapter_ed25519_corrupted_signature_returns_err() {
-    let (sk,pk) = ed25519_keypair();
+    let (sk, pk) = ed25519_keypair();
     let content = make_content(b"test block for ed25519");
     let hash = core_hash(&content);
     let mut signature = Ed25519.sign(&hash, &sk).unwrap();
-    signature[0] ^=0xff; //flip the first byte
+    signature[0] ^= 0xff; //flip the first byte
     let creator = NodeId(pk.to_vec());
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Ed25519);
-    assert!(adapter.verify_block(&content, &signature, &creator).is_err());
+    assert!(
+        adapter
+            .verify_block(&content, &signature, &creator)
+            .is_err()
+    );
 }
 
 // TEST 8 — acceptance criterion : "The adapter returns Err for an Ed25519 block with a forged signature." forged means pretending real creator".
@@ -474,7 +488,11 @@ fn adapter_ed25519_forged_signature_returns_err() {
 
     let creator = NodeId(pk.to_vec()); // real creator
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Ed25519);
-    assert!(adapter.verify_block(&content, &forged_signature, &creator).is_err());
+    assert!(
+        adapter
+            .verify_block(&content, &forged_signature, &creator)
+            .is_err()
+    );
 }
 
 // TEST 9 — acceptance criterion : "An empty Ed25519 signature slice (zero bytes) must always be rejected".
@@ -482,10 +500,10 @@ fn adapter_ed25519_forged_signature_returns_err() {
 fn ed25519_empty_signature_returns_err() {
     let (_sk, pk) = ed25519_keypair();
     let content = make_content(b"test block");
-    let creator = NodeId(pk.to_vec()); 
+    let creator = NodeId(pk.to_vec());
 
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Ed25519);
-    assert!(adapter.verify_block(&content, &[], &creator).is_err());  
+    assert!(adapter.verify_block(&content, &[], &creator).is_err());
 }
 
 // TEST 10 — acceptance criterion : "If Ed25519 content is changed after signing, verification must fail".
@@ -497,10 +515,14 @@ fn ed25519_tampered_content_returns_err() {
     let signature = Ed25519.sign(&hash, &sk).unwrap();
 
     // Try to verify same signature but with tampered content
-    let tampered_content = make_content(b"Tampered content"); 
+    let tampered_content = make_content(b"Tampered content");
     let creator = NodeId(pk.to_vec());
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Ed25519);
-    assert!(adapter.verify_block(&tampered_content, &signature, &creator).is_err());
+    assert!(
+        adapter
+            .verify_block(&tampered_content, &signature, &creator)
+            .is_err()
+    );
 }
 
 // TEST 11 — acceptance criterion : "\"secp256k1\" string must create a Secp256k1 adapter".
