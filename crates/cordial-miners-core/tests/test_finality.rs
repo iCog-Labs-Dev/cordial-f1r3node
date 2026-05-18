@@ -450,13 +450,15 @@ fn weighted_false_but_unweighted_true_when_low_stake_ratifiers() {
     // Unweighted: v2+v3+v4 = 3 distinct creators > (4+1)/2 = 2.5 → TRUE
     let b = unequal_bonds(&[(1, 4), (2, 4), (3, 4), (4, 4), (5, 900)]);
 
-    let unweighted_result =
-        is_final_leader(&bl, &leader.identity, wavelength, n, f, leader_node1);
+    let unweighted_result = is_final_leader(&bl, &leader.identity, wavelength, n, f, leader_node1);
     let weighted_result =
         is_weighted_final_leader(&bl, &leader.identity, wavelength, &b, leader_node1);
 
     assert!(unweighted_result, "unweighted should be final");
-    assert!(!weighted_result, "weighted should NOT be final — low stake ratifiers");
+    assert!(
+        !weighted_result,
+        "weighted should NOT be final — low stake ratifiers"
+    );
 }
 
 /// Weighted and unweighted agree when ratifying validators
