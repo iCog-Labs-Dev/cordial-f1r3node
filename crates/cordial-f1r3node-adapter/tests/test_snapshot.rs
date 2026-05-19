@@ -96,6 +96,7 @@ fn empty_blocklace_produces_empty_snapshot() {
     assert!(snap.dag.height_map.is_empty());
     assert!(snap.dag.last_finalized_block_hash.is_empty());
     assert!(snap.last_finalized_block.is_empty());
+    assert!(snap.ordered_finalized_blocks.is_empty());
     assert!(snap.lca.is_empty());
     assert!(snap.tips.is_empty());
     assert!(snap.parents.is_empty());
@@ -305,6 +306,16 @@ fn last_finalized_block_matches_finality_detector() {
         snap.last_finalized_block,
         snap.dag.last_finalized_block_hash
     );
+    assert!(!snap.ordered_finalized_blocks.is_empty());
+    assert!(
+        snap.ordered_finalized_blocks
+            .contains(&snap.last_finalized_block)
+    );
+    assert!(
+        snap.ordered_finalized_blocks
+            .iter()
+            .all(|hash| snap.dag.dag_set.contains(hash))
+    );
 
     // The LFB must be a real block in the lace
     assert!(snap.dag.dag_set.contains(&snap.last_finalized_block));
@@ -334,6 +345,7 @@ fn no_finality_when_single_validator_has_no_supermajority() {
 
     assert!(snap.dag.last_finalized_block_hash.is_empty());
     assert!(snap.last_finalized_block.is_empty());
+    assert!(snap.ordered_finalized_blocks.is_empty());
     assert!(snap.dag.finalized_blocks_set.is_empty());
 }
 
