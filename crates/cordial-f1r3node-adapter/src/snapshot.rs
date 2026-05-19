@@ -24,7 +24,7 @@
 //! | `dag.child_map`       | Inverted predecessor relation                         |
 //! | `dag.height_map`      | Indexed by each block's `CordialBlockPayload.state.block_number` |
 //! | `dag.block_number_map`| Same source, inverse lookup                           |
-//! | `last_finalized_block` | `find_last_finalized(blocklace, bonds)`              |
+//! | `last_finalized_block` | `latest_finalized_block_id(blocklace, bonds)`        |
 //! | `lca`                  | `fork_choice(blocklace, bonds).lca`                  |
 //! | `tips`                 | `fork_choice(blocklace, bonds).tips`                 |
 //! | `parents`              | Translated from tips via `block_to_message`           |
@@ -59,11 +59,15 @@
 use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::{collect_validator_tips, find_last_finalized, fork_choice};
+use cordial_miners_core::consensus::{
+    collect_validator_tips, fork_choice, latest_weighted_final_leader,
+};
 use cordial_miners_core::execution::{CordialBlockPayload, compute_deploys_in_scope};
 use cordial_miners_core::types::{BlockIdentity, NodeId};
 
 use crate::block_translation::{BlockMessage, Justification, TranslationError, block_to_message};
+
+const ES_WAVELENGTH: u64 = 3;
 
 /// Simplified mirror of f1r3node's `KeyValueDagRepresentation`.
 ///
@@ -223,8 +227,8 @@ pub fn build_snapshot(
             .insert(node_id.0.clone(), tip_id.content_hash.to_vec());
     }
 
-    // 5. last_finalized_block: compute via finality detector.
-    if let Some(lfb_id) = find_last_finalized(blocklace, bonds) {
+    // 5. last_finalized_block: compute via paper-native leader finality.
+    if let Some(lfb_id) = latest_finalized_block_id(blocklace, bonds) {
         dag.last_finalized_block_hash = lfb_id.content_hash.to_vec();
         dag.finalized_blocks_set
             .insert(lfb_id.content_hash.to_vec());
@@ -340,11 +344,36 @@ fn blocklace_lfb_from(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,
 ) -> Option<BlockIdentity> {
-    find_last_finalized(blocklace, bonds)
+    latest_finalized_block_id(blocklace, bonds)
 }
 
 fn dag_lfb(id: &Option<BlockIdentity>) -> Vec<u8> {
     id.as_ref()
         .map(|i| i.content_hash.to_vec())
         .unwrap_or_default()
+}
+
+/// Resolve the latest weighted final leader using the current ES defaults:
+/// wavelength 3 and deterministic round-robin leader election over the
+/// bonded validators in lexicographic `NodeId` order.
+pub(crate) fn latest_finalized_block_id(
+    blocklace: &Blocklace,
+    bonds: &HashMap<NodeId, u64>,
+) -> Option<BlockIdentity> {
+    let leaders = ordered_validators(bonds);
+
+    if leaders.is_empty() {
+        return None;
+    }
+
+    latest_weighted_final_leader(blocklace, ES_WAVELENGTH, bonds, |wave| {
+        let idx = usize::try_from(wave).ok()? % leaders.len();
+        Some(leaders[idx].clone())
+    })
+}
+
+fn ordered_validators(bonds: &HashMap<NodeId, u64>) -> Vec<NodeId> {
+    let mut validators: Vec<NodeId> = bonds.keys().cloned().collect();
+    validators.sort();
+    validators
 }

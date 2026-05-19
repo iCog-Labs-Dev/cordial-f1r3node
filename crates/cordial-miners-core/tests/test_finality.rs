@@ -1,6 +1,7 @@
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    FinalityStatus, can_be_finalized, check_finality, find_last_finalized,
+    final_leader_for_wave, is_final_leader, is_weighted_final_leader, latest_final_leader,
+    latest_weighted_final_leader, leader_block_for_wave, weighted_final_leader_for_wave,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
@@ -64,268 +65,571 @@ fn insert(bl: &mut Blocklace, block: &Block) {
     bl.insert(block.clone(), &verifier).expect("insert failed");
 }
 
-fn bonds(entries: &[(u8, u64)]) -> HashMap<NodeId, u64> {
+// Always elect node(1) as leader
+fn leader_node1(wave: u64) -> Option<NodeId> {
+    let _ = wave;
+    Some(node(1))
+}
+
+// No leader ever elected
+fn no_leader(_wave: u64) -> Option<NodeId> {
+    None
+}
+
+fn equal_bonds(ids: &[u8], stake: u64) -> HashMap<NodeId, u64> {
+    ids.iter().map(|id| (node(*id), stake)).collect()
+}
+
+fn unequal_bonds(entries: &[(u8, u64)]) -> HashMap<NodeId, u64> {
     entries
         .iter()
         .map(|(id, stake)| (node(*id), *stake))
         .collect()
 }
+// ── leader_block_for_wave tests ──
 
-// ── check_finality tests ──
+/// leader_block_for_wave returns the correct block when
+/// the leader has exactly one block in the leader round.
+#[test]
+fn leader_block_for_wave_returns_correct_block() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let wave = 0u64; // leader round = 0
+
+    // Leader (node 1) creates a genesis block at round 0
+    let v1 = node(1);
+    let leader_block = genesis(&v1, 10);
+    insert(&mut bl, &leader_block);
+
+    let result = leader_block_for_wave(&bl, wave, wavelength, leader_node1);
+    assert_eq!(result, Some(leader_block.identity));
+}
+
+/// leader_block_for_wave returns None when no leader is elected.
+#[test]
+fn leader_block_for_wave_returns_none_when_no_leader() {
+    let mut bl = Blocklace::new();
+    let v1 = node(1);
+    let block = genesis(&v1, 1);
+    insert(&mut bl, &block);
+
+    let result = leader_block_for_wave(&bl, 0, 3, no_leader);
+    assert!(result.is_none());
+}
+
+/// leader_block_for_wave returns None when the leader has
+/// no block in the leader round.
+#[test]
+fn leader_block_for_wave_returns_none_when_leader_has_no_block() {
+    let mut bl = Blocklace::new();
+
+    // Only node 2 has a block — not the elected leader (node 1)
+    let v2 = node(2);
+    let block = genesis(&v2, 1);
+    insert(&mut bl, &block);
+
+    let result = leader_block_for_wave(&bl, 0, 3, leader_node1);
+    assert!(result.is_none());
+}
+
+/// leader_block_for_wave returns None when the elected leader equivocated.
+#[test]
+fn leader_block_for_wave_returns_none_on_equivocation() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let wave = 0u64;
+
+    // Leader equivocates — two blocks in the leader round.
+    let v1 = node(1);
+    let block_a = genesis(&v1, 20);
+    let block_b = genesis(&v1, 10);
+    insert(&mut bl, &block_a);
+    insert(&mut bl, &block_b);
+
+    let result = leader_block_for_wave(&bl, wave, wavelength, leader_node1);
+    assert!(result.is_none());
+}
+
+// ── is_final_leader tests ──
+
+/// is_final_leader returns true when the leader block is
+/// super-ratified within its wave.
+#[test]
+fn is_final_leader_returns_true_when_super_ratified() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4;
+    let f = 1;
+
+    // Wave 0: rounds 0, 1, 2
+    // Round 0: leader block by node 1
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+    let leader = genesis(&v1, 1);
+    insert(&mut bl, &leader);
+
+    // Round 1: nodes 2, 3, 4 all observe leader
+    let b2r1 = child(&v2, 2, &[&leader]);
+    let b3r1 = child(&v3, 3, &[&leader]);
+    let b4r1 = child(&v4, 4, &[&leader]);
+    insert(&mut bl, &b2r1);
+    insert(&mut bl, &b3r1);
+    insert(&mut bl, &b4r1);
+
+    // Round 2: nodes 2, 3, 4 observe all of round 1
+    let b2r2 = child(&v2, 5, &[&b2r1, &b3r1, &b4r1]);
+    let b3r2 = child(&v3, 6, &[&b2r1, &b3r1, &b4r1]);
+    let b4r2 = child(&v4, 7, &[&b2r1, &b3r1, &b4r1]);
+    insert(&mut bl, &b2r2);
+    insert(&mut bl, &b3r2);
+    insert(&mut bl, &b4r2);
+
+    let result = is_final_leader(&bl, &leader.identity, wavelength, n, f, leader_node1);
+    assert!(result);
+}
+
+/// is_final_leader returns false when super-ratification is not achieved.
+#[test]
+fn is_final_leader_returns_false_when_not_super_ratified() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4;
+    let f = 1;
+
+    // Only the leader block exists — no ratifying blocks at all
+    let v1 = node(1);
+    let leader = genesis(&v1, 1);
+    insert(&mut bl, &leader);
+
+    let result = is_final_leader(&bl, &leader.identity, wavelength, n, f, leader_node1);
+    assert!(!result);
+}
+
+/// is_final_leader returns false for a block that is not
+/// the elected leader block for its wave.
+#[test]
+fn is_final_leader_returns_false_for_non_leader_block() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4;
+    let f = 1;
+
+    // node 2 is NOT the elected leader — node 1 is
+    let v2 = node(2);
+    let non_leader = genesis(&v2, 1);
+    insert(&mut bl, &non_leader);
+
+    let result = is_final_leader(&bl, &non_leader.identity, wavelength, n, f, leader_node1);
+    assert!(!result);
+}
+
+/// An equivocating leader should not get an arbitrary leader branch selected
+/// by the finality layer.
+#[test]
+fn is_final_leader_returns_false_for_equivocating_leader_branch() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4;
+    let f = 1;
+
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+
+    let leader_a = genesis(&v1, 1);
+    let leader_b = genesis(&v1, 2);
+    insert(&mut bl, &leader_a);
+    insert(&mut bl, &leader_b);
+
+    // All later blocks observe both leader branches, so neither branch should
+    // be approvable / super-ratifiable under the current approval semantics.
+    let r1_v2 = child(&v2, 3, &[&leader_a, &leader_b]);
+    let r1_v3 = child(&v3, 4, &[&leader_a, &leader_b]);
+    let r1_v4 = child(&v4, 5, &[&leader_a, &leader_b]);
+    insert(&mut bl, &r1_v2);
+    insert(&mut bl, &r1_v3);
+    insert(&mut bl, &r1_v4);
+
+    let r2_v2 = child(&v2, 6, &[&r1_v2, &r1_v3, &r1_v4]);
+    let r2_v3 = child(&v3, 7, &[&r1_v2, &r1_v3, &r1_v4]);
+    let r2_v4 = child(&v4, 8, &[&r1_v2, &r1_v3, &r1_v4]);
+    insert(&mut bl, &r2_v2);
+    insert(&mut bl, &r2_v3);
+    insert(&mut bl, &r2_v4);
+
+    assert!(!is_final_leader(
+        &bl,
+        &leader_a.identity,
+        wavelength,
+        n,
+        f,
+        leader_node1
+    ));
+    assert!(!is_final_leader(
+        &bl,
+        &leader_b.identity,
+        wavelength,
+        n,
+        f,
+        leader_node1
+    ));
+}
 
 #[test]
-fn unknown_block_returns_unknown() {
+fn final_leader_for_wave_returns_unique_final_leader() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let wave = 0u64;
+    let n = 4;
+    let f = 1;
+
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+    let leader = genesis(&v1, 1);
+    insert(&mut bl, &leader);
+
+    let b2r1 = child(&v2, 2, &[&leader]);
+    let b3r1 = child(&v3, 3, &[&leader]);
+    let b4r1 = child(&v4, 4, &[&leader]);
+    insert(&mut bl, &b2r1);
+    insert(&mut bl, &b3r1);
+    insert(&mut bl, &b4r1);
+
+    let b2r2 = child(&v2, 5, &[&b2r1, &b3r1, &b4r1]);
+    let b3r2 = child(&v3, 6, &[&b2r1, &b3r1, &b4r1]);
+    let b4r2 = child(&v4, 7, &[&b2r1, &b3r1, &b4r1]);
+    insert(&mut bl, &b2r2);
+    insert(&mut bl, &b3r2);
+    insert(&mut bl, &b4r2);
+
+    assert_eq!(
+        final_leader_for_wave(&bl, wave, wavelength, n, f, leader_node1),
+        Some(leader.identity)
+    );
+}
+
+#[test]
+fn latest_final_leader_returns_most_recent_final_wave() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4;
+    let f = 1;
+
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+
+    let w0_leader = genesis(&v1, 1);
+    insert(&mut bl, &w0_leader);
+
+    let w0_r1_v2 = child(&v2, 2, &[&w0_leader]);
+    let w0_r1_v3 = child(&v3, 3, &[&w0_leader]);
+    let w0_r1_v4 = child(&v4, 4, &[&w0_leader]);
+    insert(&mut bl, &w0_r1_v2);
+    insert(&mut bl, &w0_r1_v3);
+    insert(&mut bl, &w0_r1_v4);
+
+    let w0_r2_v2 = child(&v2, 5, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    let w0_r2_v3 = child(&v3, 6, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    let w0_r2_v4 = child(&v4, 7, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    insert(&mut bl, &w0_r2_v2);
+    insert(&mut bl, &w0_r2_v3);
+    insert(&mut bl, &w0_r2_v4);
+
+    let w1_leader = child(&v1, 8, &[&w0_r2_v2, &w0_r2_v3, &w0_r2_v4]);
+    insert(&mut bl, &w1_leader);
+
+    let w1_r1_v2 = child(&v2, 9, &[&w1_leader]);
+    let w1_r1_v3 = child(&v3, 10, &[&w1_leader]);
+    let w1_r1_v4 = child(&v4, 11, &[&w1_leader]);
+    insert(&mut bl, &w1_r1_v2);
+    insert(&mut bl, &w1_r1_v3);
+    insert(&mut bl, &w1_r1_v4);
+
+    let w1_r2_v2 = child(&v2, 12, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    let w1_r2_v3 = child(&v3, 13, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    let w1_r2_v4 = child(&v4, 14, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    insert(&mut bl, &w1_r2_v2);
+    insert(&mut bl, &w1_r2_v3);
+    insert(&mut bl, &w1_r2_v4);
+
+    assert_eq!(
+        latest_final_leader(&bl, wavelength, n, f, leader_node1),
+        Some(w1_leader.identity)
+    );
+}
+
+#[test]
+fn weighted_final_leader_true_when_stake_supermajority() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+
+    // Wave 0: rounds 0, 1, 2
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+
+    // Round 0: leader block by node 1
+    let leader = genesis(&v1, 1);
+    insert(&mut bl, &leader);
+
+    // Round 1: v2, v3, v4 all observe leader
+    let b2r1 = child(&v2, 2, &[&leader]);
+    let b3r1 = child(&v3, 3, &[&leader]);
+    let b4r1 = child(&v4, 4, &[&leader]);
+    insert(&mut bl, &b2r1);
+    insert(&mut bl, &b3r1);
+    insert(&mut bl, &b4r1);
+
+    // Round 2: v2, v3, v4 observe all of round 1
+    let b2r2 = child(&v2, 5, &[&b2r1, &b3r1, &b4r1]);
+    let b3r2 = child(&v3, 6, &[&b2r1, &b3r1, &b4r1]);
+    let b4r2 = child(&v4, 7, &[&b2r1, &b3r1, &b4r1]);
+    insert(&mut bl, &b2r2);
+    insert(&mut bl, &b3r2);
+    insert(&mut bl, &b4r2);
+
+    // Equal stake — all four validators hold 100 each
+    // Ratifying validators: v1+v2+v3+v4 = 400 > 2/3 * 400
+    let b = equal_bonds(&[1, 2, 3, 4], 100);
+
+    let result = is_weighted_final_leader(&bl, &leader.identity, wavelength, &b, leader_node1);
+    assert!(result);
+}
+
+/// Weighted final leader returns false when ratifying validators
+/// hold less than 2/3 of total bonded stake even if unweighted
+/// supermajority is met.
+///
+/// This is the key divergence test between weighted and unweighted.
+#[test]
+fn weighted_false_but_unweighted_true_when_low_stake_ratifiers() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4;
+    let f = 1;
+
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+
+    // Round 0: leader block by node 1
+    let leader = genesis(&v1, 1);
+    insert(&mut bl, &leader);
+
+    // Round 1: v2, v3, v4 observe leader — v1 absent
+    let b2r1 = child(&v2, 2, &[&leader]);
+    let b3r1 = child(&v3, 3, &[&leader]);
+    let b4r1 = child(&v4, 4, &[&leader]);
+    insert(&mut bl, &b2r1);
+    insert(&mut bl, &b3r1);
+    insert(&mut bl, &b4r1);
+
+    // Round 2: v2, v3, v4 observe all of round 1 — v1 absent
+    let b2r2 = child(&v2, 5, &[&b2r1, &b3r1, &b4r1]);
+    let b3r2 = child(&v3, 6, &[&b2r1, &b3r1, &b4r1]);
+    let b4r2 = child(&v4, 7, &[&b2r1, &b3r1, &b4r1]);
+    insert(&mut bl, &b2r2);
+    insert(&mut bl, &b3r2);
+    insert(&mut bl, &b4r2);
+
+    // v5 is a high-stake bonded validator who never participates
+    // v1, v2, v3, v4 each have low stake
+    // Total = 4 + 4 + 4 + 4 + 900 = 916
+    // Ratifying creators = v1+v2+v3+v4 at most = 16 out of 916
+    // 16 * 3 = 48 NOT > 916 * 2 = 1832 → weighted FALSE
+    //
+    // Unweighted: v2+v3+v4 = 3 distinct creators > (4+1)/2 = 2.5 → TRUE
+    let b = unequal_bonds(&[(1, 4), (2, 4), (3, 4), (4, 4), (5, 900)]);
+
+    let unweighted_result = is_final_leader(&bl, &leader.identity, wavelength, n, f, leader_node1);
+    let weighted_result =
+        is_weighted_final_leader(&bl, &leader.identity, wavelength, &b, leader_node1);
+
+    assert!(unweighted_result, "unweighted should be final");
+    assert!(
+        !weighted_result,
+        "weighted should NOT be final — low stake ratifiers"
+    );
+}
+
+/// Weighted and unweighted agree when ratifying validators
+/// hold more than 2/3 of stake.
+#[test]
+fn weighted_and_unweighted_agree_when_high_stake_ratifiers() {
+    let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4;
+    let f = 1;
+
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+
+    let leader = genesis(&v1, 1);
+    insert(&mut bl, &leader);
+
+    let b2r1 = child(&v2, 2, &[&leader]);
+    let b3r1 = child(&v3, 3, &[&leader]);
+    let b4r1 = child(&v4, 4, &[&leader]);
+    insert(&mut bl, &b2r1);
+    insert(&mut bl, &b3r1);
+    insert(&mut bl, &b4r1);
+
+    let b2r2 = child(&v2, 5, &[&b2r1, &b3r1, &b4r1]);
+    let b3r2 = child(&v3, 6, &[&b2r1, &b3r1, &b4r1]);
+    let b4r2 = child(&v4, 7, &[&b2r1, &b3r1, &b4r1]);
+    insert(&mut bl, &b2r2);
+    insert(&mut bl, &b3r2);
+    insert(&mut bl, &b4r2);
+
+    // Equal stake — ratifying validators hold 3/4 = 75% > 2/3
+    let b = equal_bonds(&[1, 2, 3, 4], 100);
+
+    let unweighted_result = is_final_leader(&bl, &leader.identity, wavelength, n, f, leader_node1);
+    let weighted_result =
+        is_weighted_final_leader(&bl, &leader.identity, wavelength, &b, leader_node1);
+
+    assert!(unweighted_result, "unweighted should be final");
+    assert!(weighted_result, "weighted should also be final");
+}
+
+/// is_weighted_final_leader returns false for a non-leader block.
+#[test]
+fn weighted_final_leader_false_for_non_leader_block() {
+    let mut bl = Blocklace::new();
+    let v2 = node(2);
+    let non_leader = genesis(&v2, 1);
+    insert(&mut bl, &non_leader);
+
+    let b = equal_bonds(&[1, 2, 3, 4], 100);
+    let result = is_weighted_final_leader(&bl, &non_leader.identity, 3, &b, leader_node1);
+    assert!(!result);
+}
+
+/// is_weighted_final_leader returns false when block
+/// is not in the blocklace.
+#[test]
+fn weighted_final_leader_false_for_unknown_block() {
     let bl = Blocklace::new();
     let fake_id = make_id(&node(1), 99);
-    let b = bonds(&[(1, 100)]);
-    assert_eq!(check_finality(&bl, &fake_id, &b), FinalityStatus::Unknown);
+    let b = equal_bonds(&[1, 2, 3, 4], 100);
+    assert!(!is_weighted_final_leader(
+        &bl,
+        &fake_id,
+        3,
+        &b,
+        leader_node1
+    ));
 }
 
+// ── weighted_final_leader_for_wave tests ──
+
+/// weighted_final_leader_for_wave returns Some when
+/// weighted finality is achieved.
 #[test]
-fn single_validator_finalizes_own_genesis() {
+fn weighted_final_leader_for_wave_returns_some_when_final() {
     let mut bl = Blocklace::new();
-    let v1 = node(1);
-    let g = genesis(&v1, 1);
-    insert(&mut bl, &g);
+    let wavelength = 3u64;
 
-    // Single validator with 100% stake — trivially > 2/3
-    let b = bonds(&[(1, 100)]);
-    let status = check_finality(&bl, &g.identity, &b);
-    assert!(status.is_finalized());
-}
-
-#[test]
-fn block_not_in_supermajority_ancestry_is_pending() {
-    let mut bl = Blocklace::new();
-    let v1 = node(1);
-    let v2 = node(2);
-    let v3 = node(3);
-
-    // Each creates their own genesis
-    let g1 = genesis(&v1, 1);
-    let g2 = genesis(&v2, 2);
-    let g3 = genesis(&v3, 3);
-    insert(&mut bl, &g1);
-    insert(&mut bl, &g2);
-    insert(&mut bl, &g3);
-
-    // Equal stake — g1 is only supported by v1 (1/3), not > 2/3
-    let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
-    let status = check_finality(&bl, &g1.identity, &b);
-    assert!(status.is_pending());
-}
-
-#[test]
-fn supermajority_support_finalizes_block() {
-    let mut bl = Blocklace::new();
     let v1 = node(1);
     let v2 = node(2);
     let v3 = node(3);
+    let v4 = node(4);
 
-    // v1 creates genesis
-    let g = genesis(&v1, 1);
-    insert(&mut bl, &g);
+    let leader = genesis(&v1, 1);
+    insert(&mut bl, &leader);
 
-    // v2 and v3 build on g — all three have g in their ancestry
-    let b2 = child(&v2, 2, &[&g]);
-    let b3 = child(&v3, 3, &[&g]);
-    insert(&mut bl, &b2);
-    insert(&mut bl, &b3);
+    let b2r1 = child(&v2, 2, &[&leader]);
+    let b3r1 = child(&v3, 3, &[&leader]);
+    let b4r1 = child(&v4, 4, &[&leader]);
+    insert(&mut bl, &b2r1);
+    insert(&mut bl, &b3r1);
+    insert(&mut bl, &b4r1);
 
-    let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
-    let status = check_finality(&bl, &g.identity, &b);
+    let b2r2 = child(&v2, 5, &[&b2r1, &b3r1, &b4r1]);
+    let b3r2 = child(&v3, 6, &[&b2r1, &b3r1, &b4r1]);
+    let b4r2 = child(&v4, 7, &[&b2r1, &b3r1, &b4r1]);
+    insert(&mut bl, &b2r2);
+    insert(&mut bl, &b3r2);
+    insert(&mut bl, &b4r2);
 
-    // 3/3 validators support g — finalized
-    assert!(status.is_finalized());
-    match status {
-        FinalityStatus::Finalized {
-            supporting_stake,
-            total_honest_stake,
-        } => {
-            assert_eq!(supporting_stake, 300);
-            assert_eq!(total_honest_stake, 300);
-        }
-        _ => panic!("expected Finalized"),
-    }
+    let b = equal_bonds(&[1, 2, 3, 4], 100);
+    let result = weighted_final_leader_for_wave(&bl, 0, wavelength, &b, leader_node1);
+    assert_eq!(result, Some(leader.identity));
 }
 
+/// weighted_final_leader_for_wave returns None when
+/// weighted finality is not achieved.
 #[test]
-fn two_thirds_plus_one_is_enough() {
+fn weighted_final_leader_for_wave_returns_none_when_not_final() {
     let mut bl = Blocklace::new();
     let v1 = node(1);
-    let v2 = node(2);
-    let v3 = node(3);
+    let leader = genesis(&v1, 1);
+    insert(&mut bl, &leader);
 
-    // v1 creates genesis
-    let g = genesis(&v1, 1);
-    insert(&mut bl, &g);
-
-    // Only v2 builds on g. v3 creates its own genesis.
-    let b2 = child(&v2, 2, &[&g]);
-    let g3 = genesis(&v3, 3);
-    insert(&mut bl, &b2);
-    insert(&mut bl, &g3);
-
-    // v1=100, v2=100, v3=100: g is supported by v1+v2 = 200/300 = 66.7% — NOT > 2/3
-    let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
-    let status = check_finality(&bl, &g.identity, &b);
-    assert!(status.is_pending());
-
-    // v1=100, v2=100, v3=99: g is supported by 200/299 = 66.9% — > 2/3
-    let b2 = bonds(&[(1, 100), (2, 100), (3, 99)]);
-    let status2 = check_finality(&bl, &g.identity, &b2);
-    assert!(status2.is_finalized());
+    // No ratifying blocks — cannot be final
+    let b = equal_bonds(&[1, 2, 3, 4], 100);
+    let result = weighted_final_leader_for_wave(&bl, 0, 3, &b, leader_node1);
+    assert!(result.is_none());
 }
 
+// ── latest_weighted_final_leader tests ──
+
+/// latest_weighted_final_leader returns None on empty blocklace.
 #[test]
-fn equivocator_stake_excluded_from_total() {
-    let mut bl = Blocklace::new();
-    let v1 = node(1);
-    let v2 = node(2);
-    let v3 = node(3);
-
-    // v1 creates genesis
-    let g = genesis(&v1, 1);
-    insert(&mut bl, &g);
-
-    // v2 builds on g
-    let b2 = child(&v2, 2, &[&g]);
-    insert(&mut bl, &b2);
-
-    // v3 equivocates (two genesis blocks)
-    let g3a = genesis(&v3, 3);
-    let g3b = genesis(&v3, 4);
-    insert(&mut bl, &g3a);
-    insert(&mut bl, &g3b);
-
-    // v1=100, v2=100, v3=1000 (equivocator)
-    // Honest stake = 200. Supporting = 200 (v1+v2). 200 > 2/3 * 200 — finalized
-    let b = bonds(&[(1, 100), (2, 100), (3, 1000)]);
-    let status = check_finality(&bl, &g.identity, &b);
-    assert!(status.is_finalized());
-}
-
-// ── find_last_finalized tests ──
-
-#[test]
-fn no_finalized_block_in_empty_blocklace() {
+fn latest_weighted_final_leader_none_on_empty_blocklace() {
     let bl = Blocklace::new();
-    let b = bonds(&[(1, 100)]);
-    assert!(find_last_finalized(&bl, &b).is_none());
+    let b = equal_bonds(&[1, 2, 3, 4], 100);
+    assert!(latest_weighted_final_leader(&bl, 3, &b, leader_node1).is_none());
 }
 
+/// latest_weighted_final_leader returns the most recent
+/// wave whose leader is weighted-final.
 #[test]
-fn find_last_finalized_returns_highest_finalized() {
+fn latest_weighted_final_leader_returns_highest_final_wave() {
     let mut bl = Blocklace::new();
+    let wavelength = 3u64;
+
     let v1 = node(1);
     let v2 = node(2);
     let v3 = node(3);
+    let v4 = node(4);
 
-    // Linear chain: g -> b2 -> b3, all three validators build on it
-    let g = genesis(&v1, 1);
-    insert(&mut bl, &g);
+    // Wave 0: rounds 0, 1, 2 — fully ratified
+    let leader_w0 = genesis(&v1, 1);
+    insert(&mut bl, &leader_w0);
 
-    let b2 = child(&v2, 2, &[&g]);
-    insert(&mut bl, &b2);
+    let b2r1 = child(&v2, 2, &[&leader_w0]);
+    let b3r1 = child(&v3, 3, &[&leader_w0]);
+    let b4r1 = child(&v4, 4, &[&leader_w0]);
+    insert(&mut bl, &b2r1);
+    insert(&mut bl, &b3r1);
+    insert(&mut bl, &b4r1);
 
-    let b3 = child(&v3, 3, &[&b2]);
-    insert(&mut bl, &b3);
+    let b2r2 = child(&v2, 5, &[&b2r1, &b3r1, &b4r1]);
+    let b3r2 = child(&v3, 6, &[&b2r1, &b3r1, &b4r1]);
+    let b4r2 = child(&v4, 7, &[&b2r1, &b3r1, &b4r1]);
+    insert(&mut bl, &b2r2);
+    insert(&mut bl, &b3r2);
+    insert(&mut bl, &b4r2);
 
-    // v1 also extends to see b3
-    let b4 = child(&v1, 4, &[&b3]);
-    insert(&mut bl, &b4);
+    // Wave 1: round 3 — leader block only, not yet ratified
+    let leader_w1 = child(&v1, 8, &[&b2r2, &b3r2, &b4r2]);
+    insert(&mut bl, &leader_w1);
 
-    let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
-    let lfb = find_last_finalized(&bl, &b);
+    let b = equal_bonds(&[1, 2, 3, 4], 100);
+    let result = latest_weighted_final_leader(&bl, wavelength, &b, leader_node1);
 
-    // g is in everyone's ancestry — finalized.
-    // b2 is in v2, v3, v1's ancestry (via b3->b4) — finalized.
-    // The "highest" finalized block should be the most recent one
-    // that all validators have built upon.
-    assert!(lfb.is_some());
-    let lfb = lfb.unwrap();
-    // Both g and b2 are finalized. b2 is higher.
-    assert!(check_finality(&bl, &lfb, &b).is_finalized());
-}
-
-#[test]
-fn single_validator_last_finalized_is_tip() {
-    let mut bl = Blocklace::new();
-    let v1 = node(1);
-    let g = genesis(&v1, 1);
-    let b2 = child(&v1, 2, &[&g]);
-    insert(&mut bl, &g);
-    insert(&mut bl, &b2);
-
-    let b = bonds(&[(1, 100)]);
-    let lfb = find_last_finalized(&bl, &b).unwrap();
-
-    // With a single validator, the tip is always finalized
-    assert_eq!(lfb, b2.identity);
-}
-
-// ── can_be_finalized tests ──
-
-#[test]
-fn unknown_block_cannot_be_finalized() {
-    let bl = Blocklace::new();
-    let fake_id = make_id(&node(1), 99);
-    let b = bonds(&[(1, 100)]);
-    assert!(!can_be_finalized(&bl, &fake_id, &b));
-}
-
-#[test]
-fn block_with_full_support_can_be_finalized() {
-    let mut bl = Blocklace::new();
-    let v1 = node(1);
-    let g = genesis(&v1, 1);
-    insert(&mut bl, &g);
-
-    let b = bonds(&[(1, 100), (2, 100)]);
-    // v2 has no tip yet — its stake counts as "undecided"
-    // supporting=100, undecided=100, total=200. (100+100)*3 > 200*2 — yes
-    assert!(can_be_finalized(&bl, &g.identity, &b));
-}
-
-#[test]
-fn orphaned_block_cannot_be_finalized() {
-    let mut bl = Blocklace::new();
-    let v1 = node(1);
-    let v2 = node(2);
-    let v3 = node(3);
-
-    // v1 creates a genesis, but v2 and v3 create different ones
-    let g1 = genesis(&v1, 1);
-    let g2 = genesis(&v2, 2);
-    let g3 = genesis(&v3, 3);
-    insert(&mut bl, &g1);
-    insert(&mut bl, &g2);
-    insert(&mut bl, &g3);
-
-    // g1 supported only by v1 (100). v2 and v3 have their own tips.
-    // supporting=100, undecided=0, total=300. 100*3 = 300, not > 200. Cannot be finalized.
-    let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
-    assert!(!can_be_finalized(&bl, &g1.identity, &b));
-}
-
-#[test]
-fn finality_status_helpers() {
-    let finalized = FinalityStatus::Finalized {
-        supporting_stake: 200,
-        total_honest_stake: 300,
-    };
-    let pending = FinalityStatus::Pending {
-        supporting_stake: 100,
-        total_honest_stake: 300,
-    };
-    let unknown = FinalityStatus::Unknown;
-
-    assert!(finalized.is_finalized());
-    assert!(!finalized.is_pending());
-
-    assert!(!pending.is_finalized());
-    assert!(pending.is_pending());
-
-    assert!(!unknown.is_finalized());
-    assert!(!unknown.is_pending());
+    // Wave 0 leader is final, wave 1 leader is not
+    assert_eq!(result, Some(leader_w0.identity));
 }
