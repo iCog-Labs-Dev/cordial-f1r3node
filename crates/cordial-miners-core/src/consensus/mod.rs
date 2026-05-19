@@ -19,7 +19,9 @@ pub use finality::{
     latest_weighted_final_leader, leader_block_for_wave, weighted_final_leader_for_wave,
 };
 pub use fork_choice::{ForkChoice, collect_validator_tips, fork_choice, is_cordial};
-pub use ordering::{approved_blocks_for_leader, previous_final_leader, tau, xsort};
+pub use ordering::{
+    approved_blocks_for_leader, previous_final_leader, tau, weighted_previous_final_leader, xsort,
+};
 pub use round::{
     blocks_at_depth, compute_all_depths, depth, depth_prefix, depth_suffix, is_round_cordial,
     latest_cordial_round, max_depth,
