@@ -3,6 +3,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use crate::block::Block;
 use crate::blocklace::Blocklace;
 use crate::consensus::approval::approves;
+use crate::consensus::cordiality::ratifies;
+use crate::consensus::finality::final_leader_for_wave;
+use crate::consensus::round::depth;
+use crate::consensus::wave::wave_of_round;
 use crate::types::BlockIdentity;
 
 pub fn approved_blocks_for_leader(
@@ -70,4 +74,47 @@ pub fn xsort(blocks: &HashSet<Block>) -> Vec<BlockIdentity> {
     }
 
     ordered
+}
+
+/// Return the newest earlier final leader ratified by `current_leader`.
+///
+/// This is the recursion edge used by `tau`: given a current leader block,
+/// walk backward through earlier waves and return the most recent final leader
+/// that the current block ratifies. The caller is responsible for passing the
+/// paper-native consensus parameters used to determine finality.
+pub fn previous_final_leader<F>(
+    blocklace: &Blocklace,
+    current_leader: &BlockIdentity,
+    wavelength: u64,
+    n: usize,
+    f: usize,
+    leader_selection: F,
+) -> Option<BlockIdentity>
+where
+    F: Fn(u64) -> Option<crate::types::NodeId> + Copy,
+{
+    let current_block = blocklace.get(current_leader)?;
+    let current_round = depth(blocklace, current_leader)?;
+    let current_wave = wave_of_round(current_round, wavelength)?;
+
+    if current_wave == 0 {
+        return None;
+    }
+
+    for wave in (0..current_wave).rev() {
+        let Some(previous_leader) =
+            final_leader_for_wave(blocklace, wave, wavelength, n, f, leader_selection)
+        else {
+            continue;
+        };
+        let Some(previous_block) = blocklace.get(&previous_leader) else {
+            continue;
+        };
+
+        if ratifies(blocklace, &current_block, &previous_block, n, f) {
+            return Some(previous_leader);
+        }
+    }
+
+    None
 }
