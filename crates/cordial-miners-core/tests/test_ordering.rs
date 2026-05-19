@@ -893,6 +893,69 @@ fn weighted_tau_with_cache_matches_uncached_weighted_tau() {
 }
 
 #[test]
+fn weighted_tau_with_cache_distinguishes_bond_sets() {
+    let mut blocklace = Blocklace::new();
+    let low_majority = bonds(&[(1, 10), (2, 10), (3, 10), (4, 10), (5, 70)]);
+    let even_split = bonds(&[(1, 25), (2, 25), (3, 25), (4, 25)]);
+
+    let leader = block(1, 1, HashSet::new());
+    insert(&mut blocklace, &leader);
+
+    let round1_v2 = block(2, 2, HashSet::from([leader.identity.clone()]));
+    let round1_v3 = block(3, 3, HashSet::from([leader.identity.clone()]));
+    let round1_v4 = block(4, 4, HashSet::from([leader.identity.clone()]));
+    insert(&mut blocklace, &round1_v2);
+    insert(&mut blocklace, &round1_v3);
+    insert(&mut blocklace, &round1_v4);
+
+    let round2_v2 = block(
+        2,
+        5,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    let round2_v3 = block(
+        3,
+        6,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    let round2_v4 = block(
+        4,
+        7,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    insert(&mut blocklace, &round2_v2);
+    insert(&mut blocklace, &round2_v3);
+    insert(&mut blocklace, &round2_v4);
+
+    let mut cache = OrderingCache::default();
+
+    let low_majority_cached =
+        weighted_tau_with_cache(&blocklace, 3, &low_majority, leader_node1, &mut cache).unwrap();
+    let even_split_cached =
+        weighted_tau_with_cache(&blocklace, 3, &even_split, leader_node1, &mut cache).unwrap();
+
+    let low_majority_uncached = weighted_tau(&blocklace, 3, &low_majority, leader_node1).unwrap();
+    let even_split_uncached = weighted_tau(&blocklace, 3, &even_split, leader_node1).unwrap();
+
+    assert_eq!(low_majority_cached, low_majority_uncached);
+    assert_eq!(even_split_cached, even_split_uncached);
+    assert!(low_majority_cached.is_empty());
+    assert!(!even_split_cached.is_empty());
+}
+
+#[test]
 fn tau_with_cache_invalidates_when_blocklace_grows() {
     let mut blocklace = Blocklace::new();
     let wavelength = 3u64;
