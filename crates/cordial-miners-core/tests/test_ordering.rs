@@ -1,7 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::{approved_blocks_for_leader, previous_final_leader, tau, xsort};
+use cordial_miners_core::consensus::{
+    approved_blocks_for_leader, previous_final_leader, tau, weighted_previous_final_leader, xsort,
+};
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 
@@ -51,6 +53,13 @@ fn insert(blocklace: &mut Blocklace, block: &Block) {
 
 fn leader_node1(_wave: u64) -> Option<NodeId> {
     Some(node(1))
+}
+
+fn bonds(entries: &[(u8, u64)]) -> HashMap<NodeId, u64> {
+    entries
+        .iter()
+        .map(|(creator, weight)| (node(*creator), *weight))
+        .collect()
 }
 
 #[test]
@@ -493,4 +502,162 @@ fn tau_grows_monotonically_across_final_leaders_without_duplicates() {
         second.len()
     );
     assert!(second.len() >= first.len());
+}
+
+#[test]
+fn weighted_previous_final_leader_returns_none_for_first_wave_leader() {
+    let mut blocklace = Blocklace::new();
+    let weights = bonds(&[(1, 1), (2, 3), (3, 3), (4, 3)]);
+
+    let leader = block(1, 1, HashSet::new());
+    insert(&mut blocklace, &leader);
+
+    let round1_v2 = block(2, 2, HashSet::from([leader.identity.clone()]));
+    let round1_v3 = block(3, 3, HashSet::from([leader.identity.clone()]));
+    let round1_v4 = block(4, 4, HashSet::from([leader.identity.clone()]));
+    insert(&mut blocklace, &round1_v2);
+    insert(&mut blocklace, &round1_v3);
+    insert(&mut blocklace, &round1_v4);
+
+    let round2_v2 = block(
+        2,
+        5,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    let round2_v3 = block(
+        3,
+        6,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    let round2_v4 = block(
+        4,
+        7,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    insert(&mut blocklace, &round2_v2);
+    insert(&mut blocklace, &round2_v3);
+    insert(&mut blocklace, &round2_v4);
+
+    let result =
+        weighted_previous_final_leader(&blocklace, &leader.identity, 3, &weights, leader_node1);
+
+    assert!(result.is_none());
+}
+
+#[test]
+fn weighted_previous_final_leader_returns_latest_earlier_weighted_final_leader() {
+    let mut blocklace = Blocklace::new();
+    let weights = bonds(&[(1, 1), (2, 3), (3, 3), (4, 3)]);
+
+    let wave0_leader = block(1, 1, HashSet::new());
+    insert(&mut blocklace, &wave0_leader);
+
+    let w0_r1_v2 = block(2, 2, HashSet::from([wave0_leader.identity.clone()]));
+    let w0_r1_v3 = block(3, 3, HashSet::from([wave0_leader.identity.clone()]));
+    let w0_r1_v4 = block(4, 4, HashSet::from([wave0_leader.identity.clone()]));
+    insert(&mut blocklace, &w0_r1_v2);
+    insert(&mut blocklace, &w0_r1_v3);
+    insert(&mut blocklace, &w0_r1_v4);
+
+    let w0_r2_v2 = block(
+        2,
+        5,
+        HashSet::from([
+            w0_r1_v2.identity.clone(),
+            w0_r1_v3.identity.clone(),
+            w0_r1_v4.identity.clone(),
+        ]),
+    );
+    let w0_r2_v3 = block(
+        3,
+        6,
+        HashSet::from([
+            w0_r1_v2.identity.clone(),
+            w0_r1_v3.identity.clone(),
+            w0_r1_v4.identity.clone(),
+        ]),
+    );
+    let w0_r2_v4 = block(
+        4,
+        7,
+        HashSet::from([
+            w0_r1_v2.identity.clone(),
+            w0_r1_v3.identity.clone(),
+            w0_r1_v4.identity.clone(),
+        ]),
+    );
+    insert(&mut blocklace, &w0_r2_v2);
+    insert(&mut blocklace, &w0_r2_v3);
+    insert(&mut blocklace, &w0_r2_v4);
+
+    let wave1_leader = block(
+        1,
+        8,
+        HashSet::from([
+            w0_r2_v2.identity.clone(),
+            w0_r2_v3.identity.clone(),
+            w0_r2_v4.identity.clone(),
+        ]),
+    );
+    insert(&mut blocklace, &wave1_leader);
+
+    let w1_r1_v2 = block(2, 9, HashSet::from([wave1_leader.identity.clone()]));
+    let w1_r1_v3 = block(3, 10, HashSet::from([wave1_leader.identity.clone()]));
+    let w1_r1_v4 = block(4, 11, HashSet::from([wave1_leader.identity.clone()]));
+    insert(&mut blocklace, &w1_r1_v2);
+    insert(&mut blocklace, &w1_r1_v3);
+    insert(&mut blocklace, &w1_r1_v4);
+
+    let w1_r2_v2 = block(
+        2,
+        12,
+        HashSet::from([
+            w1_r1_v2.identity.clone(),
+            w1_r1_v3.identity.clone(),
+            w1_r1_v4.identity.clone(),
+        ]),
+    );
+    let w1_r2_v3 = block(
+        3,
+        13,
+        HashSet::from([
+            w1_r1_v2.identity.clone(),
+            w1_r1_v3.identity.clone(),
+            w1_r1_v4.identity.clone(),
+        ]),
+    );
+    let w1_r2_v4 = block(
+        4,
+        14,
+        HashSet::from([
+            w1_r1_v2.identity.clone(),
+            w1_r1_v3.identity.clone(),
+            w1_r1_v4.identity.clone(),
+        ]),
+    );
+    insert(&mut blocklace, &w1_r2_v2);
+    insert(&mut blocklace, &w1_r2_v3);
+    insert(&mut blocklace, &w1_r2_v4);
+
+    let result = weighted_previous_final_leader(
+        &blocklace,
+        &wave1_leader.identity,
+        3,
+        &weights,
+        leader_node1,
+    );
+
+    assert_eq!(result, Some(wave0_leader.identity.clone()));
 }
