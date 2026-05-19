@@ -2,10 +2,10 @@ pub mod approval;
 pub mod cordiality;
 pub mod finality;
 pub mod fork_choice;
+pub mod ordering;
 pub mod round;
 pub mod validation;
 pub mod wave;
-pub mod ordering;
 
 pub use approval::{approves, approving_blocks, weighted_approving_creators};
 pub use cordiality::{
