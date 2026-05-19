@@ -1060,3 +1060,166 @@ fn tau_with_cache_invalidates_when_blocklace_grows() {
     assert!(second.starts_with(&first));
     assert!(second.len() >= first.len());
 }
+
+#[test]
+fn tau_with_cache_reuses_full_output_for_same_latest_leader() {
+    let mut blocklace = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4usize;
+    let f = 1usize;
+
+    let leader = block(1, 1, HashSet::new());
+    insert(&mut blocklace, &leader);
+
+    let round1_v2 = block(2, 2, HashSet::from([leader.identity.clone()]));
+    let round1_v3 = block(3, 3, HashSet::from([leader.identity.clone()]));
+    let round1_v4 = block(4, 4, HashSet::from([leader.identity.clone()]));
+    insert(&mut blocklace, &round1_v2);
+    insert(&mut blocklace, &round1_v3);
+    insert(&mut blocklace, &round1_v4);
+
+    let round2_v2 = block(
+        2,
+        5,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    let round2_v3 = block(
+        3,
+        6,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    let round2_v4 = block(
+        4,
+        7,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    insert(&mut blocklace, &round2_v2);
+    insert(&mut blocklace, &round2_v3);
+    insert(&mut blocklace, &round2_v4);
+
+    let mut cache = OrderingCache::default();
+    let first = tau_with_cache(&blocklace, wavelength, n, f, leader_node1, &mut cache).unwrap();
+    let second = tau_with_cache(&blocklace, wavelength, n, f, leader_node1, &mut cache).unwrap();
+    let uncached = tau(&blocklace, wavelength, n, f, leader_node1).unwrap();
+
+    assert_eq!(first, second);
+    assert_eq!(second, uncached);
+}
+
+#[test]
+fn weighted_tau_with_cache_updates_when_latest_weighted_leader_changes() {
+    let mut blocklace = Blocklace::new();
+    let weights = bonds(&[(1, 1), (2, 3), (3, 3), (4, 3)]);
+
+    let wave0_leader = block(1, 1, HashSet::new());
+    insert(&mut blocklace, &wave0_leader);
+
+    let w0_r1_v2 = block(2, 2, HashSet::from([wave0_leader.identity.clone()]));
+    let w0_r1_v3 = block(3, 3, HashSet::from([wave0_leader.identity.clone()]));
+    let w0_r1_v4 = block(4, 4, HashSet::from([wave0_leader.identity.clone()]));
+    insert(&mut blocklace, &w0_r1_v2);
+    insert(&mut blocklace, &w0_r1_v3);
+    insert(&mut blocklace, &w0_r1_v4);
+
+    let w0_r2_v2 = block(
+        2,
+        5,
+        HashSet::from([
+            w0_r1_v2.identity.clone(),
+            w0_r1_v3.identity.clone(),
+            w0_r1_v4.identity.clone(),
+        ]),
+    );
+    let w0_r2_v3 = block(
+        3,
+        6,
+        HashSet::from([
+            w0_r1_v2.identity.clone(),
+            w0_r1_v3.identity.clone(),
+            w0_r1_v4.identity.clone(),
+        ]),
+    );
+    let w0_r2_v4 = block(
+        4,
+        7,
+        HashSet::from([
+            w0_r1_v2.identity.clone(),
+            w0_r1_v3.identity.clone(),
+            w0_r1_v4.identity.clone(),
+        ]),
+    );
+    insert(&mut blocklace, &w0_r2_v2);
+    insert(&mut blocklace, &w0_r2_v3);
+    insert(&mut blocklace, &w0_r2_v4);
+
+    let mut cache = OrderingCache::default();
+    let first = weighted_tau_with_cache(&blocklace, 3, &weights, leader_node1, &mut cache).unwrap();
+
+    let wave1_leader = block(
+        1,
+        8,
+        HashSet::from([
+            w0_r2_v2.identity.clone(),
+            w0_r2_v3.identity.clone(),
+            w0_r2_v4.identity.clone(),
+        ]),
+    );
+    insert(&mut blocklace, &wave1_leader);
+
+    let w1_r1_v2 = block(2, 9, HashSet::from([wave1_leader.identity.clone()]));
+    let w1_r1_v3 = block(3, 10, HashSet::from([wave1_leader.identity.clone()]));
+    let w1_r1_v4 = block(4, 11, HashSet::from([wave1_leader.identity.clone()]));
+    insert(&mut blocklace, &w1_r1_v2);
+    insert(&mut blocklace, &w1_r1_v3);
+    insert(&mut blocklace, &w1_r1_v4);
+
+    let w1_r2_v2 = block(
+        2,
+        12,
+        HashSet::from([
+            w1_r1_v2.identity.clone(),
+            w1_r1_v3.identity.clone(),
+            w1_r1_v4.identity.clone(),
+        ]),
+    );
+    let w1_r2_v3 = block(
+        3,
+        13,
+        HashSet::from([
+            w1_r1_v2.identity.clone(),
+            w1_r1_v3.identity.clone(),
+            w1_r1_v4.identity.clone(),
+        ]),
+    );
+    let w1_r2_v4 = block(
+        4,
+        14,
+        HashSet::from([
+            w1_r1_v2.identity.clone(),
+            w1_r1_v3.identity.clone(),
+            w1_r1_v4.identity.clone(),
+        ]),
+    );
+    insert(&mut blocklace, &w1_r2_v2);
+    insert(&mut blocklace, &w1_r2_v3);
+    insert(&mut blocklace, &w1_r2_v4);
+
+    let second = weighted_tau_with_cache(&blocklace, 3, &weights, leader_node1, &mut cache).unwrap();
+    let uncached = weighted_tau(&blocklace, 3, &weights, leader_node1).unwrap();
+
+    assert!(second.starts_with(&first));
+    assert!(second.len() >= first.len());
+    assert_eq!(second, uncached);
+}
