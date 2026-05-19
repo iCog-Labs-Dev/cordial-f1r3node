@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    approved_blocks_for_leader, previous_final_leader, tau, weighted_previous_final_leader, xsort,
+    approved_blocks_for_leader, previous_final_leader, tau, weighted_previous_final_leader,
+    weighted_tau, xsort,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
@@ -660,4 +661,116 @@ fn weighted_previous_final_leader_returns_latest_earlier_weighted_final_leader()
     );
 
     assert_eq!(result, Some(wave0_leader.identity.clone()));
+}
+
+#[test]
+fn weighted_tau_returns_empty_when_no_weighted_final_leader_exists() {
+    let blocklace = Blocklace::new();
+    let ordered = weighted_tau(&blocklace, 3, &bonds(&[(1, 10)]), leader_node1);
+    assert!(ordered.is_empty());
+}
+
+#[test]
+fn weighted_tau_returns_xsort_of_approved_blocks_for_single_weighted_final_leader() {
+    let mut blocklace = Blocklace::new();
+    let weights = bonds(&[(1, 1), (2, 3), (3, 3), (4, 3)]);
+
+    let leader = block(1, 1, HashSet::new());
+    insert(&mut blocklace, &leader);
+
+    let round1_v2 = block(2, 2, HashSet::from([leader.identity.clone()]));
+    let round1_v3 = block(3, 3, HashSet::from([leader.identity.clone()]));
+    let round1_v4 = block(4, 4, HashSet::from([leader.identity.clone()]));
+    insert(&mut blocklace, &round1_v2);
+    insert(&mut blocklace, &round1_v3);
+    insert(&mut blocklace, &round1_v4);
+
+    let round2_v2 = block(
+        2,
+        5,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    let round2_v3 = block(
+        3,
+        6,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    let round2_v4 = block(
+        4,
+        7,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    insert(&mut blocklace, &round2_v2);
+    insert(&mut blocklace, &round2_v3);
+    insert(&mut blocklace, &round2_v4);
+
+    let approved = approved_blocks_for_leader(&blocklace, &leader.identity);
+    let ordered = weighted_tau(&blocklace, 3, &weights, leader_node1);
+
+    assert_eq!(ordered, xsort(&approved));
+}
+
+#[test]
+fn weighted_tau_can_be_empty_when_unweighted_tau_has_output() {
+    let mut blocklace = Blocklace::new();
+    let weights = bonds(&[(1, 1), (2, 1), (3, 1), (4, 1), (9, 100)]);
+
+    let leader = block(1, 1, HashSet::new());
+    insert(&mut blocklace, &leader);
+
+    let round1_v2 = block(2, 2, HashSet::from([leader.identity.clone()]));
+    let round1_v3 = block(3, 3, HashSet::from([leader.identity.clone()]));
+    let round1_v4 = block(4, 4, HashSet::from([leader.identity.clone()]));
+    insert(&mut blocklace, &round1_v2);
+    insert(&mut blocklace, &round1_v3);
+    insert(&mut blocklace, &round1_v4);
+
+    let round2_v2 = block(
+        2,
+        5,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    let round2_v3 = block(
+        3,
+        6,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    let round2_v4 = block(
+        4,
+        7,
+        HashSet::from([
+            round1_v2.identity.clone(),
+            round1_v3.identity.clone(),
+            round1_v4.identity.clone(),
+        ]),
+    );
+    insert(&mut blocklace, &round2_v2);
+    insert(&mut blocklace, &round2_v3);
+    insert(&mut blocklace, &round2_v4);
+
+    let unweighted = tau(&blocklace, 3, 4, 1, leader_node1);
+    let weighted = weighted_tau(&blocklace, 3, &weights, leader_node1);
+
+    assert!(!unweighted.is_empty());
+    assert!(weighted.is_empty());
 }
