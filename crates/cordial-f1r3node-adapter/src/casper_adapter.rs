@@ -371,6 +371,19 @@ where
             &self.shard_id,
         )?)
     }
+
+    /// Return the current weighted ordered finalized output as block hashes.
+    ///
+    /// This is a convenience adapter-facing view over the snapshot's
+    /// `ordered_finalized_blocks` field, allowing callers to retrieve the
+    /// finalized ordered sequence without manually rebuilding and unpacking
+    /// a full snapshot.
+    pub async fn ordered_finalized_blocks(&self) -> Result<Vec<BlockHash>, CasperError> {
+        Ok(self
+            .build_current_snapshot()
+            .await?
+            .ordered_finalized_blocks)
+    }
 }
 
 #[async_trait]
