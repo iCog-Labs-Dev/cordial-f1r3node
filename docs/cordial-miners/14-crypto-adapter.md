@@ -86,7 +86,7 @@ Inside `verify_block`, we call `hash_content(content)` ourselves instead of usin
 #### You can see the source code for [`test_crypto_adapter.rs`](../../crates/cordial-f1r3node-adapter/tests/test_crypto_adapter.rs)
 
 ```bash
-cargo test -p cordial-f1r3node-adapter --test test_crypto_adapter
+cargo test -p cordial-f1r3node-adapter --test test_crypto_bridge
 ```
 
 | Test | What it checks |

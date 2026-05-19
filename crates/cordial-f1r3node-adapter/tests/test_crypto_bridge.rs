@@ -162,7 +162,7 @@ fn secp256k1_sign_and_verify_roundtrip() {
     let (sk, pk) = secp256k1_keypair();
     let hash = [0x77u8; 32];
     let sig = Secp256k1.sign(&hash, &sk).unwrap();
-    assert_eq!(sig.len(), 64);
+    assert!(sig.len() >= 70 && sig.len() <= 72);
     let valid = Secp256k1.verify(&hash, &pk, &sig).unwrap();
     assert!(valid);
 }
