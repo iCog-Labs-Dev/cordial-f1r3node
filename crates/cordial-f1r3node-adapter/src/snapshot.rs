@@ -25,6 +25,7 @@
 //! | `dag.height_map`      | Indexed by each block's `CordialBlockPayload.state.block_number` |
 //! | `dag.block_number_map`| Same source, inverse lookup                           |
 //! | `last_finalized_block` | `latest_finalized_block_id(blocklace, bonds)`        |
+//! | `ordered_finalized_blocks` | `weighted_tau(blocklace, bonds)` as block hashes |
 //! | `lca`                  | `fork_choice(blocklace, bonds).lca`                  |
 //! | `tips`                 | `fork_choice(blocklace, bonds).tips`                 |
 //! | `parents`              | Translated from tips via `block_to_message`           |
@@ -60,7 +61,7 @@ use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    collect_validator_tips, fork_choice, latest_weighted_final_leader,
+    collect_validator_tips, fork_choice, latest_weighted_final_leader, weighted_tau,
 };
 use cordial_miners_core::execution::{CordialBlockPayload, compute_deploys_in_scope};
 use cordial_miners_core::types::{BlockIdentity, NodeId};
@@ -132,6 +133,7 @@ pub struct OnChainCasperState {
 pub struct CasperSnapshot {
     pub dag: DagRepresentation,
     pub last_finalized_block: Vec<u8>,
+    pub ordered_finalized_blocks: Vec<Vec<u8>>,
     pub lca: Vec<u8>,
     pub tips: Vec<Vec<u8>>,
     pub parents: Vec<BlockMessage>,
@@ -323,6 +325,7 @@ pub fn build_snapshot(
     Ok(CasperSnapshot {
         dag,
         last_finalized_block: dag_lfb(&blocklace_lfb_from(blocklace, bonds)),
+        ordered_finalized_blocks: ordered_finalized_block_hashes(blocklace, bonds),
         lca: lca_bytes,
         tips: tips_vec,
         parents,
@@ -370,6 +373,29 @@ pub(crate) fn latest_finalized_block_id(
         let idx = usize::try_from(wave).ok()? % leaders.len();
         Some(leaders[idx].clone())
     })
+}
+
+pub(crate) fn ordered_finalized_block_hashes(
+    blocklace: &Blocklace,
+    bonds: &HashMap<NodeId, u64>,
+) -> Vec<Vec<u8>> {
+    let leaders = ordered_validators(bonds);
+
+    if leaders.is_empty() {
+        return Vec::new();
+    }
+
+    weighted_tau(blocklace, ES_WAVELENGTH, bonds, |wave| {
+        let idx = usize::try_from(wave).ok()? % leaders.len();
+        Some(leaders[idx].clone())
+    })
+    .map(|ordered| {
+        ordered
+            .into_iter()
+            .map(|id| id.content_hash.to_vec())
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 fn ordered_validators(bonds: &HashMap<NodeId, u64>) -> Vec<NodeId> {
