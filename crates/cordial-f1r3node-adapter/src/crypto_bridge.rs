@@ -216,8 +216,7 @@ impl Verifier for Ed25519 {
 /// Secp256k1 ECDSA signer/verifier. The primary algorithm f1r3node uses
 /// for validator identities.
 ///
-/// Private key: 32 bytes. Public key: 33 bytes compressed or 65 bytes
-/// uncompressed SEC1. Signature: 64 bytes fixed-size r||s.
+/// Private key: 32 bytes. Public key: 33 bytes compressed or 65 bytes uncompressed SEC1. Signature: DER-encoded ECDSA, 70–72 bytes.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Secp256k1;
 
@@ -244,7 +243,7 @@ impl Signer for Secp256k1 {
         // provided hash verbatim). Use `try_sign` on the already-hashed
         // input to match f1r3node semantics.
         let sig: K256Signature = signing_key.sign(hash);
-        Ok(sig.to_bytes().to_vec())
+        Ok(sig.to_der().to_bytes().to_vec())
     }
 }
 
@@ -266,14 +265,9 @@ impl Verifier for Secp256k1 {
         }
         let verifying_key = K256VerifyingKey::from_sec1_bytes(public_key)
             .map_err(|_| CryptoError::InvalidPublicKey)?;
-        if signature.len() != 64 {
-            return Err(CryptoError::InvalidSignatureLength {
-                expected: 64,
-                actual: signature.len(),
-            });
-        }
-        let sig =
-            K256Signature::from_slice(signature).map_err(|_| CryptoError::InvalidSignature)?;
+            
+        let sig = K256Signature::from_der(signature)
+            . map_err(|_| CryptoError::InvalidSignature)?;
         Ok(verifying_key.verify(hash, &sig).is_ok())
     }
 }
