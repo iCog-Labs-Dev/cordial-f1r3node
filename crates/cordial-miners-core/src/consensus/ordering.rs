@@ -12,10 +12,31 @@ use crate::consensus::round::depth;
 use crate::consensus::wave::wave_of_round;
 use crate::types::{BlockIdentity, NodeId};
 
-pub fn approved_blocks_for_leader(
-    blocklace: &Blocklace,
-    leader: &BlockIdentity,
-) -> HashSet<Block> {
+struct TauState {
+    emitted: BTreeSet<BlockIdentity>,
+    ordered: Vec<BlockIdentity>,
+}
+
+struct TauConfig<F>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    wavelength: u64,
+    n: usize,
+    f: usize,
+    leader_selection: F,
+}
+
+struct WeightedTauConfig<'a, F>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    wavelength: u64,
+    bonds: &'a HashMap<NodeId, u64>,
+    leader_selection: F,
+}
+
+pub fn approved_blocks_for_leader(blocklace: &Blocklace, leader: &BlockIdentity) -> HashSet<Block> {
     if blocklace.get(leader).is_none() {
         return HashSet::new();
     }
@@ -34,7 +55,8 @@ pub fn approved_blocks_for_leader(
 /// multiple blocks are ready at the same time, ties are broken by the natural
 /// ordering of `BlockIdentity`, yielding a stable result across nodes.
 pub fn xsort(blocks: &HashSet<Block>) -> Vec<BlockIdentity> {
-    let block_ids: HashSet<BlockIdentity> = blocks.iter().map(|block| block.identity.clone()).collect();
+    let block_ids: HashSet<BlockIdentity> =
+        blocks.iter().map(|block| block.identity.clone()).collect();
     let mut dependents: HashMap<BlockIdentity, Vec<BlockIdentity>> = HashMap::new();
     let mut indegree: HashMap<BlockIdentity, usize> = HashMap::new();
 
@@ -184,19 +206,18 @@ where
         return Vec::new();
     };
 
-    let mut emitted = BTreeSet::new();
-    let mut ordered = Vec::new();
-    tau_from_leader(
-        blocklace,
-        &latest_leader,
+    let config = TauConfig {
         wavelength,
         n,
         f,
         leader_selection,
-        &mut emitted,
-        &mut ordered,
-    );
-    ordered
+    };
+    let mut state = TauState {
+        emitted: BTreeSet::new(),
+        ordered: Vec::new(),
+    };
+    tau_from_leader(blocklace, &latest_leader, &config, &mut state);
+    state.ordered
 }
 
 /// Return the stake-weighted ordered output sequence of the blocklace.
@@ -220,92 +241,76 @@ where
         return Vec::new();
     };
 
-    let mut emitted = BTreeSet::new();
-    let mut ordered = Vec::new();
-    weighted_tau_from_leader(
-        blocklace,
-        &latest_leader,
+    let config = WeightedTauConfig {
         wavelength,
         bonds,
         leader_selection,
-        &mut emitted,
-        &mut ordered,
-    );
-    ordered
+    };
+    let mut state = TauState {
+        emitted: BTreeSet::new(),
+        ordered: Vec::new(),
+    };
+    weighted_tau_from_leader(blocklace, &latest_leader, &config, &mut state);
+    state.ordered
 }
 
 fn tau_from_leader<F>(
     blocklace: &Blocklace,
     leader: &BlockIdentity,
-    wavelength: u64,
-    n: usize,
-    f: usize,
-    leader_selection: F,
-    emitted: &mut BTreeSet<BlockIdentity>,
-    ordered: &mut Vec<BlockIdentity>,
+    config: &TauConfig<F>,
+    state: &mut TauState,
 ) where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
-    if let Some(previous) =
-        previous_final_leader(blocklace, leader, wavelength, n, f, leader_selection)
-    {
-        tau_from_leader(
-            blocklace,
-            &previous,
-            wavelength,
-            n,
-            f,
-            leader_selection,
-            emitted,
-            ordered,
-        );
+    if let Some(previous) = previous_final_leader(
+        blocklace,
+        leader,
+        config.wavelength,
+        config.n,
+        config.f,
+        config.leader_selection,
+    ) {
+        tau_from_leader(blocklace, &previous, config, state);
     }
 
     let newly_approved: HashSet<Block> = approved_blocks_for_leader(blocklace, leader)
         .into_iter()
-        .filter(|block| !emitted.contains(&block.identity))
+        .filter(|block| !state.emitted.contains(&block.identity))
         .collect();
 
     for id in xsort(&newly_approved) {
-        if emitted.insert(id.clone()) {
-            ordered.push(id);
+        if state.emitted.insert(id.clone()) {
+            state.ordered.push(id);
         }
     }
 }
 
-fn weighted_tau_from_leader<F>(
+fn weighted_tau_from_leader<'a, F>(
     blocklace: &Blocklace,
     leader: &BlockIdentity,
-    wavelength: u64,
-    bonds: &HashMap<NodeId, u64>,
-    leader_selection: F,
-    emitted: &mut BTreeSet<BlockIdentity>,
-    ordered: &mut Vec<BlockIdentity>,
+    config: &WeightedTauConfig<'a, F>,
+    state: &mut TauState,
 ) where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
-    if let Some(previous) =
-        weighted_previous_final_leader(blocklace, leader, wavelength, bonds, leader_selection)
-    {
-        weighted_tau_from_leader(
-            blocklace,
-            &previous,
-            wavelength,
-            bonds,
-            leader_selection,
-            emitted,
-            ordered,
-        );
+    if let Some(previous) = weighted_previous_final_leader(
+        blocklace,
+        leader,
+        config.wavelength,
+        config.bonds,
+        config.leader_selection,
+    ) {
+        weighted_tau_from_leader(blocklace, &previous, config, state);
     }
 
     let newly_approved: HashSet<Block> = approved_blocks_for_leader(blocklace, leader)
         .into_iter()
-        .filter(|block| !emitted.contains(&block.identity))
+        .filter(|block| !state.emitted.contains(&block.identity))
         .collect();
 
     for id in xsort(&newly_approved) {
-        if emitted.insert(id.clone()) {
-            ordered.push(id);
+        if state.emitted.insert(id.clone()) {
+            state.ordered.push(id);
         }
     }
 }
