@@ -84,6 +84,8 @@ It currently caches:
 - deterministic sorted fragments per leader
 - previous-final-leader traversal results keyed by leader and ordering parameters
 - weighted previous-final-leader traversal results keyed by leader, wavelength, and bonded stake map
+- full `tau` output prefixes keyed by the current latest final leader
+- full `weighted_tau` output prefixes keyed by the current latest weighted final leader
 
 Cache entries are invalidated automatically when the blocklace size changes.
 When reusing a cache across calls, the caller should keep the leader-selection
@@ -143,6 +145,7 @@ The implemented ordering layer now supports:
 - divergence between unweighted and weighted output when finality differs
 - cached and uncached ordering equivalence
 - cache invalidation when the blocklace grows
+- repeated cached calls can reuse full output prefixes when the latest final leader is unchanged
 
 ## Current Limitations
 
@@ -150,7 +153,6 @@ The current implementation is intentionally direct and readable.
 
 Things not yet optimized:
 
-- no cached full output prefix yet
 - no adapter-facing ordered output plumbing yet
 
 Those can be added later without changing the high-level semantics.
