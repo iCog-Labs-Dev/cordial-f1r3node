@@ -2,10 +2,10 @@ pub mod approval;
 pub mod cordiality;
 pub mod finality;
 pub mod fork_choice;
+pub mod ordering;
 pub mod round;
 pub mod validation;
 pub mod wave;
-pub mod ordering;
 
 pub use approval::{approves, approving_blocks, weighted_approving_creators};
 pub use cordiality::{
@@ -20,8 +20,8 @@ pub use finality::{
 };
 pub use fork_choice::{ForkChoice, collect_validator_tips, fork_choice, is_cordial};
 pub use ordering::{
-    approved_blocks_for_leader, previous_final_leader, tau, weighted_previous_final_leader,
-    weighted_tau, xsort,
+    OrderingError, approved_blocks_for_leader, previous_final_leader, tau,
+    weighted_previous_final_leader, weighted_tau, xsort,
 };
 pub use round::{
     blocks_at_depth, compute_all_depths, depth, depth_prefix, depth_suffix, is_round_cordial,
