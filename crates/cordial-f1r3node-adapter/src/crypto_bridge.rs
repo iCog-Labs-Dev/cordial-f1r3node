@@ -49,6 +49,9 @@ use sha2::{Digest, Sha256};
 
 use crate::block_translation::BlockMessage;
 
+use cordial_miners_core::crypto::{CryptoVerifier, hash_content};
+use cordial_miners_core::types::{BlockContent, NodeId}; // The data types we need to work with
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Hashing
 // ═══════════════════════════════════════════════════════════════════════════
@@ -213,8 +216,7 @@ impl Verifier for Ed25519 {
 /// Secp256k1 ECDSA signer/verifier. The primary algorithm f1r3node uses
 /// for validator identities.
 ///
-/// Private key: 32 bytes. Public key: 33 bytes compressed or 65 bytes
-/// uncompressed SEC1. Signature: 64 bytes fixed-size r||s.
+/// Private key: 32 bytes. Public key: 33 bytes compressed or 65 bytes uncompressed SEC1. Signature: DER-encoded ECDSA, 70–72 bytes.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Secp256k1;
 
@@ -241,7 +243,7 @@ impl Signer for Secp256k1 {
         // provided hash verbatim). Use `try_sign` on the already-hashed
         // input to match f1r3node semantics.
         let sig: K256Signature = signing_key.sign(hash);
-        Ok(sig.to_bytes().to_vec())
+        Ok(sig.to_der().to_bytes().to_vec())
     }
 }
 
@@ -263,14 +265,7 @@ impl Verifier for Secp256k1 {
         }
         let verifying_key = K256VerifyingKey::from_sec1_bytes(public_key)
             .map_err(|_| CryptoError::InvalidPublicKey)?;
-        if signature.len() != 64 {
-            return Err(CryptoError::InvalidSignatureLength {
-                expected: 64,
-                actual: signature.len(),
-            });
-        }
-        let sig =
-            K256Signature::from_slice(signature).map_err(|_| CryptoError::InvalidSignature)?;
+        let sig = K256Signature::from_der(signature).map_err(|_| CryptoError::InvalidSignature)?;
         Ok(verifying_key.verify(hash, &sig).is_ok())
     }
 }
@@ -388,4 +383,74 @@ fn put_u64_len(buf: &mut Vec<u8>, n: u64) {
 fn put_bytes(buf: &mut Vec<u8>, b: &[u8]) {
     put_u64_len(buf, b.len() as u64);
     buf.extend_from_slice(b);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// The F1r2flyCrypto Adapter
+// ═══════════════════════════════════════════════════════════════════════════
+#[derive(Debug)]
+pub struct F1r3flyCryptoAdapter {
+    algorithm: SigAlgorithm, // Chosen Algorithm from SigAlgorithm
+}
+
+// This implementation in here are the functions that belong to F1r3flyCryptoAdapter struct".
+impl F1r3flyCryptoAdapter {
+    // Creates new adapter based on chosen algorithm
+    pub fn new(algorithm: SigAlgorithm) -> Self {
+        Self { algorithm }
+    }
+    // return the chosen algorithm for the adapter
+    pub fn algorithm(&self) -> SigAlgorithm {
+        self.algorithm
+    }
+    // Create adapter from algorithm string ("secp256k1", "ed25519"). Returns Ok or Error
+    pub fn from_algorithm_str(s: &str) -> Result<Self, CryptoError> {
+        // makes the input case-insensitive because of diffrent forms of writing.
+        match s.to_lowercase().as_str() {
+            // empty string is treated as secp256k1 by default, matching f1r3node's behavior.
+            "" => Ok(Self::new(SigAlgorithm::Secp256k1)),
+            "secp256k1" => Ok(Self::new(SigAlgorithm::Secp256k1)),
+            "ed25519" => Ok(Self::new(SigAlgorithm::Ed25519)),
+            // anything else is an error
+            _other => Err(CryptoError::InvalidSignature),
+        }
+    }
+}
+
+// ── The Actual Verification Logic ────────────────────────────────────────────────────// ═══════════════════════════════════════════════════════════════════════════
+// Implementing the CryptoVerifier Trait for our adapter.
+// This checks if a block's signature is valid according to the chosen algorithm.
+
+impl CryptoVerifier for F1r3flyCryptoAdapter {
+    type Error = CryptoError;
+    // Verify block is function blocklace calls on every new block.
+    fn verify_block(
+        &self,
+        content: &BlockContent,
+        signature: &[u8],
+        creator: &NodeId,
+    ) -> Result<(), Self::Error> {
+        // Recompute the content hash; the creator's signature must match it, so changed content fails verification.
+        let hash: [u8; 32] = hash_content(content); // Get the 32-byte hash of the block content.
+
+        // reject empty signatures
+        if signature.is_empty() {
+            return Err(CryptoError::InvalidSignatureLength {
+                expected: 1,
+                actual: 0,
+            });
+        }
+
+        // Verify the signature with the chosen algorithm.
+        let is_valid = match self.algorithm {
+            SigAlgorithm::Secp256k1 => Secp256k1.verify(&hash, &creator.0, signature)?,
+            SigAlgorithm::Ed25519 => Ed25519.verify(&hash, &creator.0, signature)?,
+        };
+
+        if is_valid {
+            Ok(())
+        } else {
+            Err(CryptoError::InvalidSignature)
+        }
+    }
 }
