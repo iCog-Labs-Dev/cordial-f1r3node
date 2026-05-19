@@ -265,7 +265,6 @@ impl Verifier for Secp256k1 {
         }
         let verifying_key = K256VerifyingKey::from_sec1_bytes(public_key)
             .map_err(|_| CryptoError::InvalidPublicKey)?;
-            
         let sig = K256Signature::from_der(signature).map_err(|_| CryptoError::InvalidSignature)?;
         Ok(verifying_key.verify(hash, &sig).is_ok())
     }
