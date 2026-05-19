@@ -1,4 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
@@ -17,6 +19,23 @@ pub struct OrderingCache {
     generation: usize,
     approved_blocks_by_leader: HashMap<BlockIdentity, HashSet<Block>>,
     sorted_approved_by_leader: HashMap<BlockIdentity, Result<Vec<BlockIdentity>, OrderingError>>,
+    previous_final_by_leader: HashMap<PreviousLeaderCacheKey, Option<BlockIdentity>>,
+    weighted_previous_final_by_leader: HashMap<WeightedPreviousLeaderCacheKey, Option<BlockIdentity>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PreviousLeaderCacheKey {
+    current_leader: BlockIdentity,
+    wavelength: u64,
+    n: usize,
+    f: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct WeightedPreviousLeaderCacheKey {
+    current_leader: BlockIdentity,
+    wavelength: u64,
+    bonds_fingerprint: u64,
 }
 
 struct TauState {
@@ -126,7 +145,21 @@ fn sync_cache_generation(blocklace: &Blocklace, cache: &mut OrderingCache) {
         cache.generation = generation;
         cache.approved_blocks_by_leader.clear();
         cache.sorted_approved_by_leader.clear();
+        cache.previous_final_by_leader.clear();
+        cache.weighted_previous_final_by_leader.clear();
     }
+}
+
+fn bonds_fingerprint(bonds: &HashMap<NodeId, u64>) -> u64 {
+    let mut entries: Vec<_> = bonds.iter().collect();
+    entries.sort_by_key(|(left, _)| *left);
+
+    let mut hasher = DefaultHasher::new();
+    for (node, weight) in entries {
+        node.hash(&mut hasher);
+        weight.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 fn approved_blocks_for_leader_cached(
@@ -164,6 +197,68 @@ fn sorted_approved_fragment(
         .sorted_approved_by_leader
         .insert(leader.clone(), sorted.clone());
     sorted
+}
+
+fn previous_final_leader_cached<F>(
+    blocklace: &Blocklace,
+    current_leader: &BlockIdentity,
+    wavelength: u64,
+    n: usize,
+    f: usize,
+    leader_selection: F,
+    cache: &mut OrderingCache,
+) -> Option<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    sync_cache_generation(blocklace, cache);
+
+    let key = PreviousLeaderCacheKey {
+        current_leader: current_leader.clone(),
+        wavelength,
+        n,
+        f,
+    };
+
+    if let Some(previous) = cache.previous_final_by_leader.get(&key) {
+        return previous.clone();
+    }
+
+    let previous =
+        previous_final_leader(blocklace, current_leader, wavelength, n, f, leader_selection);
+    cache.previous_final_by_leader.insert(key, previous.clone());
+    previous
+}
+
+fn weighted_previous_final_leader_cached<F>(
+    blocklace: &Blocklace,
+    current_leader: &BlockIdentity,
+    wavelength: u64,
+    bonds: &HashMap<NodeId, u64>,
+    leader_selection: F,
+    cache: &mut OrderingCache,
+) -> Option<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    sync_cache_generation(blocklace, cache);
+
+    let key = WeightedPreviousLeaderCacheKey {
+        current_leader: current_leader.clone(),
+        wavelength,
+        bonds_fingerprint: bonds_fingerprint(bonds),
+    };
+
+    if let Some(previous) = cache.weighted_previous_final_by_leader.get(&key) {
+        return previous.clone();
+    }
+
+    let previous =
+        weighted_previous_final_leader(blocklace, current_leader, wavelength, bonds, leader_selection);
+    cache
+        .weighted_previous_final_by_leader
+        .insert(key, previous.clone());
+    previous
 }
 
 /// Return the newest earlier final leader ratified by `current_leader`.
@@ -432,13 +527,14 @@ fn tau_from_leader_cached<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
-    if let Some(previous) = previous_final_leader(
+    if let Some(previous) = previous_final_leader_cached(
         blocklace,
         leader,
         config.wavelength,
         config.n,
         config.f,
         config.leader_selection,
+        cache,
     ) {
         tau_from_leader_cached(blocklace, &previous, config, cache, state)?;
     }
@@ -495,12 +591,13 @@ fn weighted_tau_from_leader_cached<'a, F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
-    if let Some(previous) = weighted_previous_final_leader(
+    if let Some(previous) = weighted_previous_final_leader_cached(
         blocklace,
         leader,
         config.wavelength,
         config.bonds,
         config.leader_selection,
+        cache,
     ) {
         weighted_tau_from_leader_cached(blocklace, &previous, config, cache, state)?;
     }
