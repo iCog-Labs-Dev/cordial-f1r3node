@@ -3,8 +3,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use crate::block::Block;
 use crate::blocklace::Blocklace;
 use crate::consensus::approval::approves;
-use crate::consensus::cordiality::ratifies;
-use crate::consensus::finality::{final_leader_for_wave, latest_final_leader};
+use crate::consensus::cordiality::{ratifies, weighted_ratifies};
+use crate::consensus::finality::{
+    final_leader_for_wave, latest_final_leader, weighted_final_leader_for_wave,
+};
 use crate::consensus::round::depth;
 use crate::consensus::wave::wave_of_round;
 use crate::types::{BlockIdentity, NodeId};
@@ -112,6 +114,47 @@ where
         };
 
         if ratifies(blocklace, &current_block, &previous_block, n, f) {
+            return Some(previous_leader);
+        }
+    }
+
+    None
+}
+
+/// Return the newest earlier weighted-final leader ratified by `current_leader`.
+///
+/// This is the stake-weighted recursion edge for a future `weighted_tau`.
+/// It mirrors [`previous_final_leader`] but uses weighted finality and
+/// weighted ratification over the supplied bonded validator set.
+pub fn weighted_previous_final_leader<F>(
+    blocklace: &Blocklace,
+    current_leader: &BlockIdentity,
+    wavelength: u64,
+    bonds: &HashMap<NodeId, u64>,
+    leader_selection: F,
+) -> Option<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    let current_block = blocklace.get(current_leader)?;
+    let current_round = depth(blocklace, current_leader)?;
+    let current_wave = wave_of_round(current_round, wavelength)?;
+
+    if current_wave == 0 {
+        return None;
+    }
+
+    for wave in (0..current_wave).rev() {
+        let Some(previous_leader) =
+            weighted_final_leader_for_wave(blocklace, wave, wavelength, bonds, leader_selection)
+        else {
+            continue;
+        };
+        let Some(previous_block) = blocklace.get(&previous_leader) else {
+            continue;
+        };
+
+        if weighted_ratifies(blocklace, &current_block, &previous_block, bonds) {
             return Some(previous_leader);
         }
     }
