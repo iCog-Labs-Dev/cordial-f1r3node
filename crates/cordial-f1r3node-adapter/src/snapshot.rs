@@ -59,7 +59,9 @@
 use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::{collect_validator_tips, fork_choice, latest_final_leader};
+use cordial_miners_core::consensus::{
+    collect_validator_tips, fork_choice, latest_weighted_final_leader,
+};
 use cordial_miners_core::execution::{CordialBlockPayload, compute_deploys_in_scope};
 use cordial_miners_core::types::{BlockIdentity, NodeId};
 
@@ -351,22 +353,20 @@ fn dag_lfb(id: &Option<BlockIdentity>) -> Vec<u8> {
         .unwrap_or_default()
 }
 
-/// Resolve the latest final leader using the current ES defaults:
+/// Resolve the latest weighted final leader using the current ES defaults:
 /// wavelength 3 and deterministic round-robin leader election over the
 /// bonded validators in lexicographic `NodeId` order.
 pub(crate) fn latest_finalized_block_id(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,
 ) -> Option<BlockIdentity> {
-    let n = bonds.len();
-    let f = n.saturating_sub(1) / 3;
     let leaders = ordered_validators(bonds);
 
     if leaders.is_empty() {
         return None;
     }
 
-    latest_final_leader(blocklace, ES_WAVELENGTH, n, f, |wave| {
+    latest_weighted_final_leader(blocklace, ES_WAVELENGTH, bonds, |wave| {
         let idx = usize::try_from(wave).ok()? % leaders.len();
         Some(leaders[idx].clone())
     })
