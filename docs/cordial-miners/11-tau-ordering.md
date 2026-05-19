@@ -32,6 +32,7 @@ The module currently provides both:
 
 - paper-native unweighted ordering
 - stake-weighted ordering for PoS / f1r3node-style integration
+- first-pass caching via `OrderingCache`
 
 ## Helper Functions
 
@@ -73,6 +74,22 @@ It uses:
 
 instead of the paper-native creator-count predicates.
 
+### `OrderingCache`
+
+`OrderingCache` is a first-pass memoization layer for repeated ordering calls.
+
+It currently caches:
+
+- approved block sets per leader
+- deterministic sorted fragments per leader
+- previous-final-leader traversal results keyed by leader and ordering parameters
+- weighted previous-final-leader traversal results keyed by leader, wavelength, and bonded stake map
+
+Cache entries are invalidated automatically when the blocklace size changes.
+When reusing a cache across calls, the caller should keep the leader-selection
+rule stable; the current cache keys assume a consistent leader-selection
+function across repeated use.
+
 ## `tau(...)`
 
 ### Paper-native path
@@ -105,6 +122,16 @@ This keeps the ordering structure aligned between:
 - paper-native consensus
 - stake-weighted integration
 
+### Cached entrypoints
+
+The module also provides:
+
+- `tau_with_cache(...)`
+- `weighted_tau_with_cache(...)`
+
+These reuse an `OrderingCache` across repeated ordering calls while preserving
+the same output as the uncached paths.
+
 ## Current Behavior
 
 The implemented ordering layer now supports:
@@ -114,6 +141,8 @@ The implemented ordering layer now supports:
 - recursive growth across multiple final leaders
 - duplicate suppression across recursive segments
 - divergence between unweighted and weighted output when finality differs
+- cached and uncached ordering equivalence
+- cache invalidation when the blocklace grows
 
 ## Current Limitations
 
@@ -121,8 +150,7 @@ The current implementation is intentionally direct and readable.
 
 Things not yet optimized:
 
-- no memoization for recursive leader-chain traversal
-- no cached approved-block fragments
+- no cached full output prefix yet
 - no adapter-facing ordered output plumbing yet
 
 Those can be added later without changing the high-level semantics.
@@ -137,6 +165,8 @@ Current tests cover:
 - `weighted_previous_final_leader(...)`
 - `tau(...)`
 - `weighted_tau(...)`
+- `tau_with_cache(...)`
+- `weighted_tau_with_cache(...)`
 
 Important tested properties include:
 
@@ -145,6 +175,8 @@ Important tested properties include:
 - monotonic growth
 - no duplicate output
 - weighted/unweighted divergence where expected
+- cached/uncached equivalence
+- cache invalidation on blocklace growth
 
 ## Relationship to Other Modules
 

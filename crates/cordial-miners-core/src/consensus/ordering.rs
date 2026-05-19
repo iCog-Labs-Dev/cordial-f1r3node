@@ -1,4 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
@@ -11,6 +13,30 @@ use crate::consensus::finality::{
 use crate::consensus::round::depth;
 use crate::consensus::wave::wave_of_round;
 use crate::types::{BlockIdentity, NodeId};
+
+#[derive(Debug, Clone, Default)]
+pub struct OrderingCache {
+    generation: usize,
+    approved_blocks_by_leader: HashMap<BlockIdentity, HashSet<Block>>,
+    sorted_approved_by_leader: HashMap<BlockIdentity, Result<Vec<BlockIdentity>, OrderingError>>,
+    previous_final_by_leader: HashMap<PreviousLeaderCacheKey, Option<BlockIdentity>>,
+    weighted_previous_final_by_leader: HashMap<WeightedPreviousLeaderCacheKey, Option<BlockIdentity>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PreviousLeaderCacheKey {
+    current_leader: BlockIdentity,
+    wavelength: u64,
+    n: usize,
+    f: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct WeightedPreviousLeaderCacheKey {
+    current_leader: BlockIdentity,
+    wavelength: u64,
+    bonds_fingerprint: u64,
+}
 
 struct TauState {
     emitted: BTreeSet<BlockIdentity>,
@@ -111,6 +137,128 @@ pub fn xsort(blocks: &HashSet<Block>) -> Result<Vec<BlockIdentity>, OrderingErro
     }
 
     Ok(ordered)
+}
+
+fn sync_cache_generation(blocklace: &Blocklace, cache: &mut OrderingCache) {
+    let generation = blocklace.dom().len();
+    if cache.generation != generation {
+        cache.generation = generation;
+        cache.approved_blocks_by_leader.clear();
+        cache.sorted_approved_by_leader.clear();
+        cache.previous_final_by_leader.clear();
+        cache.weighted_previous_final_by_leader.clear();
+    }
+}
+
+fn bonds_fingerprint(bonds: &HashMap<NodeId, u64>) -> u64 {
+    let mut entries: Vec<_> = bonds.iter().collect();
+    entries.sort_by_key(|(left, _)| *left);
+
+    let mut hasher = DefaultHasher::new();
+    for (node, weight) in entries {
+        node.hash(&mut hasher);
+        weight.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn approved_blocks_for_leader_cached(
+    blocklace: &Blocklace,
+    leader: &BlockIdentity,
+    cache: &mut OrderingCache,
+) -> HashSet<Block> {
+    sync_cache_generation(blocklace, cache);
+
+    if let Some(blocks) = cache.approved_blocks_by_leader.get(leader) {
+        return blocks.clone();
+    }
+
+    let blocks = approved_blocks_for_leader(blocklace, leader);
+    cache
+        .approved_blocks_by_leader
+        .insert(leader.clone(), blocks.clone());
+    blocks
+}
+
+fn sorted_approved_fragment(
+    blocklace: &Blocklace,
+    leader: &BlockIdentity,
+    cache: &mut OrderingCache,
+) -> Result<Vec<BlockIdentity>, OrderingError> {
+    sync_cache_generation(blocklace, cache);
+
+    if let Some(sorted) = cache.sorted_approved_by_leader.get(leader) {
+        return sorted.clone();
+    }
+
+    let approved = approved_blocks_for_leader_cached(blocklace, leader, cache);
+    let sorted = xsort(&approved);
+    cache
+        .sorted_approved_by_leader
+        .insert(leader.clone(), sorted.clone());
+    sorted
+}
+
+fn previous_final_leader_cached<F>(
+    blocklace: &Blocklace,
+    current_leader: &BlockIdentity,
+    wavelength: u64,
+    n: usize,
+    f: usize,
+    leader_selection: F,
+    cache: &mut OrderingCache,
+) -> Option<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    sync_cache_generation(blocklace, cache);
+
+    let key = PreviousLeaderCacheKey {
+        current_leader: current_leader.clone(),
+        wavelength,
+        n,
+        f,
+    };
+
+    if let Some(previous) = cache.previous_final_by_leader.get(&key) {
+        return previous.clone();
+    }
+
+    let previous =
+        previous_final_leader(blocklace, current_leader, wavelength, n, f, leader_selection);
+    cache.previous_final_by_leader.insert(key, previous.clone());
+    previous
+}
+
+fn weighted_previous_final_leader_cached<F>(
+    blocklace: &Blocklace,
+    current_leader: &BlockIdentity,
+    wavelength: u64,
+    bonds: &HashMap<NodeId, u64>,
+    leader_selection: F,
+    cache: &mut OrderingCache,
+) -> Option<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    sync_cache_generation(blocklace, cache);
+
+    let key = WeightedPreviousLeaderCacheKey {
+        current_leader: current_leader.clone(),
+        wavelength,
+        bonds_fingerprint: bonds_fingerprint(bonds),
+    };
+
+    if let Some(previous) = cache.weighted_previous_final_by_leader.get(&key) {
+        return previous.clone();
+    }
+
+    let previous =
+        weighted_previous_final_leader(blocklace, current_leader, wavelength, bonds, leader_selection);
+    cache
+        .weighted_previous_final_by_leader
+        .insert(key, previous.clone());
+    previous
 }
 
 /// Return the newest earlier final leader ratified by `current_leader`.
@@ -232,6 +380,41 @@ where
     Ok(state.ordered)
 }
 
+/// Cached variant of [`tau`].
+///
+/// Reuses per-leader approved block sets and sorted fragments across repeated
+/// calls. Cache entries are invalidated automatically when the blocklace size
+/// changes.
+pub fn tau_with_cache<F>(
+    blocklace: &Blocklace,
+    wavelength: u64,
+    n: usize,
+    f: usize,
+    leader_selection: F,
+    cache: &mut OrderingCache,
+) -> Result<Vec<BlockIdentity>, OrderingError>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    let Some(latest_leader) = latest_final_leader(blocklace, wavelength, n, f, leader_selection)
+    else {
+        return Ok(Vec::new());
+    };
+
+    let config = TauConfig {
+        wavelength,
+        n,
+        f,
+        leader_selection,
+    };
+    let mut state = TauState {
+        emitted: BTreeSet::new(),
+        ordered: Vec::new(),
+    };
+    tau_from_leader_cached(blocklace, &latest_leader, &config, cache, &mut state)?;
+    Ok(state.ordered)
+}
+
 /// Return the stake-weighted ordered output sequence of the blocklace.
 ///
 /// `weighted_tau` mirrors [`tau`] but anchors on the latest weighted final
@@ -263,6 +446,40 @@ where
         ordered: Vec::new(),
     };
     weighted_tau_from_leader(blocklace, &latest_leader, &config, &mut state)?;
+    Ok(state.ordered)
+}
+
+/// Cached variant of [`weighted_tau`].
+///
+/// Reuses per-leader approved block sets and sorted fragments across repeated
+/// calls. Cache entries are invalidated automatically when the blocklace size
+/// changes.
+pub fn weighted_tau_with_cache<F>(
+    blocklace: &Blocklace,
+    wavelength: u64,
+    bonds: &HashMap<NodeId, u64>,
+    leader_selection: F,
+    cache: &mut OrderingCache,
+) -> Result<Vec<BlockIdentity>, OrderingError>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    let Some(latest_leader) =
+        latest_weighted_final_leader(blocklace, wavelength, bonds, leader_selection)
+    else {
+        return Ok(Vec::new());
+    };
+
+    let config = WeightedTauConfig {
+        wavelength,
+        bonds,
+        leader_selection,
+    };
+    let mut state = TauState {
+        emitted: BTreeSet::new(),
+        ordered: Vec::new(),
+    };
+    weighted_tau_from_leader_cached(blocklace, &latest_leader, &config, cache, &mut state)?;
     Ok(state.ordered)
 }
 
@@ -300,6 +517,37 @@ where
     Ok(())
 }
 
+fn tau_from_leader_cached<F>(
+    blocklace: &Blocklace,
+    leader: &BlockIdentity,
+    config: &TauConfig<F>,
+    cache: &mut OrderingCache,
+    state: &mut TauState,
+) -> Result<(), OrderingError>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    if let Some(previous) = previous_final_leader_cached(
+        blocklace,
+        leader,
+        config.wavelength,
+        config.n,
+        config.f,
+        config.leader_selection,
+        cache,
+    ) {
+        tau_from_leader_cached(blocklace, &previous, config, cache, state)?;
+    }
+
+    for id in sorted_approved_fragment(blocklace, leader, cache)? {
+        if state.emitted.insert(id.clone()) {
+            state.ordered.push(id);
+        }
+    }
+
+    Ok(())
+}
+
 fn weighted_tau_from_leader<'a, F>(
     blocklace: &Blocklace,
     leader: &BlockIdentity,
@@ -325,6 +573,36 @@ where
         .collect();
 
     for id in xsort(&newly_approved)? {
+        if state.emitted.insert(id.clone()) {
+            state.ordered.push(id);
+        }
+    }
+
+    Ok(())
+}
+
+fn weighted_tau_from_leader_cached<'a, F>(
+    blocklace: &Blocklace,
+    leader: &BlockIdentity,
+    config: &WeightedTauConfig<'a, F>,
+    cache: &mut OrderingCache,
+    state: &mut TauState,
+) -> Result<(), OrderingError>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    if let Some(previous) = weighted_previous_final_leader_cached(
+        blocklace,
+        leader,
+        config.wavelength,
+        config.bonds,
+        config.leader_selection,
+        cache,
+    ) {
+        weighted_tau_from_leader_cached(blocklace, &previous, config, cache, state)?;
+    }
+
+    for id in sorted_approved_fragment(blocklace, leader, cache)? {
         if state.emitted.insert(id.clone()) {
             state.ordered.push(id);
         }
