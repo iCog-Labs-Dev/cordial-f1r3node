@@ -36,6 +36,11 @@ where
     leader_selection: F,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrderingError {
+    CycleDetected,
+}
+
 pub fn approved_blocks_for_leader(blocklace: &Blocklace, leader: &BlockIdentity) -> HashSet<Block> {
     if blocklace.get(leader).is_none() {
         return HashSet::new();
@@ -54,7 +59,10 @@ pub fn approved_blocks_for_leader(blocklace: &Blocklace, leader: &BlockIdentity)
 /// The order respects predecessor edges within the supplied block set. When
 /// multiple blocks are ready at the same time, ties are broken by the natural
 /// ordering of `BlockIdentity`, yielding a stable result across nodes.
-pub fn xsort(blocks: &HashSet<Block>) -> Vec<BlockIdentity> {
+///
+/// Returns [`OrderingError::CycleDetected`] if the supplied subset contains a
+/// cycle, instead of silently returning a partial order.
+pub fn xsort(blocks: &HashSet<Block>) -> Result<Vec<BlockIdentity>, OrderingError> {
     let block_ids: HashSet<BlockIdentity> =
         blocks.iter().map(|block| block.identity.clone()).collect();
     let mut dependents: HashMap<BlockIdentity, Vec<BlockIdentity>> = HashMap::new();
@@ -98,7 +106,11 @@ pub fn xsort(blocks: &HashSet<Block>) -> Vec<BlockIdentity> {
         }
     }
 
-    ordered
+    if ordered.len() != blocks.len() {
+        return Err(OrderingError::CycleDetected);
+    }
+
+    Ok(ordered)
 }
 
 /// Return the newest earlier final leader ratified by `current_leader`.
@@ -197,13 +209,13 @@ pub fn tau<F>(
     n: usize,
     f: usize,
     leader_selection: F,
-) -> Vec<BlockIdentity>
+) -> Result<Vec<BlockIdentity>, OrderingError>
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
     let Some(latest_leader) = latest_final_leader(blocklace, wavelength, n, f, leader_selection)
     else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
 
     let config = TauConfig {
@@ -216,8 +228,8 @@ where
         emitted: BTreeSet::new(),
         ordered: Vec::new(),
     };
-    tau_from_leader(blocklace, &latest_leader, &config, &mut state);
-    state.ordered
+    tau_from_leader(blocklace, &latest_leader, &config, &mut state)?;
+    Ok(state.ordered)
 }
 
 /// Return the stake-weighted ordered output sequence of the blocklace.
@@ -231,14 +243,14 @@ pub fn weighted_tau<F>(
     wavelength: u64,
     bonds: &HashMap<NodeId, u64>,
     leader_selection: F,
-) -> Vec<BlockIdentity>
+) -> Result<Vec<BlockIdentity>, OrderingError>
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
     let Some(latest_leader) =
         latest_weighted_final_leader(blocklace, wavelength, bonds, leader_selection)
     else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
 
     let config = WeightedTauConfig {
@@ -250,8 +262,8 @@ where
         emitted: BTreeSet::new(),
         ordered: Vec::new(),
     };
-    weighted_tau_from_leader(blocklace, &latest_leader, &config, &mut state);
-    state.ordered
+    weighted_tau_from_leader(blocklace, &latest_leader, &config, &mut state)?;
+    Ok(state.ordered)
 }
 
 fn tau_from_leader<F>(
@@ -259,7 +271,8 @@ fn tau_from_leader<F>(
     leader: &BlockIdentity,
     config: &TauConfig<F>,
     state: &mut TauState,
-) where
+) -> Result<(), OrderingError>
+where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
     if let Some(previous) = previous_final_leader(
@@ -270,7 +283,7 @@ fn tau_from_leader<F>(
         config.f,
         config.leader_selection,
     ) {
-        tau_from_leader(blocklace, &previous, config, state);
+        tau_from_leader(blocklace, &previous, config, state)?;
     }
 
     let newly_approved: HashSet<Block> = approved_blocks_for_leader(blocklace, leader)
@@ -278,11 +291,13 @@ fn tau_from_leader<F>(
         .filter(|block| !state.emitted.contains(&block.identity))
         .collect();
 
-    for id in xsort(&newly_approved) {
+    for id in xsort(&newly_approved)? {
         if state.emitted.insert(id.clone()) {
             state.ordered.push(id);
         }
     }
+
+    Ok(())
 }
 
 fn weighted_tau_from_leader<'a, F>(
@@ -290,7 +305,8 @@ fn weighted_tau_from_leader<'a, F>(
     leader: &BlockIdentity,
     config: &WeightedTauConfig<'a, F>,
     state: &mut TauState,
-) where
+) -> Result<(), OrderingError>
+where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
     if let Some(previous) = weighted_previous_final_leader(
@@ -300,7 +316,7 @@ fn weighted_tau_from_leader<'a, F>(
         config.bonds,
         config.leader_selection,
     ) {
-        weighted_tau_from_leader(blocklace, &previous, config, state);
+        weighted_tau_from_leader(blocklace, &previous, config, state)?;
     }
 
     let newly_approved: HashSet<Block> = approved_blocks_for_leader(blocklace, leader)
@@ -308,9 +324,11 @@ fn weighted_tau_from_leader<'a, F>(
         .filter(|block| !state.emitted.contains(&block.identity))
         .collect();
 
-    for id in xsort(&newly_approved) {
+    for id in xsort(&newly_approved)? {
         if state.emitted.insert(id.clone()) {
             state.ordered.push(id);
         }
     }
+
+    Ok(())
 }
