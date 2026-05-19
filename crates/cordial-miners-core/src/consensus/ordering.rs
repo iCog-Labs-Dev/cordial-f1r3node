@@ -4,10 +4,10 @@ use crate::block::Block;
 use crate::blocklace::Blocklace;
 use crate::consensus::approval::approves;
 use crate::consensus::cordiality::ratifies;
-use crate::consensus::finality::final_leader_for_wave;
+use crate::consensus::finality::{final_leader_for_wave, latest_final_leader};
 use crate::consensus::round::depth;
 use crate::consensus::wave::wave_of_round;
-use crate::types::BlockIdentity;
+use crate::types::{BlockIdentity, NodeId};
 
 pub fn approved_blocks_for_leader(
     blocklace: &Blocklace,
@@ -91,7 +91,7 @@ pub fn previous_final_leader<F>(
     leader_selection: F,
 ) -> Option<BlockIdentity>
 where
-    F: Fn(u64) -> Option<crate::types::NodeId> + Copy,
+    F: Fn(u64) -> Option<NodeId> + Copy,
 {
     let current_block = blocklace.get(current_leader)?;
     let current_round = depth(blocklace, current_leader)?;
@@ -117,4 +117,79 @@ where
     }
 
     None
+}
+
+/// Return the paper-native ordered output sequence of the blocklace.
+///
+/// `tau` anchors on the latest final leader, recursively emits the output
+/// induced by earlier final leaders, then appends the current leader's
+/// approved blocks in deterministic topological order, excluding any block
+/// already emitted by earlier recursion.
+pub fn tau<F>(
+    blocklace: &Blocklace,
+    wavelength: u64,
+    n: usize,
+    f: usize,
+    leader_selection: F,
+) -> Vec<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    let Some(latest_leader) = latest_final_leader(blocklace, wavelength, n, f, leader_selection)
+    else {
+        return Vec::new();
+    };
+
+    let mut emitted = BTreeSet::new();
+    let mut ordered = Vec::new();
+    tau_from_leader(
+        blocklace,
+        &latest_leader,
+        wavelength,
+        n,
+        f,
+        leader_selection,
+        &mut emitted,
+        &mut ordered,
+    );
+    ordered
+}
+
+fn tau_from_leader<F>(
+    blocklace: &Blocklace,
+    leader: &BlockIdentity,
+    wavelength: u64,
+    n: usize,
+    f: usize,
+    leader_selection: F,
+    emitted: &mut BTreeSet<BlockIdentity>,
+    ordered: &mut Vec<BlockIdentity>,
+) where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    if let Some(previous) =
+        previous_final_leader(blocklace, leader, wavelength, n, f, leader_selection)
+    {
+        tau_from_leader(
+            blocklace,
+            &previous,
+            wavelength,
+            n,
+            f,
+            leader_selection,
+            emitted,
+            ordered,
+        );
+    }
+
+    let newly_approved: HashSet<Block> = approved_blocks_for_leader(blocklace, leader)
+        .into_iter()
+        .filter(|block| !emitted.contains(&block.identity))
+        .collect();
+
+    for id in xsort(&newly_approved) {
+        if emitted.insert(id.clone()) {
+            ordered.push(id);
+        }
+    }
 }
