@@ -5,7 +5,8 @@ use crate::blocklace::Blocklace;
 use crate::consensus::approval::approves;
 use crate::consensus::cordiality::{ratifies, weighted_ratifies};
 use crate::consensus::finality::{
-    final_leader_for_wave, latest_final_leader, weighted_final_leader_for_wave,
+    final_leader_for_wave, latest_final_leader, latest_weighted_final_leader,
+    weighted_final_leader_for_wave,
 };
 use crate::consensus::round::depth;
 use crate::consensus::wave::wave_of_round;
@@ -198,6 +199,41 @@ where
     ordered
 }
 
+/// Return the stake-weighted ordered output sequence of the blocklace.
+///
+/// `weighted_tau` mirrors [`tau`] but anchors on the latest weighted final
+/// leader and walks the weighted-final leader chain via
+/// [`weighted_previous_final_leader`]. This is the PoS / f1r3node-oriented
+/// parallel to the paper-native unweighted output function.
+pub fn weighted_tau<F>(
+    blocklace: &Blocklace,
+    wavelength: u64,
+    bonds: &HashMap<NodeId, u64>,
+    leader_selection: F,
+) -> Vec<BlockIdentity>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    let Some(latest_leader) =
+        latest_weighted_final_leader(blocklace, wavelength, bonds, leader_selection)
+    else {
+        return Vec::new();
+    };
+
+    let mut emitted = BTreeSet::new();
+    let mut ordered = Vec::new();
+    weighted_tau_from_leader(
+        blocklace,
+        &latest_leader,
+        wavelength,
+        bonds,
+        leader_selection,
+        &mut emitted,
+        &mut ordered,
+    );
+    ordered
+}
+
 fn tau_from_leader<F>(
     blocklace: &Blocklace,
     leader: &BlockIdentity,
@@ -219,6 +255,43 @@ fn tau_from_leader<F>(
             wavelength,
             n,
             f,
+            leader_selection,
+            emitted,
+            ordered,
+        );
+    }
+
+    let newly_approved: HashSet<Block> = approved_blocks_for_leader(blocklace, leader)
+        .into_iter()
+        .filter(|block| !emitted.contains(&block.identity))
+        .collect();
+
+    for id in xsort(&newly_approved) {
+        if emitted.insert(id.clone()) {
+            ordered.push(id);
+        }
+    }
+}
+
+fn weighted_tau_from_leader<F>(
+    blocklace: &Blocklace,
+    leader: &BlockIdentity,
+    wavelength: u64,
+    bonds: &HashMap<NodeId, u64>,
+    leader_selection: F,
+    emitted: &mut BTreeSet<BlockIdentity>,
+    ordered: &mut Vec<BlockIdentity>,
+) where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    if let Some(previous) =
+        weighted_previous_final_leader(blocklace, leader, wavelength, bonds, leader_selection)
+    {
+        weighted_tau_from_leader(
+            blocklace,
+            &previous,
+            wavelength,
+            bonds,
             leader_selection,
             emitted,
             ordered,
