@@ -151,7 +151,10 @@ fn xsort_breaks_ties_by_block_identity() {
     let blocks = HashSet::from([later.clone(), earlier.clone()]);
     let ordered = xsort(&blocks);
 
-    assert_eq!(ordered, vec![earlier.identity.clone(), later.identity.clone()]);
+    assert_eq!(
+        ordered,
+        vec![earlier.identity.clone(), later.identity.clone()]
+    );
 }
 
 #[test]
@@ -163,7 +166,10 @@ fn xsort_ignores_predecessors_outside_selected_block_set() {
     let blocks = HashSet::from([child.clone(), sibling.clone()]);
     let ordered = xsort(&blocks);
 
-    assert_eq!(ordered, vec![child.identity.clone(), sibling.identity.clone()]);
+    assert_eq!(
+        ordered,
+        vec![child.identity.clone(), sibling.identity.clone()]
+    );
 }
 
 #[test]
@@ -214,14 +220,8 @@ fn previous_final_leader_returns_none_for_first_wave_leader() {
     insert(&mut blocklace, &round2_v3);
     insert(&mut blocklace, &round2_v4);
 
-    let result = previous_final_leader(
-        &blocklace,
-        &leader.identity,
-        wavelength,
-        n,
-        f,
-        leader_node1,
-    );
+    let result =
+        previous_final_leader(&blocklace, &leader.identity, wavelength, n, f, leader_node1);
 
     assert!(result.is_none());
 }
@@ -498,10 +498,7 @@ fn tau_grows_monotonically_across_final_leaders_without_duplicates() {
     let second = tau(&blocklace, wavelength, n, f, leader_node1);
 
     assert!(second.starts_with(&first));
-    assert_eq!(
-        second.iter().collect::<HashSet<_>>().len(),
-        second.len()
-    );
+    assert_eq!(second.iter().collect::<HashSet<_>>().len(), second.len());
     assert!(second.len() >= first.len());
 }
 
