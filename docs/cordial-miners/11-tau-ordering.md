@@ -82,8 +82,13 @@ It currently caches:
 
 - approved block sets per leader
 - deterministic sorted fragments per leader
+- previous-final-leader traversal results keyed by leader and ordering parameters
+- weighted previous-final-leader traversal results keyed by leader, wavelength, and bonded stake map
 
 Cache entries are invalidated automatically when the blocklace size changes.
+When reusing a cache across calls, the caller should keep the leader-selection
+rule stable; the current cache keys assume a consistent leader-selection
+function across repeated use.
 
 ## `tau(...)`
 
@@ -145,7 +150,6 @@ The current implementation is intentionally direct and readable.
 
 Things not yet optimized:
 
-- no memoized previous-leader traversal yet
 - no cached full output prefix yet
 - no adapter-facing ordered output plumbing yet
 
