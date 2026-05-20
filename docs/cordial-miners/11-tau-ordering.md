@@ -88,9 +88,10 @@ It currently caches:
 - full `weighted_tau` output prefixes keyed by the current latest weighted final leader
 
 Cache entries are invalidated automatically when the blocklace size changes.
-When reusing a cache across calls, the caller should keep the leader-selection
-rule stable; the current cache keys assume a consistent leader-selection
-function across repeated use.
+When reusing a cache across calls, the caller must pass a stable
+`leader_selection_id` describing the leader-selection policy in use.
+Cache keys include that identifier so results from different selector
+policies are not reused accidentally.
 
 ## `tau(...)`
 
@@ -132,7 +133,8 @@ The module also provides:
 - `weighted_tau_with_cache(...)`
 
 These reuse an `OrderingCache` across repeated ordering calls while preserving
-the same output as the uncached paths.
+the same output as the uncached paths. Callers are responsible for providing a
+stable `leader_selection_id` for repeated uses of the same selector policy.
 
 ## Current Behavior
 
