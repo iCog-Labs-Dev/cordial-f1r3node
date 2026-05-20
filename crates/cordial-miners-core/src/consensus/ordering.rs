@@ -578,6 +578,10 @@ fn tau_from_leader<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    if emit_checkpoint_prefix(blocklace, leader, state) {
+        return Ok(());
+    }
+
     if let Some(previous) = previous_final_leader(
         blocklace,
         leader,
@@ -587,6 +591,8 @@ where
         config.leader_selection,
     ) {
         tau_from_leader(blocklace, &previous, config, state)?;
+    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, leader) {
+        emit_checkpoint_prefix(blocklace, checkpoint, state);
     }
 
     let newly_approved: HashSet<Block> = approved_blocks_for_leader(blocklace, leader)
@@ -613,8 +619,14 @@ fn tau_from_leader_cached<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    if emit_checkpoint_prefix(blocklace, leader, state) {
+        return Ok(());
+    }
+
     if let Some(previous) = previous_final_leader_cached(blocklace, leader, config, cache) {
         tau_from_leader_cached(blocklace, &previous, config, cache, state)?;
+    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, leader) {
+        emit_checkpoint_prefix(blocklace, checkpoint, state);
     }
 
     for id in sorted_approved_fragment(blocklace, leader, cache)? {
@@ -635,6 +647,10 @@ fn weighted_tau_from_leader<'a, F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    if emit_checkpoint_prefix(blocklace, leader, state) {
+        return Ok(());
+    }
+
     if let Some(previous) = weighted_previous_final_leader(
         blocklace,
         leader,
@@ -643,6 +659,8 @@ where
         config.leader_selection,
     ) {
         weighted_tau_from_leader(blocklace, &previous, config, state)?;
+    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, leader) {
+        emit_checkpoint_prefix(blocklace, checkpoint, state);
     }
 
     let newly_approved: HashSet<Block> = approved_blocks_for_leader(blocklace, leader)
@@ -669,9 +687,15 @@ fn weighted_tau_from_leader_cached<'a, F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    if emit_checkpoint_prefix(blocklace, leader, state) {
+        return Ok(());
+    }
+
     if let Some(previous) = weighted_previous_final_leader_cached(blocklace, leader, config, cache)
     {
         weighted_tau_from_leader_cached(blocklace, &previous, config, cache, state)?;
+    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, leader) {
+        emit_checkpoint_prefix(blocklace, checkpoint, state);
     }
 
     for id in sorted_approved_fragment(blocklace, leader, cache)? {
@@ -681,4 +705,34 @@ where
     }
 
     Ok(())
+}
+
+fn emit_checkpoint_prefix(
+    blocklace: &Blocklace,
+    leader: &BlockIdentity,
+    state: &mut TauState,
+) -> bool {
+    if blocklace.checkpoint() != Some(leader) || blocklace.checkpoint_order_prefix().is_empty() {
+        return false;
+    }
+
+    for id in blocklace.checkpoint_order_prefix() {
+        if state.emitted.insert(id.clone()) {
+            state.ordered.push(id.clone());
+        }
+    }
+
+    true
+}
+
+fn checkpoint_predecessor<'a>(
+    blocklace: &'a Blocklace,
+    leader: &BlockIdentity,
+) -> Option<&'a BlockIdentity> {
+    let checkpoint = blocklace.checkpoint()?;
+    if checkpoint == leader || !blocklace.precedes(checkpoint, leader) {
+        return None;
+    }
+
+    Some(checkpoint)
 }
