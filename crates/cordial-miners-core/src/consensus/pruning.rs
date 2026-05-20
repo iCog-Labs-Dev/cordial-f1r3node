@@ -34,9 +34,17 @@ pub struct PruneReport<Id> {
 /// Reasons checkpoint pruning can be rejected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PruneError<Id> {
-    UnknownCheckpoint { checkpoint: Id },
-    CheckpointRegression { current: Id, requested: Id },
-    DisconnectedCheckpoint { current: Id, requested: Id },
+    UnknownCheckpoint {
+        checkpoint: Box<Id>,
+    },
+    CheckpointRegression {
+        current: Box<Id>,
+        requested: Box<Id>,
+    },
+    DisconnectedCheckpoint {
+        current: Box<Id>,
+        requested: Box<Id>,
+    },
 }
 
 impl CheckpointGc<BlockIdentity> for Blocklace {
@@ -61,13 +69,13 @@ impl Blocklace {
     ) -> Result<PruneReport<BlockIdentity>, PruneError<BlockIdentity>> {
         if !self.blocks.contains_key(checkpoint) {
             return Err(PruneError::UnknownCheckpoint {
-                checkpoint: checkpoint.clone(),
+                checkpoint: Box::new(checkpoint.clone()),
             });
         }
 
         let checkpoint_depth =
             depth(self, checkpoint).ok_or_else(|| PruneError::UnknownCheckpoint {
-                checkpoint: checkpoint.clone(),
+                checkpoint: Box::new(checkpoint.clone()),
             })?;
 
         if let Some(current) = self.checkpoint.clone() {
@@ -81,19 +89,20 @@ impl Blocklace {
                 });
             }
 
-            if let Some(current_depth) = self.checkpoint_depth {
-                if checkpoint_depth < current_depth {
-                    return Err(PruneError::CheckpointRegression {
-                        current,
-                        requested: checkpoint.clone(),
-                    });
-                }
+            if self
+                .checkpoint_depth
+                .is_some_and(|current_depth| checkpoint_depth < current_depth)
+            {
+                return Err(PruneError::CheckpointRegression {
+                    current: Box::new(current.clone()),
+                    requested: Box::new(checkpoint.clone()),
+                });
             }
 
             if !self.preceedes_or_equals(&current, checkpoint) {
                 return Err(PruneError::DisconnectedCheckpoint {
-                    current,
-                    requested: checkpoint.clone(),
+                    current: Box::new(current),
+                    requested: Box::new(checkpoint.clone()),
                 });
             }
         }
