@@ -837,8 +837,7 @@ fn tau_with_cache_matches_uncached_tau() {
 
     let mut cache = OrderingCache::default();
     let uncached = tau(&blocklace, wavelength, n, f, leader_node1).unwrap();
-    let cached =
-        tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
+    let cached = tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
 
     assert_eq!(cached, uncached);
 }
@@ -891,8 +890,8 @@ fn weighted_tau_with_cache_matches_uncached_weighted_tau() {
 
     let mut cache = OrderingCache::default();
     let uncached = weighted_tau(&blocklace, 3, &weights, leader_node1).unwrap();
-    let cached = weighted_tau_with_cache(&blocklace, 3, &weights, 1, leader_node1, &mut cache)
-        .unwrap();
+    let cached =
+        weighted_tau_with_cache(&blocklace, 3, &weights, 1, leader_node1, &mut cache).unwrap();
 
     assert_eq!(cached, uncached);
 }
@@ -947,11 +946,9 @@ fn weighted_tau_with_cache_distinguishes_bond_sets() {
     let mut cache = OrderingCache::default();
 
     let low_majority_cached =
-        weighted_tau_with_cache(&blocklace, 3, &low_majority, 1, leader_node1, &mut cache)
-            .unwrap();
+        weighted_tau_with_cache(&blocklace, 3, &low_majority, 1, leader_node1, &mut cache).unwrap();
     let even_split_cached =
-        weighted_tau_with_cache(&blocklace, 3, &even_split, 1, leader_node1, &mut cache)
-            .unwrap();
+        weighted_tau_with_cache(&blocklace, 3, &even_split, 1, leader_node1, &mut cache).unwrap();
 
     let low_majority_uncached = weighted_tau(&blocklace, 3, &low_majority, leader_node1).unwrap();
     let even_split_uncached = weighted_tau(&blocklace, 3, &even_split, leader_node1).unwrap();
@@ -1011,8 +1008,7 @@ fn tau_with_cache_invalidates_when_blocklace_grows() {
     insert(&mut blocklace, &w0_r2_v4);
 
     let mut cache = OrderingCache::default();
-    let first =
-        tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
+    let first = tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
 
     let wave1_leader = block(
         1,
@@ -1063,8 +1059,7 @@ fn tau_with_cache_invalidates_when_blocklace_grows() {
     insert(&mut blocklace, &w1_r2_v3);
     insert(&mut blocklace, &w1_r2_v4);
 
-    let second =
-        tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
+    let second = tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
 
     assert!(second.starts_with(&first));
     assert!(second.len() >= first.len());
@@ -1119,10 +1114,8 @@ fn tau_with_cache_reuses_full_output_for_same_latest_leader() {
     insert(&mut blocklace, &round2_v4);
 
     let mut cache = OrderingCache::default();
-    let first =
-        tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
-    let second =
-        tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
+    let first = tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
+    let second = tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
     let uncached = tau(&blocklace, wavelength, n, f, leader_node1).unwrap();
 
     assert_eq!(first, second);
@@ -1179,8 +1172,7 @@ fn tau_with_cache_distinguishes_leader_selection_identity() {
 
     let mut cache = OrderingCache::default();
     let first = tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
-    let second =
-        tau_with_cache(&blocklace, wavelength, n, f, 2, leader_node2, &mut cache).unwrap();
+    let second = tau_with_cache(&blocklace, wavelength, n, f, 2, leader_node2, &mut cache).unwrap();
 
     let uncached_first = tau(&blocklace, wavelength, n, f, leader_node1).unwrap();
     let uncached_second = tau(&blocklace, wavelength, n, f, leader_node2).unwrap();
