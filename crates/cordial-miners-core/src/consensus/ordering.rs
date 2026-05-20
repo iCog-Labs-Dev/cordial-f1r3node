@@ -1,5 +1,5 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use crate::block::Block;
@@ -20,8 +20,10 @@ pub struct OrderingCache {
     approved_blocks_by_leader: HashMap<BlockIdentity, HashSet<Block>>,
     sorted_approved_by_leader: HashMap<BlockIdentity, Result<Vec<BlockIdentity>, OrderingError>>,
     previous_final_by_leader: HashMap<PreviousLeaderCacheKey, Option<BlockIdentity>>,
-    weighted_previous_final_by_leader: HashMap<WeightedPreviousLeaderCacheKey, Option<BlockIdentity>>,
-    tau_output_by_latest_leader: HashMap<TauOutputCacheKey, Result<Vec<BlockIdentity>, OrderingError>>,
+    weighted_previous_final_by_leader:
+        HashMap<WeightedPreviousLeaderCacheKey, Option<BlockIdentity>>,
+    tau_output_by_latest_leader:
+        HashMap<TauOutputCacheKey, Result<Vec<BlockIdentity>, OrderingError>>,
     weighted_tau_output_by_latest_leader:
         HashMap<WeightedTauOutputCacheKey, Result<Vec<BlockIdentity>, OrderingError>>,
 }
@@ -461,16 +463,11 @@ where
         emitted: BTreeSet::new(),
         ordered: Vec::new(),
     };
-    let ordered = match tau_from_leader_cached(
-        blocklace,
-        &latest_leader,
-        &config,
-        cache,
-        &mut state,
-    ) {
-        Ok(()) => Ok(state.ordered),
-        Err(err) => Err(err),
-    };
+    let ordered =
+        match tau_from_leader_cached(blocklace, &latest_leader, &config, cache, &mut state) {
+            Ok(()) => Ok(state.ordered),
+            Err(err) => Err(err),
+        };
     cache
         .tau_output_by_latest_leader
         .insert(key, ordered.clone());
