@@ -52,6 +52,15 @@
 //!   input bonds unchanged in `new_bonds` for now (future work: call
 //!   `compute_bonds` on the post-state hash).
 
+pub mod error;
+pub mod lmdb_store;
+pub mod repository;
+
+// Re-export the public surface so callers only need one use statement
+pub use error::RepoError;
+pub use lmdb_store::RSpaceBlocklaceRepository;
+pub use repository::BlocklaceRepository;
+
 use std::collections::HashMap;
 
 use cordial_miners_core::execution::{
