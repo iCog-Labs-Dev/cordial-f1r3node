@@ -56,6 +56,10 @@ fn leader_node1(_wave: u64) -> Option<NodeId> {
     Some(node(1))
 }
 
+fn leader_node2(_wave: u64) -> Option<NodeId> {
+    Some(node(2))
+}
+
 fn bonds(entries: &[(u8, u64)]) -> HashMap<NodeId, u64> {
     entries
         .iter()
@@ -833,7 +837,8 @@ fn tau_with_cache_matches_uncached_tau() {
 
     let mut cache = OrderingCache::default();
     let uncached = tau(&blocklace, wavelength, n, f, leader_node1).unwrap();
-    let cached = tau_with_cache(&blocklace, wavelength, n, f, leader_node1, &mut cache).unwrap();
+    let cached =
+        tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
 
     assert_eq!(cached, uncached);
 }
@@ -886,7 +891,7 @@ fn weighted_tau_with_cache_matches_uncached_weighted_tau() {
 
     let mut cache = OrderingCache::default();
     let uncached = weighted_tau(&blocklace, 3, &weights, leader_node1).unwrap();
-    let cached = weighted_tau_with_cache(&blocklace, 3, &weights, leader_node1, &mut cache)
+    let cached = weighted_tau_with_cache(&blocklace, 3, &weights, 1, leader_node1, &mut cache)
         .unwrap();
 
     assert_eq!(cached, uncached);
@@ -942,9 +947,11 @@ fn weighted_tau_with_cache_distinguishes_bond_sets() {
     let mut cache = OrderingCache::default();
 
     let low_majority_cached =
-        weighted_tau_with_cache(&blocklace, 3, &low_majority, leader_node1, &mut cache).unwrap();
+        weighted_tau_with_cache(&blocklace, 3, &low_majority, 1, leader_node1, &mut cache)
+            .unwrap();
     let even_split_cached =
-        weighted_tau_with_cache(&blocklace, 3, &even_split, leader_node1, &mut cache).unwrap();
+        weighted_tau_with_cache(&blocklace, 3, &even_split, 1, leader_node1, &mut cache)
+            .unwrap();
 
     let low_majority_uncached = weighted_tau(&blocklace, 3, &low_majority, leader_node1).unwrap();
     let even_split_uncached = weighted_tau(&blocklace, 3, &even_split, leader_node1).unwrap();
@@ -1004,7 +1011,8 @@ fn tau_with_cache_invalidates_when_blocklace_grows() {
     insert(&mut blocklace, &w0_r2_v4);
 
     let mut cache = OrderingCache::default();
-    let first = tau_with_cache(&blocklace, wavelength, n, f, leader_node1, &mut cache).unwrap();
+    let first =
+        tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
 
     let wave1_leader = block(
         1,
@@ -1055,7 +1063,8 @@ fn tau_with_cache_invalidates_when_blocklace_grows() {
     insert(&mut blocklace, &w1_r2_v3);
     insert(&mut blocklace, &w1_r2_v4);
 
-    let second = tau_with_cache(&blocklace, wavelength, n, f, leader_node1, &mut cache).unwrap();
+    let second =
+        tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
 
     assert!(second.starts_with(&first));
     assert!(second.len() >= first.len());
@@ -1110,12 +1119,75 @@ fn tau_with_cache_reuses_full_output_for_same_latest_leader() {
     insert(&mut blocklace, &round2_v4);
 
     let mut cache = OrderingCache::default();
-    let first = tau_with_cache(&blocklace, wavelength, n, f, leader_node1, &mut cache).unwrap();
-    let second = tau_with_cache(&blocklace, wavelength, n, f, leader_node1, &mut cache).unwrap();
+    let first =
+        tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
+    let second =
+        tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
     let uncached = tau(&blocklace, wavelength, n, f, leader_node1).unwrap();
 
     assert_eq!(first, second);
     assert_eq!(second, uncached);
+}
+
+#[test]
+fn tau_with_cache_distinguishes_leader_selection_identity() {
+    let mut blocklace = Blocklace::new();
+    let wavelength = 3u64;
+    let n = 4usize;
+    let f = 1usize;
+
+    let wave0_leader = block(1, 1, HashSet::new());
+    insert(&mut blocklace, &wave0_leader);
+
+    let w0_r1_v2 = block(2, 2, HashSet::from([wave0_leader.identity.clone()]));
+    let w0_r1_v3 = block(3, 3, HashSet::from([wave0_leader.identity.clone()]));
+    let w0_r1_v4 = block(4, 4, HashSet::from([wave0_leader.identity.clone()]));
+    insert(&mut blocklace, &w0_r1_v2);
+    insert(&mut blocklace, &w0_r1_v3);
+    insert(&mut blocklace, &w0_r1_v4);
+
+    let w0_r2_v2 = block(
+        2,
+        5,
+        HashSet::from([
+            w0_r1_v2.identity.clone(),
+            w0_r1_v3.identity.clone(),
+            w0_r1_v4.identity.clone(),
+        ]),
+    );
+    let w0_r2_v3 = block(
+        3,
+        6,
+        HashSet::from([
+            w0_r1_v2.identity.clone(),
+            w0_r1_v3.identity.clone(),
+            w0_r1_v4.identity.clone(),
+        ]),
+    );
+    let w0_r2_v4 = block(
+        4,
+        7,
+        HashSet::from([
+            w0_r1_v2.identity.clone(),
+            w0_r1_v3.identity.clone(),
+            w0_r1_v4.identity.clone(),
+        ]),
+    );
+    insert(&mut blocklace, &w0_r2_v2);
+    insert(&mut blocklace, &w0_r2_v3);
+    insert(&mut blocklace, &w0_r2_v4);
+
+    let mut cache = OrderingCache::default();
+    let first = tau_with_cache(&blocklace, wavelength, n, f, 1, leader_node1, &mut cache).unwrap();
+    let second =
+        tau_with_cache(&blocklace, wavelength, n, f, 2, leader_node2, &mut cache).unwrap();
+
+    let uncached_first = tau(&blocklace, wavelength, n, f, leader_node1).unwrap();
+    let uncached_second = tau(&blocklace, wavelength, n, f, leader_node2).unwrap();
+
+    assert_eq!(first, uncached_first);
+    assert_eq!(second, uncached_second);
+    assert_ne!(first, second);
 }
 
 #[test]
@@ -1165,7 +1237,8 @@ fn weighted_tau_with_cache_updates_when_latest_weighted_leader_changes() {
     insert(&mut blocklace, &w0_r2_v4);
 
     let mut cache = OrderingCache::default();
-    let first = weighted_tau_with_cache(&blocklace, 3, &weights, leader_node1, &mut cache).unwrap();
+    let first =
+        weighted_tau_with_cache(&blocklace, 3, &weights, 1, leader_node1, &mut cache).unwrap();
 
     let wave1_leader = block(
         1,
@@ -1216,7 +1289,8 @@ fn weighted_tau_with_cache_updates_when_latest_weighted_leader_changes() {
     insert(&mut blocklace, &w1_r2_v3);
     insert(&mut blocklace, &w1_r2_v4);
 
-    let second = weighted_tau_with_cache(&blocklace, 3, &weights, leader_node1, &mut cache).unwrap();
+    let second =
+        weighted_tau_with_cache(&blocklace, 3, &weights, 1, leader_node1, &mut cache).unwrap();
     let uncached = weighted_tau(&blocklace, 3, &weights, leader_node1).unwrap();
 
     assert!(second.starts_with(&first));
