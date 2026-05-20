@@ -295,6 +295,21 @@ async fn get_snapshot_succeeds_on_empty_blocklace() {
     assert_eq!(snap.on_chain_state.bonds_map[&vec![1u8]], 100);
 }
 
+#[tokio::test]
+async fn ordered_finalized_blocks_is_empty_when_nothing_is_weighted_final() {
+    let adapter = CordialCasperAdapter::new_with_verifier(
+        bonds(&[(1, 100)]),
+        default_shard_conf(),
+        "root",
+        DeployPoolConfig::default(),
+        None,
+        MockVerifier,
+    );
+
+    let ordered = adapter.ordered_finalized_blocks().await.unwrap();
+    assert!(ordered.is_empty());
+}
+
 // ── validate ─────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -478,6 +493,24 @@ async fn last_finalized_returns_genesis_once_supermajority_supports_it() {
     // f1r3node-style Blake2b block hash).
     assert_eq!(lfb_msg.block_hash, g_hash);
     assert_eq!(lfb_msg.sender, vec![1]);
+}
+
+#[tokio::test]
+async fn ordered_finalized_blocks_returns_weighted_tau_output() {
+    let adapter = CordialCasperAdapter::new_with_verifier(
+        bonds(&[(1, 100)]),
+        default_shard_conf(),
+        "root",
+        DeployPoolConfig::default(),
+        None,
+        MockVerifier,
+    );
+    let g = make_block(node(1), simple_payload(0), HashSet::new(), 1);
+    let g_hash = g.identity.content_hash.to_vec();
+    insert_through_adapter(&adapter, g).await;
+
+    let ordered = adapter.ordered_finalized_blocks().await.unwrap();
+    assert_eq!(ordered, vec![g_hash]);
 }
 
 // ── normalized_initial_fault ─────────────────────────────────────────────
