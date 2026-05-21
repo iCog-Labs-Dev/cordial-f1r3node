@@ -18,8 +18,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::Block;
 use crate::blocklace::Blocklace;
+use crate::consensus::cordiality::all_equivocations;
 use crate::consensus::fork_choice::collect_validator_tips;
+use crate::crypto::CryptoVerifier;
 use crate::types::{BlockIdentity, NodeId};
 
 /// Collect the set of visible validator tips from the local blocklace.
@@ -99,9 +102,28 @@ pub fn select_predecessors(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,
 ) -> HashSet<BlockIdentity> {
-    validator_visible_tips(blocklace, bonds)
+    let mut predecessors: HashSet<BlockIdentity> = validator_visible_tips(blocklace, bonds)
         .into_values()
-        .collect()
+        .collect();
+
+    if predecessors.is_empty() {
+        return predecessors;
+    }
+
+    let mut observed: HashSet<BlockIdentity> = predecessors
+        .iter()
+        .flat_map(|pred_id| blocklace.observe(pred_id).into_iter())
+        .collect();
+
+    for equivocation in all_equivocations(blocklace) {
+        for branch in equivocation.blocks {
+            if observed.insert(branch.clone()) {
+                predecessors.insert(branch);
+            }
+        }
+    }
+
+    predecessors
 }
 
 /// Select predecessors and return them as a sorted vector for deterministic ordering.
@@ -109,8 +131,8 @@ pub fn select_predecessors(
 /// This is a convenience wrapper around `select_predecessors()` that returns results
 /// in a deterministic order, useful for logging, comparison, or network transmission.
 ///
-/// Sorting is by `content_hash` in ascending byte order. The comparison borrows the
-/// hash rather than copying a 32-byte array on every comparison.
+/// Sorting is by the full natural ordering of `BlockIdentity`, so ties on
+/// `content_hash` are broken consistently by creator and signature as needed.
 ///
 /// # Arguments
 /// * `blocklace` - The local blocklace DAG view
@@ -125,8 +147,7 @@ pub fn select_predecessors_sorted(
     let mut result: Vec<BlockIdentity> =
         select_predecessors(blocklace, bonds).into_iter().collect();
 
-    // Borrow the hash for comparison to avoid copying a 32-byte array per comparison.
-    result.sort_by_key(|id| id.content_hash);
+    result.sort();
     result
 }
 
@@ -181,4 +202,80 @@ pub fn weighted_required_acknowledgements(bonds: &HashMap<NodeId, u64>) -> u64 {
         return 0;
     }
     ((2 * total_stake) / 3 + 1) as u64
+}
+
+/// A buffer for blocks that arrive out of order (before their predecessors).
+///
+/// This provides the dependency-resolution side of dissemination: blocks with missing
+/// parents should be buffered and retried once dependencies arrive.
+#[derive(Default, Debug, Clone)]
+pub struct PendingBlockBuffer {
+    /// Blocks that are buffered, indexed by their identity.
+    pub buffered_blocks: HashMap<BlockIdentity, Block>,
+}
+
+impl PendingBlockBuffer {
+    /// Create a new empty pending block buffer.
+    pub fn new() -> Self {
+        Self {
+            buffered_blocks: HashMap::new(),
+        }
+    }
+
+    /// Add a block to the buffer that might be missing predecessors.
+    pub fn buffer_block_with_missing_predecessors(&mut self, block: Block) {
+        self.buffered_blocks.insert(block.identity.clone(), block);
+    }
+
+    /// Retry inserting buffered blocks into the given blocklace.
+    ///
+    /// Loops through buffered blocks and attempts to insert them if their
+    /// predecessors are now available. Continues as long as progress is made
+    /// (e.g., a block is inserted which then satisfies another block's dependencies).
+    ///
+    /// Successfully inserted blocks, or blocks that are definitively rejected
+    /// (e.g., due to invalid signatures), are removed from the buffer.
+    pub fn retry_buffered_blocks<V: CryptoVerifier>(
+        &mut self,
+        blocklace: &mut Blocklace,
+        verifier: &V,
+    ) {
+        let mut progress = true;
+        while progress {
+            progress = false;
+            let mut resolved = Vec::new();
+
+            for (id, block) in self.buffered_blocks.iter() {
+                // Check if all predecessors are in the blocklace
+                let ready = block
+                    .content
+                    .predecessors
+                    .iter()
+                    .all(|p| blocklace.content(p).is_some());
+
+                if ready {
+                    // Try to insert
+                    match blocklace.insert(block.clone(), verifier) {
+                        Ok(_) => {
+                            resolved.push(id.clone());
+                            progress = true;
+                        }
+                        Err(_) => {
+                            // Block is definitively invalid (bad signature, equivocation, etc).
+                            // Remove it so we do not retry a permanently broken block.
+                            // NOTE: closure violations cannot happen here because we verified
+                            // all predecessors exist above. If they did occur it would be a bug.
+                            // Full coverage of rejection cases requires a non-mock verifier
+                            // and is tested at the integration layer.
+                            resolved.push(id.clone());
+                        }
+                    }
+                }
+            }
+
+            for id in resolved {
+                self.buffered_blocks.remove(&id);
+            }
+        }
+    }
 }
