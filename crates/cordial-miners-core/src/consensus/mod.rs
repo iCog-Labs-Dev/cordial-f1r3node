@@ -1,5 +1,6 @@
 pub mod approval;
 pub mod cordiality;
+pub mod dissemination;
 pub mod finality;
 pub mod fork_choice;
 pub mod round;
@@ -12,6 +13,10 @@ pub use cordiality::{
     creator_blocks_at_round, equivocation_blocks_at_round, hidden_equivocations, is_cordial_block,
     is_supermajority, is_weighted_supermajority, missing_known_tips, observed_block_ids, ratifies,
     super_ratifies, weighted_ratifies, weighted_super_ratifies,
+};
+pub use dissemination::{
+    required_acknowledgements, select_predecessors, select_predecessors_sorted,
+    validator_visible_tips, weighted_required_acknowledgements,
 };
 pub use finality::{
     final_leader_for_wave, is_final_leader, latest_final_leader, leader_block_for_wave,
