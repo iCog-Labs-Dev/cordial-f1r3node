@@ -111,7 +111,10 @@ pub struct SimNetwork {
 
 impl SimNetwork {
     pub fn new(nodes: Vec<SimNode>) -> Self {
-        let nodes = nodes.into_iter().map(|node| (node.id.clone(), node)).collect();
+        let nodes = nodes
+            .into_iter()
+            .map(|node| (node.id.clone(), node))
+            .collect();
         Self {
             nodes,
             pending_deliveries: Vec::new(),

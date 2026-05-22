@@ -2,9 +2,8 @@ use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
     PendingBlockBuffer, ProposalError, ValidationConfig, build_block_candidate,
-    next_block_predecessors,
-    required_acknowledgements, select_predecessors, select_predecessors_sorted,
-    validator_visible_tips, weighted_required_acknowledgements,
+    next_block_predecessors, required_acknowledgements, select_predecessors,
+    select_predecessors_sorted, validator_visible_tips, weighted_required_acknowledgements,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
