@@ -214,6 +214,14 @@ pub struct PendingBlockBuffer {
     pub buffered_blocks: HashMap<BlockIdentity, Block>,
 }
 
+fn should_keep_buffered_after_validation(errors: &[InvalidBlock]) -> bool {
+    errors.iter().all(is_retryable_buffer_error)
+}
+
+fn is_retryable_buffer_error(error: &InvalidBlock) -> bool {
+    matches!(error, InvalidBlock::MissingPredecessors { .. })
+}
+
 impl PendingBlockBuffer {
     /// Create a new empty pending block buffer.
     pub fn new() -> Self {
@@ -238,8 +246,10 @@ impl PendingBlockBuffer {
     /// weaken admission rules.
     ///
     /// Successfully inserted blocks, or blocks that are definitively rejected
-    /// by validation, are removed from the buffer. Blocks that still report
-    /// `MissingPredecessors` remain buffered for later retry.
+    /// by validation, are removed from the buffer. Retryability is classified
+    /// explicitly by validation error kind; with the current validation model,
+    /// only `MissingPredecessors` is considered retryable for the supplied
+    /// `bonds` and `config`.
     pub fn retry_buffered_blocks(
         &mut self,
         blocklace: &mut Blocklace,
@@ -266,11 +276,7 @@ impl PendingBlockBuffer {
                             progress = true;
                         }
                         crate::consensus::validation::ValidationResult::Invalid(errors) => {
-                            // Keep retrying only if the block is still missing predecessors.
-                            let still_missing = errors.iter().any(
-                                |error| matches!(error, InvalidBlock::MissingPredecessors { .. }),
-                            );
-                            if !still_missing {
+                            if !should_keep_buffered_after_validation(&errors) {
                                 resolved.push(id.clone());
                             }
                         }
