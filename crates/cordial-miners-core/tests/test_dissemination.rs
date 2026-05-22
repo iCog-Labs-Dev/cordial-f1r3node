@@ -149,7 +149,8 @@ fn multiple_validator_tips_all_selected() {
 ///
 /// The test explicitly checks both layers:
 /// 1. `validator_visible_tips` must not contain the equivocating validator at all.
-/// 2. `select_predecessors` must not include either of their blocks.
+/// 2. `select_predecessors` must include the honest tip and any missing
+///    equivocation branches needed to avoid hiding the known equivocation.
 #[test]
 fn equivocating_validators_excluded_from_predecessors() {
     let mut blocklace = Blocklace::new();
@@ -180,16 +181,52 @@ fn equivocating_validators_excluded_from_predecessors() {
         "honest validator 2 must appear in the tips map"
     );
 
-    // Layer 2: predecessor set excludes both equivocation branches
+    // Layer 2: predecessor set keeps the honest tip and adds the missing
+    // equivocation branch that is not already transitively observed.
     let preds = select_predecessors(&blocklace, &bonds);
-    assert_eq!(
-        preds.len(),
-        1,
-        "only honest validators contribute predecessors"
-    );
+    assert_eq!(preds.len(), 2);
     assert!(preds.contains(&tip_v2.identity));
-    assert!(!preds.contains(&e1.identity));
-    assert!(!preds.contains(&e2.identity));
+    assert!(
+        !preds.contains(&e1.identity),
+        "already observed branch need not be a direct predecessor"
+    );
+    assert!(
+        preds.contains(&e2.identity),
+        "missing branch should be added explicitly"
+    );
+}
+
+/// When a locally known equivocation is not yet fully acknowledged through the
+/// honest tip set, predecessor selection must add the missing branches so a new
+/// block does not hide that known equivocation.
+#[test]
+fn known_equivocation_branches_are_added_when_not_transitively_observed() {
+    let mut blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+
+    let e1 = create_mock_block(1, 1, HashSet::new());
+    let e2 = create_mock_block(1, 2, HashSet::new());
+    insert(&mut blocklace, &e1);
+    insert(&mut blocklace, &e2);
+
+    // Honest validator 2 only sees one branch of the equivocation.
+    let tip_v2 = create_mock_block(2, 3, HashSet::from([e1.identity.clone()]));
+    insert(&mut blocklace, &tip_v2);
+
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
+
+    let preds = select_predecessors(&blocklace, &bonds);
+
+    assert!(preds.contains(&tip_v2.identity));
+    assert!(
+        !preds.contains(&e1.identity),
+        "already observed branch should remain transitive only"
+    );
+    assert!(
+        preds.contains(&e2.identity),
+        "the missing equivocation branch should be added explicitly"
+    );
 }
 
 /// **AC5**: Predecessor selection is deterministic across repeated calls on the same view.
