@@ -15,6 +15,12 @@ pub enum DeliveryOutcome {
     Rejected(Vec<InvalidBlock>),
 }
 
+#[derive(Debug, Clone)]
+struct PendingDelivery {
+    recipient: NodeId,
+    block: Block,
+}
+
 /// Minimal node model for dissemination simulations.
 ///
 /// This keeps only the local state needed for early dissemination tests:
@@ -85,5 +91,57 @@ impl SimNode {
 
     pub fn pending_len(&self) -> usize {
         self.pending.buffered_blocks.len()
+    }
+}
+
+/// Minimal network harness for dissemination simulations.
+///
+/// This keeps a set of simulated nodes plus an explicit delivery queue so tests
+/// can control message order.
+pub struct SimNetwork {
+    pub nodes: HashMap<NodeId, SimNode>,
+    pending_deliveries: Vec<PendingDelivery>,
+}
+
+impl SimNetwork {
+    pub fn new(nodes: Vec<SimNode>) -> Self {
+        let nodes = nodes.into_iter().map(|node| (node.id.clone(), node)).collect();
+        Self {
+            nodes,
+            pending_deliveries: Vec::new(),
+        }
+    }
+
+    pub fn node(&self, id: &NodeId) -> Option<&SimNode> {
+        self.nodes.get(id)
+    }
+
+    pub fn node_mut(&mut self, id: &NodeId) -> Option<&mut SimNode> {
+        self.nodes.get_mut(id)
+    }
+
+    pub fn queue_delivery(&mut self, recipient: NodeId, block: Block) {
+        self.pending_deliveries
+            .push(PendingDelivery { recipient, block });
+    }
+
+    pub fn queued_delivery_count(&self) -> usize {
+        self.pending_deliveries.len()
+    }
+
+    pub fn deliver_next_to(&mut self, recipient: &NodeId) -> Option<DeliveryOutcome> {
+        let idx = self
+            .pending_deliveries
+            .iter()
+            .position(|delivery| &delivery.recipient == recipient)?;
+        let delivery = self.pending_deliveries.remove(idx);
+        let node = self.nodes.get_mut(recipient)?;
+        Some(node.receive_block(delivery.block))
+    }
+
+    pub fn retry_all_buffers(&mut self) {
+        for node in self.nodes.values_mut() {
+            node.retry_buffered_blocks();
+        }
     }
 }
