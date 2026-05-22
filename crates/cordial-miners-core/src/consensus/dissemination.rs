@@ -225,21 +225,31 @@ pub enum ProposalError {
 /// visible honest validator tips to satisfy `required_acknowledgements(...)`.
 /// The predecessor set itself comes from `select_predecessors(...)`, which may
 /// include additional known equivocation branches needed for cordiality.
+///
+/// As a special bootstrap case, an empty blocklace yields an empty predecessor
+/// set so the first block can be proposed before any tips exist.
 pub fn build_block_candidate(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,
     payload: Vec<u8>,
 ) -> Result<BlockContent, ProposalError> {
-    let observed = validator_visible_tips(blocklace, bonds).len();
-    let required = required_acknowledgements(bonds);
-
-    if observed < required {
-        return Err(ProposalError::InsufficientAcknowledgements { observed, required });
+    if blocklace.dom().is_empty() {
+        return Ok(BlockContent {
+            payload,
+            predecessors: HashSet::new(),
+        });
     }
 
     let predecessors = select_predecessors(blocklace, bonds);
     if predecessors.is_empty() {
         return Err(ProposalError::NoPredecessorsAvailable);
+    }
+
+    let observed = validator_visible_tips(blocklace, bonds).len();
+    let required = required_acknowledgements(bonds);
+
+    if observed < required {
+        return Err(ProposalError::InsufficientAcknowledgements { observed, required });
     }
 
     Ok(BlockContent {
