@@ -22,7 +22,7 @@ use crate::Block;
 use crate::blocklace::Blocklace;
 use crate::consensus::cordiality::all_equivocations;
 use crate::consensus::fork_choice::collect_validator_tips;
-use crate::crypto::CryptoVerifier;
+use crate::consensus::validation::{InvalidBlock, ValidationConfig, validated_insert};
 use crate::types::{BlockIdentity, NodeId};
 
 /// Collect the set of visible validator tips from the local blocklace.
@@ -233,12 +233,18 @@ impl PendingBlockBuffer {
     /// predecessors are now available. Continues as long as progress is made
     /// (e.g., a block is inserted which then satisfies another block's dependencies).
     ///
+    /// Buffered replay uses the same consensus validation path as normal
+    /// ingestion via `validated_insert`, so dependency resolution does not
+    /// weaken admission rules.
+    ///
     /// Successfully inserted blocks, or blocks that are definitively rejected
-    /// (e.g., due to invalid signatures), are removed from the buffer.
-    pub fn retry_buffered_blocks<V: CryptoVerifier>(
+    /// by validation, are removed from the buffer. Blocks that still report
+    /// `MissingPredecessors` remain buffered for later retry.
+    pub fn retry_buffered_blocks(
         &mut self,
         blocklace: &mut Blocklace,
-        verifier: &V,
+        bonds: &HashMap<NodeId, u64>,
+        config: &ValidationConfig,
     ) {
         let mut progress = true;
         while progress {
@@ -254,20 +260,19 @@ impl PendingBlockBuffer {
                     .all(|p| blocklace.content(p).is_some());
 
                 if ready {
-                    // Try to insert
-                    match blocklace.insert(block.clone(), verifier) {
-                        Ok(_) => {
+                    match validated_insert(block.clone(), blocklace, bonds, config) {
+                        crate::consensus::validation::ValidationResult::Valid => {
                             resolved.push(id.clone());
                             progress = true;
                         }
-                        Err(_) => {
-                            // Block is definitively invalid (bad signature, equivocation, etc).
-                            // Remove it so we do not retry a permanently broken block.
-                            // NOTE: closure violations cannot happen here because we verified
-                            // all predecessors exist above. If they did occur it would be a bug.
-                            // Full coverage of rejection cases requires a non-mock verifier
-                            // and is tested at the integration layer.
-                            resolved.push(id.clone());
+                        crate::consensus::validation::ValidationResult::Invalid(errors) => {
+                            // Keep retrying only if the block is still missing predecessors.
+                            let still_missing = errors.iter().any(
+                                |error| matches!(error, InvalidBlock::MissingPredecessors { .. }),
+                            );
+                            if !still_missing {
+                                resolved.push(id.clone());
+                            }
                         }
                     }
                 }
