@@ -19,6 +19,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::blocklace::Blocklace;
+use crate::consensus::cordiality::all_equivocations;
 use crate::consensus::fork_choice::collect_validator_tips;
 use crate::types::{BlockIdentity, NodeId};
 
@@ -99,9 +100,28 @@ pub fn select_predecessors(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,
 ) -> HashSet<BlockIdentity> {
-    validator_visible_tips(blocklace, bonds)
+    let mut predecessors: HashSet<BlockIdentity> = validator_visible_tips(blocklace, bonds)
         .into_values()
-        .collect()
+        .collect();
+
+    if predecessors.is_empty() {
+        return predecessors;
+    }
+
+    let mut observed: HashSet<BlockIdentity> = predecessors
+        .iter()
+        .flat_map(|pred_id| blocklace.observe(pred_id).into_iter())
+        .collect();
+
+    for equivocation in all_equivocations(blocklace) {
+        for branch in equivocation.blocks {
+            if observed.insert(branch.clone()) {
+                predecessors.insert(branch);
+            }
+        }
+    }
+
+    predecessors
 }
 
 /// Select predecessors and return them as a sorted vector for deterministic ordering.
