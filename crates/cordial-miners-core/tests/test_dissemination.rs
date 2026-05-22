@@ -1,8 +1,9 @@
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    PendingBlockBuffer, ValidationConfig, required_acknowledgements, select_predecessors,
-    select_predecessors_sorted, validator_visible_tips, weighted_required_acknowledgements,
+    PendingBlockBuffer, ProposalError, ValidationConfig, build_block_candidate,
+    required_acknowledgements, select_predecessors, select_predecessors_sorted,
+    validator_visible_tips, weighted_required_acknowledgements,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
@@ -76,6 +77,90 @@ fn dissemination_test_config() -> ValidationConfig {
         check_content_hash: false,
         ..ValidationConfig::default()
     }
+}
+
+#[test]
+fn build_block_candidate_fails_when_no_predecessors_are_available() {
+    let blocklace = Blocklace::new();
+    let bonds = HashMap::new();
+
+    let result = build_block_candidate(&blocklace, &bonds, vec![1, 2, 3]);
+
+    assert!(matches!(
+        result,
+        Err(ProposalError::NoPredecessorsAvailable)
+    ));
+}
+
+#[test]
+fn build_block_candidate_fails_when_visible_tips_are_below_threshold() {
+    let mut blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+
+    for i in 1..=4u8 {
+        bonds.insert(node(i), 100);
+    }
+
+    let tip1 = create_mock_block(1, 1, HashSet::new());
+    let tip2 = create_mock_block(2, 2, HashSet::new());
+    insert(&mut blocklace, &tip1);
+    insert(&mut blocklace, &tip2);
+
+    let result = build_block_candidate(&blocklace, &bonds, vec![9]);
+
+    assert!(matches!(
+        result,
+        Err(ProposalError::InsufficientAcknowledgements {
+            observed: 2,
+            required: 3,
+        })
+    ));
+}
+
+#[test]
+fn build_block_candidate_returns_payload_and_selected_predecessors() {
+    let mut blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+
+    for i in 1..=4u8 {
+        let block = create_mock_block(i, i, HashSet::new());
+        insert(&mut blocklace, &block);
+        bonds.insert(node(i), 100);
+    }
+
+    let payload = vec![4, 2];
+    let candidate = build_block_candidate(&blocklace, &bonds, payload.clone())
+        .expect("sufficient local view should build a candidate");
+
+    assert_eq!(candidate.payload, payload);
+    assert_eq!(candidate.predecessors, select_predecessors(&blocklace, &bonds));
+}
+
+#[test]
+fn build_block_candidate_is_deterministic_for_same_local_view() {
+    let mut blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+
+    let genesis = create_mock_block(1, 1, HashSet::new());
+    let block2 = create_mock_block(2, 2, HashSet::from([genesis.identity.clone()]));
+    let block3 = create_mock_block(3, 3, HashSet::from([genesis.identity.clone()]));
+
+    insert(&mut blocklace, &genesis);
+    insert(&mut blocklace, &block2);
+    insert(&mut blocklace, &block3);
+
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
+    bonds.insert(node(3), 100);
+
+    let payload = vec![7];
+    let candidate1 = build_block_candidate(&blocklace, &bonds, payload.clone())
+        .expect("first proposal should succeed");
+    let candidate2 =
+        build_block_candidate(&blocklace, &bonds, payload).expect("second proposal should succeed");
+
+    assert_eq!(candidate1.payload, candidate2.payload);
+    assert_eq!(candidate1.predecessors, candidate2.predecessors);
 }
 
 // ============================================================================
