@@ -40,6 +40,12 @@ fn depth_recursive(
         return Some(d);
     }
 
+    if blocklace.checkpoint() == Some(block_id) {
+        let depth = blocklace.checkpoint_depth().unwrap_or(0);
+        cache.insert(block_id.clone(), depth);
+        return Some(depth);
+    }
+
     let content = blocklace.content(block_id)?;
 
     if content.predecessors.is_empty() {
