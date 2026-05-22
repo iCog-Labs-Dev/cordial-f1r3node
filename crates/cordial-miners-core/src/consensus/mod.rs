@@ -18,8 +18,9 @@ pub use cordiality::{
     super_ratifies, weighted_ratifies, weighted_super_ratifies,
 };
 pub use dissemination::{
-    PendingBlockBuffer, required_acknowledgements, select_predecessors, select_predecessors_sorted,
-    validator_visible_tips, weighted_required_acknowledgements,
+    PendingBlockBuffer, ProposalError, build_block_candidate, required_acknowledgements,
+    select_predecessors, select_predecessors_sorted, validator_visible_tips,
+    weighted_required_acknowledgements,
 };
 pub use evidence::{
     CordialEquivocationEvidence, CordialEvidencePool, EquivocationEvidence, EvidenceBlock,
