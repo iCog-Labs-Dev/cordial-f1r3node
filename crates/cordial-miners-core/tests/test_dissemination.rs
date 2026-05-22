@@ -106,7 +106,10 @@ fn build_block_candidate_fails_when_no_predecessors_are_available() {
 
     let result = build_block_candidate(&blocklace, &bonds, vec![5, 6]);
 
-    assert!(matches!(result, Err(ProposalError::NoPredecessorsAvailable)));
+    assert!(matches!(
+        result,
+        Err(ProposalError::NoPredecessorsAvailable)
+    ));
 }
 
 #[test]
@@ -150,7 +153,10 @@ fn build_block_candidate_returns_payload_and_selected_predecessors() {
         .expect("sufficient local view should build a candidate");
 
     assert_eq!(candidate.payload, payload);
-    assert_eq!(candidate.predecessors, select_predecessors(&blocklace, &bonds));
+    assert_eq!(
+        candidate.predecessors,
+        select_predecessors(&blocklace, &bonds)
+    );
 }
 
 #[test]
@@ -167,7 +173,10 @@ fn build_block_candidate_extends_single_chain_with_latest_tip() {
     let candidate = build_block_candidate(&blocklace, &bonds, vec![8])
         .expect("single chain with visible tip should produce a candidate");
 
-    assert_eq!(candidate.predecessors, HashSet::from([block2.identity.clone()]));
+    assert_eq!(
+        candidate.predecessors,
+        HashSet::from([block2.identity.clone()])
+    );
 }
 
 #[test]
