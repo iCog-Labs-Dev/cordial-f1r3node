@@ -1,8 +1,9 @@
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    PendingBlockBuffer, ValidationConfig, required_acknowledgements, select_predecessors,
-    select_predecessors_sorted, validator_visible_tips, weighted_required_acknowledgements,
+    PendingBlockBuffer, ProposalError, ValidationConfig, build_block_candidate,
+    required_acknowledgements, select_predecessors, select_predecessors_sorted,
+    validator_visible_tips, weighted_required_acknowledgements,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
@@ -76,6 +77,165 @@ fn dissemination_test_config() -> ValidationConfig {
         check_content_hash: false,
         ..ValidationConfig::default()
     }
+}
+
+#[test]
+fn build_block_candidate_allows_bootstrap_on_empty_blocklace() {
+    let blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+
+    let payload = vec![1, 2, 3];
+    let result = build_block_candidate(&blocklace, &bonds, payload.clone())
+        .expect("empty blocklace should allow the first block");
+
+    assert_eq!(result.payload, payload);
+    assert!(result.predecessors.is_empty());
+}
+
+#[test]
+fn build_block_candidate_fails_when_no_predecessors_are_available() {
+    let mut blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+
+    let e1 = create_mock_block(1, 1, HashSet::new());
+    let e2 = create_mock_block(1, 2, HashSet::new());
+    insert(&mut blocklace, &e1);
+    insert(&mut blocklace, &e2);
+    bonds.insert(node(1), 100);
+
+    let result = build_block_candidate(&blocklace, &bonds, vec![5, 6]);
+
+    assert!(matches!(
+        result,
+        Err(ProposalError::NoPredecessorsAvailable)
+    ));
+}
+
+#[test]
+fn build_block_candidate_fails_when_visible_tips_are_below_threshold() {
+    let mut blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+
+    for i in 1..=4u8 {
+        bonds.insert(node(i), 100);
+    }
+
+    let tip1 = create_mock_block(1, 1, HashSet::new());
+    let tip2 = create_mock_block(2, 2, HashSet::new());
+    insert(&mut blocklace, &tip1);
+    insert(&mut blocklace, &tip2);
+
+    let result = build_block_candidate(&blocklace, &bonds, vec![9]);
+
+    assert!(matches!(
+        result,
+        Err(ProposalError::InsufficientAcknowledgements {
+            observed: 2,
+            required: 3,
+        })
+    ));
+}
+
+#[test]
+fn build_block_candidate_returns_payload_and_selected_predecessors() {
+    let mut blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+
+    for i in 1..=4u8 {
+        let block = create_mock_block(i, i, HashSet::new());
+        insert(&mut blocklace, &block);
+        bonds.insert(node(i), 100);
+    }
+
+    let payload = vec![4, 2];
+    let candidate = build_block_candidate(&blocklace, &bonds, payload.clone())
+        .expect("sufficient local view should build a candidate");
+
+    assert_eq!(candidate.payload, payload);
+    assert_eq!(
+        candidate.predecessors,
+        select_predecessors(&blocklace, &bonds)
+    );
+}
+
+#[test]
+fn build_block_candidate_extends_single_chain_with_latest_tip() {
+    let mut blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+
+    let genesis = create_mock_block(1, 1, HashSet::new());
+    let block2 = create_mock_block(1, 2, HashSet::from([genesis.identity.clone()]));
+    insert(&mut blocklace, &genesis);
+    insert(&mut blocklace, &block2);
+
+    let candidate = build_block_candidate(&blocklace, &bonds, vec![8])
+        .expect("single chain with visible tip should produce a candidate");
+
+    assert_eq!(
+        candidate.predecessors,
+        HashSet::from([block2.identity.clone()])
+    );
+}
+
+#[test]
+fn build_block_candidate_includes_missing_equivocation_branches() {
+    let mut blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+
+    let e1 = create_mock_block(1, 1, HashSet::new());
+    let e2 = create_mock_block(1, 2, HashSet::new());
+    insert(&mut blocklace, &e1);
+    insert(&mut blocklace, &e2);
+
+    let honest_tip = create_mock_block(2, 3, HashSet::from([e1.identity.clone()]));
+    let tip3 = create_mock_block(3, 4, HashSet::new());
+    let tip4 = create_mock_block(4, 5, HashSet::new());
+    insert(&mut blocklace, &honest_tip);
+    insert(&mut blocklace, &tip3);
+    insert(&mut blocklace, &tip4);
+
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
+    bonds.insert(node(3), 100);
+    bonds.insert(node(4), 100);
+
+    let candidate = build_block_candidate(&blocklace, &bonds, vec![9, 9])
+        .expect("honest tip should allow a candidate");
+
+    assert!(candidate.predecessors.contains(&honest_tip.identity));
+    assert!(candidate.predecessors.contains(&tip3.identity));
+    assert!(candidate.predecessors.contains(&tip4.identity));
+    assert!(candidate.predecessors.contains(&e2.identity));
+    assert!(!candidate.predecessors.contains(&e1.identity));
+}
+
+#[test]
+fn build_block_candidate_is_deterministic_for_same_local_view() {
+    let mut blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+
+    let genesis = create_mock_block(1, 1, HashSet::new());
+    let block2 = create_mock_block(2, 2, HashSet::from([genesis.identity.clone()]));
+    let block3 = create_mock_block(3, 3, HashSet::from([genesis.identity.clone()]));
+
+    insert(&mut blocklace, &genesis);
+    insert(&mut blocklace, &block2);
+    insert(&mut blocklace, &block3);
+
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
+    bonds.insert(node(3), 100);
+
+    let payload = vec![7];
+    let candidate1 = build_block_candidate(&blocklace, &bonds, payload.clone())
+        .expect("first proposal should succeed");
+    let candidate2 =
+        build_block_candidate(&blocklace, &bonds, payload).expect("second proposal should succeed");
+
+    assert_eq!(candidate1.payload, candidate2.payload);
+    assert_eq!(candidate1.predecessors, candidate2.predecessors);
 }
 
 // ============================================================================
