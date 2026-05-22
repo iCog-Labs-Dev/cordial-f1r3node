@@ -45,6 +45,25 @@ fn create_mock_block(creator_id: u8, hash_byte: u8, predecessors: HashSet<BlockI
     }
 }
 
+fn create_same_hash_block(
+    creator_id: u8,
+    shared_hash: [u8; 32],
+    signature_tag: u8,
+    predecessors: HashSet<BlockIdentity>,
+) -> Block {
+    Block {
+        identity: BlockIdentity {
+            content_hash: shared_hash,
+            creator: node(creator_id),
+            signature: vec![signature_tag],
+        },
+        content: BlockContent {
+            payload: vec![],
+            predecessors,
+        },
+    }
+}
+
 fn insert(blocklace: &mut Blocklace, block: &Block) {
     let verifier = MockVerifier;
     blocklace
@@ -440,8 +459,8 @@ fn multiple_equivocations_different_validators() {
     assert_eq!(preds.len(), 0);
 }
 
-/// `select_predecessors_sorted` is deterministic and the output is in ascending
-/// hash order. Uses hash bytes chosen to produce a non-trivial sort order.
+/// `select_predecessors_sorted` is deterministic and the output follows the
+/// natural ordering of `BlockIdentity`.
 #[test]
 fn select_predecessors_sorted_is_deterministic_and_ordered() {
     let mut blocklace = Blocklace::new();
@@ -470,16 +489,36 @@ fn select_predecessors_sorted_is_deterministic_and_ordered() {
 
     // Correct ascending order
     assert!(
-        sorted1
-            .windows(2)
-            .all(|w| w[0].content_hash <= w[1].content_hash),
-        "output must be sorted ascending by content_hash"
+        sorted1.windows(2).all(|w| w[0] <= w[1]),
+        "output must be sorted ascending by BlockIdentity"
     );
 
     // Verify the specific expected order: tip2 (hash[0]=5) < tip1 (hash[0]=10) < tip3 (hash[0]=15)
     assert_eq!(sorted1[0].content_hash[0], 5);
     assert_eq!(sorted1[1].content_hash[0], 10);
     assert_eq!(sorted1[2].content_hash[0], 15);
+}
+
+#[test]
+fn select_predecessors_sorted_is_deterministic_when_hashes_collide() {
+    let mut blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+
+    let shared_hash = [7u8; 32];
+    let tip1 = create_same_hash_block(2, shared_hash, 9, HashSet::new());
+    let tip2 = create_same_hash_block(1, shared_hash, 3, HashSet::new());
+
+    insert(&mut blocklace, &tip1);
+    insert(&mut blocklace, &tip2);
+
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
+
+    let sorted1 = select_predecessors_sorted(&blocklace, &bonds);
+    let sorted2 = select_predecessors_sorted(&blocklace, &bonds);
+
+    assert_eq!(sorted1, sorted2);
+    assert_eq!(sorted1, vec![tip2.identity.clone(), tip1.identity.clone()]);
 }
 
 /// `validator_visible_tips` returns the correct map structure with the right identities.
