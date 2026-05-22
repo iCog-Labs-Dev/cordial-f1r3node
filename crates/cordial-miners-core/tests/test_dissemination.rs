@@ -2,6 +2,7 @@ use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
     PendingBlockBuffer, ProposalError, ValidationConfig, build_block_candidate,
+    next_block_predecessors,
     required_acknowledgements, select_predecessors, select_predecessors_sorted,
     validator_visible_tips, weighted_required_acknowledgements,
 };
@@ -80,21 +81,19 @@ fn dissemination_test_config() -> ValidationConfig {
 }
 
 #[test]
-fn build_block_candidate_allows_bootstrap_on_empty_blocklace() {
+fn next_block_predecessors_allows_bootstrap_on_empty_blocklace() {
     let blocklace = Blocklace::new();
     let mut bonds = HashMap::new();
     bonds.insert(node(1), 100);
 
-    let payload = vec![1, 2, 3];
-    let result = build_block_candidate(&blocklace, &bonds, payload.clone())
+    let predecessors = next_block_predecessors(&blocklace, &bonds)
         .expect("empty blocklace should allow the first block");
 
-    assert_eq!(result.payload, payload);
-    assert!(result.predecessors.is_empty());
+    assert!(predecessors.is_empty());
 }
 
 #[test]
-fn build_block_candidate_fails_when_no_predecessors_are_available() {
+fn next_block_predecessors_fails_when_no_predecessors_are_available() {
     let mut blocklace = Blocklace::new();
     let mut bonds = HashMap::new();
 
@@ -104,7 +103,7 @@ fn build_block_candidate_fails_when_no_predecessors_are_available() {
     insert(&mut blocklace, &e2);
     bonds.insert(node(1), 100);
 
-    let result = build_block_candidate(&blocklace, &bonds, vec![5, 6]);
+    let result = next_block_predecessors(&blocklace, &bonds);
 
     assert!(matches!(
         result,
@@ -113,7 +112,7 @@ fn build_block_candidate_fails_when_no_predecessors_are_available() {
 }
 
 #[test]
-fn build_block_candidate_fails_when_visible_tips_are_below_threshold() {
+fn next_block_predecessors_fails_when_visible_tips_are_below_threshold() {
     let mut blocklace = Blocklace::new();
     let mut bonds = HashMap::new();
 
@@ -126,7 +125,7 @@ fn build_block_candidate_fails_when_visible_tips_are_below_threshold() {
     insert(&mut blocklace, &tip1);
     insert(&mut blocklace, &tip2);
 
-    let result = build_block_candidate(&blocklace, &bonds, vec![9]);
+    let result = next_block_predecessors(&blocklace, &bonds);
 
     assert!(matches!(
         result,
@@ -135,6 +134,20 @@ fn build_block_candidate_fails_when_visible_tips_are_below_threshold() {
             required: 3,
         })
     ));
+}
+
+#[test]
+fn build_block_candidate_allows_bootstrap_on_empty_blocklace() {
+    let blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+
+    let payload = vec![1, 2, 3];
+    let result = build_block_candidate(&blocklace, &bonds, payload.clone())
+        .expect("empty blocklace should allow the first block");
+
+    assert_eq!(result.payload, payload);
+    assert!(result.predecessors.is_empty());
 }
 
 #[test]
@@ -157,6 +170,25 @@ fn build_block_candidate_returns_payload_and_selected_predecessors() {
         candidate.predecessors,
         select_predecessors(&blocklace, &bonds)
     );
+}
+
+#[test]
+fn build_block_candidate_uses_next_block_predecessors() {
+    let mut blocklace = Blocklace::new();
+    let mut bonds = HashMap::new();
+
+    for i in 1..=4u8 {
+        let block = create_mock_block(i, i, HashSet::new());
+        insert(&mut blocklace, &block);
+        bonds.insert(node(i), 100);
+    }
+
+    let predecessors = next_block_predecessors(&blocklace, &bonds)
+        .expect("healthy local view should select predecessors");
+    let candidate = build_block_candidate(&blocklace, &bonds, vec![3, 1, 4])
+        .expect("healthy local view should build a candidate");
+
+    assert_eq!(candidate.predecessors, predecessors);
 }
 
 #[test]
