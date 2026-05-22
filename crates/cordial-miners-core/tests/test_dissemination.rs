@@ -1,7 +1,7 @@
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    required_acknowledgements, select_predecessors, select_predecessors_sorted,
+    PendingBlockBuffer, required_acknowledgements, select_predecessors, select_predecessors_sorted,
     validator_visible_tips, weighted_required_acknowledgements,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
@@ -694,4 +694,134 @@ fn weighted_required_acknowledgements_large_numbers() {
     bonds.insert(node(1), 1_000_000);
 
     assert_eq!(weighted_required_acknowledgements(&bonds), 666_667);
+}
+
+// PENDING BLOCK BUFFER TESTS
+#[test]
+fn pending_buffer_resolves_single_missing_predecessor() {
+    let mut blocklace = Blocklace::new();
+    let verifier = MockVerifier;
+    let mut buffer = PendingBlockBuffer::new();
+
+    let genesis = create_mock_block(1, 1, HashSet::new());
+    let block2 = create_mock_block(1, 2, HashSet::from([genesis.identity.clone()]));
+
+    // block2 arrives before genesis
+    buffer.buffer_block_with_missing_predecessors(block2.clone());
+
+    // retry shouldn't insert block2 yet
+    buffer.retry_buffered_blocks(&mut blocklace, &verifier);
+    assert_eq!(buffer.buffered_blocks.len(), 1);
+    assert!(blocklace.content(&block2.identity).is_none());
+
+    // genesis arrives
+    insert(&mut blocklace, &genesis);
+
+    // retry should now insert block2
+    buffer.retry_buffered_blocks(&mut blocklace, &verifier);
+    assert!(buffer.buffered_blocks.is_empty());
+    assert!(blocklace.content(&block2.identity).is_some());
+}
+
+#[test]
+fn pending_buffer_resolves_chained_missing_predecessors() {
+    let mut blocklace = Blocklace::new();
+    let verifier = MockVerifier;
+    let mut buffer = PendingBlockBuffer::new();
+
+    let genesis = create_mock_block(1, 1, HashSet::new());
+    let block2 = create_mock_block(1, 2, HashSet::from([genesis.identity.clone()]));
+    let block3 = create_mock_block(1, 3, HashSet::from([block2.identity.clone()]));
+
+    // block3 and block2 arrive before genesis out of order
+    buffer.buffer_block_with_missing_predecessors(block3.clone());
+    buffer.buffer_block_with_missing_predecessors(block2.clone());
+
+    buffer.retry_buffered_blocks(&mut blocklace, &verifier);
+    assert_eq!(buffer.buffered_blocks.len(), 2);
+
+    // genesis arrives
+    insert(&mut blocklace, &genesis);
+
+    // retry should insert both recursively
+    buffer.retry_buffered_blocks(&mut blocklace, &verifier);
+    assert!(buffer.buffered_blocks.is_empty());
+    assert!(blocklace.content(&block2.identity).is_some());
+    assert!(blocklace.content(&block3.identity).is_some());
+}
+
+#[test]
+fn pending_buffer_handles_out_of_order_arrival() {
+    let mut blocklace = Blocklace::new();
+    let verifier = MockVerifier;
+    let mut buffer = PendingBlockBuffer::new();
+
+    let genesis = create_mock_block(1, 1, HashSet::new());
+    let block2a = create_mock_block(1, 2, HashSet::from([genesis.identity.clone()]));
+    let block2b = create_mock_block(2, 2, HashSet::from([genesis.identity.clone()]));
+    let block3 = create_mock_block(
+        3,
+        3,
+        HashSet::from([block2a.identity.clone(), block2b.identity.clone()]),
+    );
+
+    // block 3 arrives early
+    buffer.buffer_block_with_missing_predecessors(block3.clone());
+
+    // genesis and one predecessor arrive
+    insert(&mut blocklace, &genesis);
+    insert(&mut blocklace, &block2a);
+    buffer.retry_buffered_blocks(&mut blocklace, &verifier);
+
+    // block 3 should still be unresolved due to missing block2b
+    assert_eq!(buffer.buffered_blocks.len(), 1);
+
+    // block2b arrives
+    insert(&mut blocklace, &block2b);
+    buffer.retry_buffered_blocks(&mut blocklace, &verifier);
+
+    assert!(buffer.buffered_blocks.is_empty());
+    assert!(blocklace.content(&block3.identity).is_some());
+}
+
+#[test]
+fn pending_buffer_no_duplicate_insertion_on_repeated_retry() {
+    let mut blocklace = Blocklace::new();
+    let verifier = MockVerifier;
+    let mut buffer = PendingBlockBuffer::new();
+
+    let genesis = create_mock_block(1, 1, HashSet::new());
+    let block2 = create_mock_block(1, 2, HashSet::from([genesis.identity.clone()]));
+
+    buffer.buffer_block_with_missing_predecessors(block2.clone());
+
+    insert(&mut blocklace, &genesis);
+
+    buffer.retry_buffered_blocks(&mut blocklace, &verifier);
+    assert!(buffer.buffered_blocks.is_empty());
+
+    // retry again, should be a no-op
+    buffer.retry_buffered_blocks(&mut blocklace, &verifier);
+    assert!(blocklace.content(&block2.identity).is_some());
+}
+
+#[test]
+fn pending_buffer_removes_block_already_in_blocklace() {
+    let mut blocklace = Blocklace::new();
+    let verifier = MockVerifier;
+    let mut buffer = PendingBlockBuffer::new();
+
+    let genesis = create_mock_block(1, 1, HashSet::new());
+    let block2 = create_mock_block(1, 2, HashSet::from([genesis.identity.clone()]));
+
+    // block2 buffered while genesis is missing
+    buffer.buffer_block_with_missing_predecessors(block2.clone());
+
+    // Both arrive directly — buffer not yet retried
+    insert(&mut blocklace, &genesis);
+    insert(&mut blocklace, &block2);
+
+    // retry should still clear the buffer cleanly
+    buffer.retry_buffered_blocks(&mut blocklace, &verifier);
+    assert!(buffer.buffered_blocks.is_empty());
 }

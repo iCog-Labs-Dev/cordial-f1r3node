@@ -16,7 +16,7 @@ pub use cordiality::{
     super_ratifies, weighted_ratifies, weighted_super_ratifies,
 };
 pub use dissemination::{
-    required_acknowledgements, select_predecessors, select_predecessors_sorted,
+    PendingBlockBuffer, required_acknowledgements, select_predecessors, select_predecessors_sorted,
     validator_visible_tips, weighted_required_acknowledgements,
 };
 pub use finality::{
