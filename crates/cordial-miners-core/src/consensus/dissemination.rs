@@ -129,8 +129,8 @@ pub fn select_predecessors(
 /// This is a convenience wrapper around `select_predecessors()` that returns results
 /// in a deterministic order, useful for logging, comparison, or network transmission.
 ///
-/// Sorting is by `content_hash` in ascending byte order. The comparison borrows the
-/// hash rather than copying a 32-byte array on every comparison.
+/// Sorting is by the full natural ordering of `BlockIdentity`, so ties on
+/// `content_hash` are broken consistently by creator and signature as needed.
 ///
 /// # Arguments
 /// * `blocklace` - The local blocklace DAG view
@@ -145,8 +145,7 @@ pub fn select_predecessors_sorted(
     let mut result: Vec<BlockIdentity> =
         select_predecessors(blocklace, bonds).into_iter().collect();
 
-    // Borrow the hash for comparison to avoid copying a 32-byte array per comparison.
-    result.sort_by_key(|id| id.content_hash);
+    result.sort();
     result
 }
 
