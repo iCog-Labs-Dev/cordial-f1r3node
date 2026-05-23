@@ -4,11 +4,11 @@
 //! materialized, the consensus engine can treat that leader as the new in-memory
 //! genesis and delete older orphaned block contents.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::blocklace::Blocklace;
-use crate::consensus::finality::latest_final_leader;
-use crate::consensus::ordering::{tau, xsort};
+use crate::consensus::finality::{latest_final_leader, latest_weighted_final_leader};
+use crate::consensus::ordering::{tau, weighted_tau, xsort};
 use crate::consensus::round::depth;
 use crate::types::{BlockIdentity, NodeId};
 
@@ -29,6 +29,7 @@ pub struct PruneReport<Id> {
     pub removed: BTreeSet<Id>,
     pub retained_blocks: usize,
     pub tau_prefix_len: usize,
+    pub weighted_tau_prefix_len: usize,
 }
 
 /// Reasons checkpoint pruning can be rejected.
@@ -57,7 +58,7 @@ impl CheckpointGc<BlockIdentity> for Blocklace {
         checkpoint: &BlockIdentity,
     ) -> Result<PruneReport<BlockIdentity>, PruneError<BlockIdentity>> {
         let checkpoint_order_prefix = checkpoint_order_prefix(self, checkpoint);
-        self.prune_below_checkpoint_with_prefix(checkpoint, checkpoint_order_prefix)
+        self.prune_below_checkpoint_with_prefix(checkpoint, checkpoint_order_prefix, Vec::new())
     }
 }
 
@@ -66,6 +67,7 @@ impl Blocklace {
         &mut self,
         checkpoint: &BlockIdentity,
         checkpoint_order_prefix: Vec<BlockIdentity>,
+        checkpoint_weighted_order_prefix: Vec<BlockIdentity>,
     ) -> Result<PruneReport<BlockIdentity>, PruneError<BlockIdentity>> {
         if !self.blocks.contains_key(checkpoint) {
             return Err(PruneError::UnknownCheckpoint {
@@ -86,6 +88,7 @@ impl Blocklace {
                     removed: BTreeSet::new(),
                     retained_blocks: self.blocks.len(),
                     tau_prefix_len: self.checkpoint_order_prefix.len(),
+                    weighted_tau_prefix_len: self.checkpoint_weighted_order_prefix.len(),
                 });
             }
 
@@ -123,6 +126,7 @@ impl Blocklace {
         self.checkpoint = Some(checkpoint.clone());
         self.checkpoint_depth = Some(checkpoint_depth);
         self.checkpoint_order_prefix = checkpoint_order_prefix;
+        self.checkpoint_weighted_order_prefix = checkpoint_weighted_order_prefix;
 
         Ok(PruneReport {
             checkpoint: checkpoint.clone(),
@@ -130,6 +134,7 @@ impl Blocklace {
             removed: candidates,
             retained_blocks: self.blocks.len(),
             tau_prefix_len: self.checkpoint_order_prefix.len(),
+            weighted_tau_prefix_len: self.checkpoint_weighted_order_prefix.len(),
         })
     }
 }
@@ -158,7 +163,44 @@ where
         .unwrap_or_else(|_| checkpoint_order_prefix(blocklace, &final_leader));
 
     blocklace
-        .prune_below_checkpoint_with_prefix(&final_leader, checkpoint_order_prefix)
+        .prune_below_checkpoint_with_prefix(&final_leader, checkpoint_order_prefix, Vec::new())
+        .map(Some)
+}
+
+/// Advance the checkpoint to the latest stake-weighted final leader, if one exists.
+///
+/// This is the f1r3node-oriented counterpart to [`checkpoint_after_finality`].
+/// It stores the weighted tau prefix separately so `weighted_tau(...)` does not
+/// replay a paper-native tau prefix after pruning.
+pub fn checkpoint_after_weighted_finality<F>(
+    blocklace: &mut Blocklace,
+    wavelength: u64,
+    bonds: &HashMap<NodeId, u64>,
+    leader_selection: F,
+) -> Result<Option<PruneReport<BlockIdentity>>, PruneError<BlockIdentity>>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    let Some(final_leader) =
+        latest_weighted_final_leader(blocklace, wavelength, bonds, leader_selection)
+    else {
+        return Ok(None);
+    };
+
+    if blocklace.checkpoint() == Some(&final_leader) {
+        return Ok(None);
+    }
+
+    let checkpoint_weighted_order_prefix =
+        weighted_tau(blocklace, wavelength, bonds, leader_selection)
+            .unwrap_or_else(|_| checkpoint_order_prefix(blocklace, &final_leader));
+
+    blocklace
+        .prune_below_checkpoint_with_prefix(
+            &final_leader,
+            Vec::new(),
+            checkpoint_weighted_order_prefix,
+        )
         .map(Some)
 }
 
