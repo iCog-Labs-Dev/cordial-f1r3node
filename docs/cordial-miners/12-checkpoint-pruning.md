@@ -10,17 +10,20 @@ older DAG contents from the `HashMap`.
 
 ## Trigger
 
-Checkpoint garbage collection is triggered after leader finality:
+Checkpoint garbage collection is triggered after leader finality. There are two
+entry points because the paper-native and f1r3node integration paths finalize
+leaders with different predicates:
 
-1. `latest_final_leader(...)` finds the newest finalized leader.
-2. `tau(...)` materializes the deterministic finalized output prefix for that
-   leader.
-3. `prune_below_checkpoint(...)` advances the checkpoint and deletes old blocks
-   below it.
+1. `checkpoint_after_finality(...)` uses `latest_final_leader(...)` and stores
+   the unweighted `tau(...)` prefix.
+2. `checkpoint_after_weighted_finality(...)` uses
+   `latest_weighted_final_leader(...)` and stores the `weighted_tau(...)`
+   prefix.
+3. `prune_below_checkpoint(...)` advances an explicitly supplied checkpoint and
+   deletes old blocks below it.
 
-The convenience API is `checkpoint_after_finality(...)`. It returns `None` when
-there is no finalized leader or when the latest final leader is already the
-current checkpoint.
+Both finality helpers return `None` when there is no finalized leader for their
+mode or when the latest final leader is already the current checkpoint.
 
 ## Boundary Semantics
 
@@ -35,6 +38,20 @@ Traversal treats the checkpoint as a boundary:
 
 This keeps wave and finality calculations monotonic while preventing repeated
 walks back to genesis.
+
+## Ordering Prefixes
+
+The checkpoint keeps output identities for ordering stability, but it does not
+store a single shared prefix for all ordering modes.
+
+- `tau(...)` replays only the unweighted checkpoint prefix.
+- `weighted_tau(...)` replays only the weighted checkpoint prefix.
+
+This separation matters because a leader can be final under the paper-native
+validator-count threshold while the stake-weighted finality path has a different
+latest leader or a different ordered prefix. Replaying the unweighted prefix from
+`weighted_tau(...)` after GC would make the weighted consensus view inconsistent
+with the pre-prune blocklace.
 
 ## What Is Deleted
 
@@ -54,7 +71,8 @@ After regular finalization, retained block contents are bounded by:
 - the current checkpoint block
 - blocks created after that checkpoint
 - any protected side-history still directly referenced by retained live blocks
-- the stored tau output identities needed to prove finalized ordering stability
+- the stored tau or weighted-tau output identities needed to prove finalized
+  ordering stability for the pruning mode that advanced the checkpoint
 
 The large payload and predecessor-set memory belongs to the block `HashMap`.
 That memory plateaus under frequent checkpointing because old finalized block
