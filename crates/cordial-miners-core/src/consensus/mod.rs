@@ -24,7 +24,10 @@ pub use ordering::{
     OrderingCache, OrderingError, approved_blocks_for_leader, previous_final_leader, tau,
     tau_with_cache, weighted_previous_final_leader, weighted_tau, weighted_tau_with_cache, xsort,
 };
-pub use pruning::{CheckpointGc, PruneError, PruneReport, checkpoint_after_finality};
+pub use pruning::{
+    CheckpointGc, PruneError, PruneReport, checkpoint_after_finality,
+    checkpoint_after_weighted_finality,
+};
 pub use round::{
     blocks_at_depth, compute_all_depths, depth, depth_prefix, depth_suffix, is_round_cordial,
     latest_cordial_round, max_depth,

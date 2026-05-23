@@ -1,7 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::{CheckpointGc, checkpoint_after_finality, tau};
+use cordial_miners_core::consensus::{
+    CheckpointGc, checkpoint_after_finality, checkpoint_after_weighted_finality, tau, weighted_tau,
+};
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 
@@ -64,6 +66,69 @@ fn insert(blocklace: &mut Blocklace, block: &Block) {
 
 fn leader_node1(_wave: u64) -> Option<NodeId> {
     Some(node(1))
+}
+
+fn bonds(entries: &[(u8, u64)]) -> HashMap<NodeId, u64> {
+    entries
+        .iter()
+        .map(|(id, stake)| (node(*id), *stake))
+        .collect()
+}
+
+struct WeightedCheckpointGraph {
+    w0_leader: Block,
+    w1_leader: Block,
+    w1_tip: Block,
+}
+
+fn insert_weighted_two_wave_checkpoint_graph(blocklace: &mut Blocklace) -> WeightedCheckpointGraph {
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+    let v5 = node(5);
+
+    let w0_leader = genesis(&v1, 1);
+    insert(blocklace, &w0_leader);
+
+    let w0_r1_v2 = child(&v2, 2, &[&w0_leader]);
+    let w0_r1_v3 = child(&v3, 3, &[&w0_leader]);
+    let w0_r1_v4 = child(&v4, 4, &[&w0_leader]);
+    for block in [&w0_r1_v2, &w0_r1_v3, &w0_r1_v4] {
+        insert(blocklace, block);
+    }
+
+    let w0_r2_v2 = child(&v2, 5, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    let w0_r2_v3 = child(&v3, 6, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    let w0_r2_v4 = child(&v4, 7, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    for block in [&w0_r2_v2, &w0_r2_v3, &w0_r2_v4] {
+        insert(blocklace, block);
+    }
+
+    let w1_leader = child(&v1, 8, &[&w0_r2_v2, &w0_r2_v3, &w0_r2_v4]);
+    insert(blocklace, &w1_leader);
+
+    let w1_r1_v2 = child(&v2, 9, &[&w1_leader]);
+    let w1_r1_v3 = child(&v3, 10, &[&w1_leader]);
+    let w1_r1_v4 = child(&v4, 11, &[&w1_leader]);
+    let w1_r1_v5 = child(&v5, 12, &[&w1_leader]);
+    for block in [&w1_r1_v2, &w1_r1_v3, &w1_r1_v4, &w1_r1_v5] {
+        insert(blocklace, block);
+    }
+
+    let w1_r2_v2 = child(&v2, 13, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4, &w1_r1_v5]);
+    let w1_r2_v3 = child(&v3, 14, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4, &w1_r1_v5]);
+    let w1_r2_v4 = child(&v4, 15, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4, &w1_r1_v5]);
+    let w1_tip = child(&v5, 16, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4, &w1_r1_v5]);
+    for block in [&w1_r2_v2, &w1_r2_v3, &w1_r2_v4, &w1_tip] {
+        insert(blocklace, block);
+    }
+
+    WeightedCheckpointGraph {
+        w0_leader,
+        w1_leader,
+        w1_tip,
+    }
 }
 
 #[test]
@@ -158,6 +223,60 @@ fn checkpoint_after_finality_prunes_latest_final_leader_history() {
     assert!(report.removed.contains(&w0_leader.identity));
     assert!(blocklace.get(&w0_leader.identity).is_none());
     assert_eq!(after, before);
+}
+
+#[test]
+fn weighted_checkpoint_prune_preserves_weighted_tau_prefix() {
+    let mut blocklace = Blocklace::new();
+    let wavelength = 3;
+    let weights = bonds(&[(1, 1), (2, 1), (3, 1), (4, 1), (5, 100)]);
+    let graph = insert_weighted_two_wave_checkpoint_graph(&mut blocklace);
+
+    let before =
+        weighted_tau(&blocklace, wavelength, &weights, leader_node1).expect("weighted tau");
+    let report =
+        checkpoint_after_weighted_finality(&mut blocklace, wavelength, &weights, leader_node1)
+            .expect("weighted finality checkpoint should not error")
+            .expect("latest weighted final leader should prune");
+    let after = weighted_tau(&blocklace, wavelength, &weights, leader_node1).expect("weighted tau");
+
+    assert_eq!(report.checkpoint, graph.w1_leader.identity);
+    assert_eq!(report.tau_prefix_len, 0);
+    assert_eq!(report.weighted_tau_prefix_len, before.len());
+    assert!(report.removed.contains(&graph.w0_leader.identity));
+    assert!(blocklace.get(&graph.w0_leader.identity).is_none());
+    assert_eq!(after, before);
+
+    let observed = blocklace.observe(&graph.w1_tip.identity);
+    assert!(observed.contains(&graph.w1_leader.identity));
+    assert!(!observed.contains(&graph.w0_leader.identity));
+}
+
+#[test]
+fn weighted_tau_does_not_replay_unweighted_checkpoint_prefix() {
+    let mut blocklace = Blocklace::new();
+    let wavelength = 3;
+    let n = 4;
+    let f = 1;
+    let weights = bonds(&[(1, 1), (2, 1), (3, 1), (4, 1), (5, 100)]);
+    let graph = insert_weighted_two_wave_checkpoint_graph(&mut blocklace);
+
+    let unweighted_before =
+        tau(&blocklace, wavelength, n, f, leader_node1).expect("tau should order");
+    let weighted_before =
+        weighted_tau(&blocklace, wavelength, &weights, leader_node1).expect("weighted tau");
+    assert!(!weighted_before.is_empty());
+
+    let report = blocklace
+        .prune_below_checkpoint(&graph.w1_leader.identity)
+        .expect("manual checkpoint should prune");
+    assert_eq!(report.tau_prefix_len, unweighted_before.len());
+    assert_eq!(report.weighted_tau_prefix_len, 0);
+
+    let weighted_after =
+        weighted_tau(&blocklace, wavelength, &weights, leader_node1).expect("weighted tau");
+    assert_eq!(weighted_after, vec![graph.w1_leader.identity]);
+    assert_ne!(weighted_after, unweighted_before);
 }
 
 #[test]

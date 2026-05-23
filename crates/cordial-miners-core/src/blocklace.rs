@@ -15,6 +15,7 @@ pub struct Blocklace {
     pub(crate) checkpoint: Option<BlockIdentity>,
     pub(crate) checkpoint_depth: Option<u64>,
     pub(crate) checkpoint_order_prefix: Vec<BlockIdentity>,
+    pub(crate) checkpoint_weighted_order_prefix: Vec<BlockIdentity>,
 }
 
 // Construction
@@ -25,6 +26,7 @@ impl Blocklace {
             checkpoint: None,
             checkpoint_depth: None,
             checkpoint_order_prefix: Vec::new(),
+            checkpoint_weighted_order_prefix: Vec::new(),
         }
     }
 }
@@ -75,6 +77,10 @@ impl Blocklace {
 
     pub(crate) fn checkpoint_order_prefix(&self) -> &[BlockIdentity] {
         &self.checkpoint_order_prefix
+    }
+
+    pub(crate) fn checkpoint_weighted_order_prefix(&self) -> &[BlockIdentity] {
+        &self.checkpoint_weighted_order_prefix
     }
 
     pub(crate) fn is_checkpoint_boundary(&self, id: &BlockIdentity) -> bool {
