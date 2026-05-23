@@ -1,550 +1,745 @@
-//! Block format translation between the blocklace and f1r3node (Phase 3.5).
+//! `Casper` and `MultiParentCasper` trait adapters (Phase 3.1 / 3.2).
 //!
-//! The blocklace uses a single unified `predecessors: HashSet<BlockIdentity>`
-//! per block. f1r3node splits the same information into two fields on
-//! [`BlockMessage`]:
+//! Wraps a [`Blocklace`] plus supporting state and exposes it through a
+//! Casper-compatible interface so f1r3node's engine, proposer, block
+//! processor, and API can drive Cordial Miners through their existing
+//! call sites.
 //!
-//! - [`Header::parents_hash_list`] — explicit parents, bounded by
-//!   `max_number_of_parents`
-//! - [`BlockMessage::justifications`] — validator → latest block hash map
-//!   used for fork choice
+//! ## Why a local trait?
 //!
-//! In Cordial Miners both roles are served by the predecessor set. Our
-//! translation:
+//! The real `casper::rust::Casper` trait lives in f1r3node's `casper` crate
+//! and pulls in heavy transitive dependencies (RSpace, Rholang, gRPC).
+//! Until we uncomment the `casper` path dependency, we mirror the trait
+//! shape locally as [`CordialCasper`] and [`CordialMultiParentCasper`].
+//! The trait surface and method signatures are identical to f1r3node's,
+//! using our mirror types ([`BlockMessage`], [`CasperSnapshot`], etc.)
+//! instead of f1r3node's real types.
 //!
-//! - **blocklace → f1r3node**: pack all predecessors into `parents_hash_list`
-//!   and derive `justifications` as `(predecessor.creator, predecessor_hash)`
-//!   pairs. Some justifications may be redundant with parents — that's
-//!   expected and matches how f1r3node treats them during fork choice.
+//! When the `casper` dep is enabled, switching to `impl casper::Casper for
+//! CordialCasperAdapter` is mechanical — the method bodies stay the same
+//! and only type imports change.
 //!
-//! - **f1r3node → blocklace**: take the union of `parents_hash_list` and
-//!   `justifications` hashes as the predecessor set. Any `BlockMessage`
-//!   that passed f1r3node's validation has its chain axiom satisfied as long
-//!   as the justifications match the senders.
+//! ## What the adapter owns
 //!
-//! ## Mirror structs
+//! ```text
+//! CordialCasperAdapter {
+//!     blocklace:    Mutex<Blocklace>,            // consensus state
+//!     deploy_pool:  Mutex<DeployPool>,           // pending user deploys
+//!     bonds:        HashMap<NodeId, u64>,        // validator stakes
+//!     shard_conf:   CasperShardConf,             // configuration
+//!     shard_id:     String,                      // for BlockMessage.shard_id
+//!     approved_block: Option<BlockMessage>,      // genesis / approved block
+//!     buffer:       Mutex<HashMap<...>>,         // dependency-pending blocks
+//! }
+//! ```
 //!
-//! To keep this crate standalone-buildable we mirror f1r3node's types rather
-//! than depending on the `models` crate. The structs below match the shapes
-//! in `f1r3node/models/src/rust/casper/protocol/casper_message.rs`. When we
-//! uncomment the `models` path dependency later, we'll swap these mirrors
-//! for `use models::...` imports without changing the translation API.
+//! ## Method mapping
+//!
+//! | f1r3node `Casper` method      | Cordial Miners equivalent                       |
+//! |-------------------------------|--------------------------------------------------|
+//! | `get_snapshot`                | [`build_snapshot`] over current blocklace + bonds|
+//! | `contains` / `dag_contains`   | `Blocklace::dom().contains(...)` by content_hash |
+//! | `buffer_contains`             | Internal pending-block buffer                    |
+//! | `get_approved_block`          | Stored at construction                           |
+//! | `deploy`                      | Validate signature, push to `DeployPool`         |
+//! | `estimator`                   | [`fork_choice`] tips, then translate to hashes   |
+//! | `get_version`                 | From `shard_conf.casper_version`                 |
+//! | `validate`                    | Translate then call core [`validate_block`]      |
+//! | `validate_self_created`       | Same as `validate`, with crypto checks skipped   |
+//! | `handle_valid_block`          | Insert into blocklace; rebuild snapshot DAG view |
+//! | `handle_invalid_block`        | Mark block-hash invalid; do not insert           |
+//! | `get_dependency_free_from_buffer` | Buffer entries whose preds all exist        |
+//! | `get_all_from_buffer`         | All buffer entries                               |
+//!
+//! `MultiParentCasper` adds `last_finalized_block` (from
+//! [`find_last_finalized`]), `block_dag` (rebuilt from snapshot), and
+//! `has_pending_deploys_in_storage` (DeployPool emptiness check). The
+//! RSpace-specific `runtime_manager`, `block_store`, and
+//! `get_history_exporter` methods are stubbed — they return adapter-local
+//! placeholders since we don't have RSpace wired into the core crate yet.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use serde::{Deserialize, Serialize};
+use async_trait::async_trait;
+use cordial_miners_core::crypto::CryptoVerifier;
+use either::Either;
 
 use cordial_miners_core::block::Block;
-use cordial_miners_core::crypto::hash_content;
-use cordial_miners_core::execution::{
-    Bond as CmBond, CordialBlockPayload, Deploy as CmDeploy, ProcessedDeploy as CmProcessedDeploy,
-    ProcessedSystemDeploy as CmSystemDeploy, RejectReason as CmRejectReason,
-    RejectedDeploy as CmRejectedDeploy, SignedDeploy as CmSignedDeploy,
+use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::consensus::{
+    InvalidBlock as CoreInvalidBlock, ValidationConfig, ValidationResult, find_last_finalized,
+    fork_choice, validate_block as core_validate_block,
 };
-use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::execution::{
+    DeployPool, DeployPoolConfig, PoolError, SignedDeploy as CmSignedDeploy,
+};
+use cordial_miners_core::types::{BlockIdentity, NodeId};
+
+use crate::block_translation::{
+    BlockMessage, SignedDeployData, TranslationError, block_to_message, message_to_block,
+};
+use crate::shard_conf::CasperShardConf;
+use crate::snapshot::{CasperSnapshot, SnapshotError, build_snapshot};
+use std::sync::Arc;
+use cordial_f1r3space_adapter::BlocklaceRepository;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Mirror of f1r3node wire types
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// Field names and types match f1r3node/models/src/rust/casper/protocol/
-// casper_message.rs. When we switch to depending on the real `models` crate
-// we'll delete these mirrors.
-
-/// f1r3node uses `prost::bytes::Bytes` (aliased as `ByteString`). We use
-/// `Vec<u8>` for portability; conversion is cheap either way.
-pub type ByteString = Vec<u8>;
-
-/// Mirror of f1r3node's `BlockMessage`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BlockMessage {
-    pub block_hash: ByteString,
-    pub header: Header,
-    pub body: Body,
-    pub justifications: Vec<Justification>,
-    pub sender: ByteString,
-    pub seq_num: i32,
-    pub sig: ByteString,
-    pub sig_algorithm: String,
-    pub shard_id: String,
-    pub extra_bytes: ByteString,
-}
-
-/// Mirror of f1r3node's `Header`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Header {
-    pub parents_hash_list: Vec<ByteString>,
-    pub timestamp: i64,
-    pub version: i64,
-    pub extra_bytes: ByteString,
-}
-
-/// Mirror of f1r3node's `Body`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Body {
-    pub state: F1r3flyState,
-    pub deploys: Vec<ProcessedDeploy>,
-    pub rejected_deploys: Vec<RejectedDeploy>,
-    pub system_deploys: Vec<ProcessedSystemDeploy>,
-    pub extra_bytes: ByteString,
-}
-
-/// Mirror of f1r3node's `F1r3flyState`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct F1r3flyState {
-    pub pre_state_hash: ByteString,
-    pub post_state_hash: ByteString,
-    pub bonds: Vec<Bond>,
-    pub block_number: i64,
-}
-
-/// Mirror of f1r3node's `Bond`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Bond {
-    pub validator: ByteString,
-    pub stake: i64,
-}
-
-/// Mirror of f1r3node's `Justification`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Justification {
-    pub validator: ByteString,
-    pub latest_block_hash: ByteString,
-}
-
-/// Mirror of f1r3node's `DeployData`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DeployData {
-    pub term: String,
-    pub time_stamp: i64,
-    pub phlo_price: i64,
-    pub phlo_limit: i64,
-    pub valid_after_block_number: i64,
-    pub shard_id: String,
-    pub expiration_timestamp: Option<i64>,
-}
-
-/// Mirror of f1r3node's `Signed<DeployData>`.
-///
-/// The real type is generic (`Signed<A>`) but for translation we only deal
-/// with `Signed<DeployData>`. `sig_algorithm` is a string here rather than
-/// `Box<dyn SignaturesAlg>` to keep the mirror plain-data.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SignedDeployData {
-    pub data: DeployData,
-    pub pk: ByteString,
-    pub sig: ByteString,
-    pub sig_algorithm: String,
-}
-
-/// Mirror of f1r3node's `ProcessedDeploy`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ProcessedDeploy {
-    pub deploy: SignedDeployData,
-    /// f1r3node uses `PCost { cost: i64 }`. We inline the cost as i64.
-    pub cost: i64,
-    /// f1r3node uses `Vec<Event>` — we represent as opaque bytes since the
-    /// blocklace doesn't model execution events.
-    pub deploy_log: Vec<u8>,
-    pub is_failed: bool,
-    pub system_deploy_error: Option<String>,
-}
-
-/// Mirror of f1r3node's `RejectedDeploy { sig: ByteString }`. The reason
-/// for rejection is not encoded at the wire level — we retain the blocklace's
-/// richer reason separately and drop it when translating to f1r3node.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RejectedDeploy {
-    pub sig: ByteString,
-}
-
-/// Mirror of f1r3node's `ProcessedSystemDeploy` (simplified).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ProcessedSystemDeploy {
-    Slash {
-        validator: ByteString,
-        succeeded: bool,
-    },
-    CloseBlock {
-        succeeded: bool,
-    },
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Translation API
+// Mirror types for the trait surface
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Errors from translating between the two formats.
+// In casper_adapter.rs — CordialCasperAdapter struct, add the repo field:
+pub struct CordialCasperAdapter<V: CryptoVerifier> {
+    pub(crate) blocklace:      Mutex<Blocklace>,
+    pub(crate) deploy_pool:    Mutex<DeployPool>,
+    pub(crate) bonds:          HashMap<NodeId, u64>,
+    pub(crate) shard_conf:     CasperShardConf,
+    pub(crate) shard_id:       String,
+    pub(crate) approved_block: Option<BlockMessage>,
+    pub(crate) buffer:         Mutex<HashMap<Vec<u8>, BlockMessage>>,
+    pub(crate) invalid_blocks: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+    pub(crate) verifier:       V,
+    pub(crate) validation_config: ValidationConfig,
+
+    /// Persistent storage — added for LMDB feature.
+    /// Optional so the adapter still compiles without storage wired in.
+    pub(crate) repository: Option<Arc<dyn BlocklaceRepository>>,
+}
+
+/// Mirror of f1r3node's `BlockHash` (a `Bytes` newtype). We use `Vec<u8>`.
+pub type BlockHash = Vec<u8>;
+
+/// Mirror of f1r3node's `Validator` (a `Bytes` newtype).
+pub type Validator = Vec<u8>;
+
+/// Mirror of f1r3node's `DeployId` (a `Bytes` newtype, the deploy signature).
+pub type DeployId = Vec<u8>;
+
+/// Mirror of f1r3node's `BlockError` (subset). f1r3node has more variants
+/// like `Processed`, `MissingBlocks`, `CasperIsBusy`, `BlockException`;
+/// we model the ones the adapter actually emits.
 #[derive(Debug, Clone, PartialEq)]
-pub enum TranslationError {
-    /// The block's payload bytes failed to deserialize as `CordialBlockPayload`.
-    PayloadDecodeFailed(String),
-
-    /// A numeric field overflowed when casting between i64 (f1r3node) and u64 (blocklace).
-    NumericOverflow(&'static str),
-
-    /// A predecessor id could not be reconstructed from the wire hash (length mismatch).
-    InvalidPredecessorHash { expected_len: usize, got: usize },
+pub enum BlockError {
+    /// Block has already been processed (in the DAG).
+    Processed,
+    /// One or more predecessors are missing — block is buffered awaiting them.
+    MissingBlocks,
+    /// Block is invalid; specific reason in [`InvalidBlock`].
+    Invalid(InvalidBlock),
+    /// Adapter-internal exception with a string description.
+    BlockException(String),
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// blocklace → f1r3node
-// ──────────────────────────────────────────────────────────────────────
-
-/// Translate a blocklace [`Block`] into an f1r3node [`BlockMessage`].
-///
-/// The block's `payload` bytes are decoded as [`CordialBlockPayload`] to
-/// populate the `Body`. Predecessors are packed into both `parents_hash_list`
-/// and `justifications` (validator → latest block hash pairs). The f1r3node
-/// `block_hash` is set to the blocklace's 32-byte content hash.
-///
-/// Note: the blocklace's `signature` (ED25519, 64 bytes) is carried verbatim
-/// in the `sig` field. Real wire compatibility requires the Phase 3.4 crypto
-/// bridge to produce Blake2b + Secp256k1 signatures instead — this function
-/// just translates the data shape.
-pub fn block_to_message(block: &Block, shard_id: &str) -> Result<BlockMessage, TranslationError> {
-    let payload = CordialBlockPayload::from_bytes(&block.content.payload)
-        .map_err(TranslationError::PayloadDecodeFailed)?;
-
-    // Predecessors → parents_hash_list (sorted for deterministic ordering)
-    let mut parents: Vec<ByteString> = block
-        .content
-        .predecessors
-        .iter()
-        .map(|id| id.content_hash.to_vec())
-        .collect();
-    parents.sort();
-
-    // Predecessors → justifications: one entry per (creator, hash) pair.
-    // If a creator has multiple blocks in the predecessor set (which means the
-    // creator equivocated), all of them appear. f1r3node's validator may then
-    // flag the equivocation.
-    let mut justifications: Vec<Justification> = block
-        .content
-        .predecessors
-        .iter()
-        .map(|id| Justification {
-            validator: id.creator.0.clone(),
-            latest_block_hash: id.content_hash.to_vec(),
-        })
-        .collect();
-    justifications.sort_by(|a, b| {
-        a.validator
-            .cmp(&b.validator)
-            .then_with(|| a.latest_block_hash.cmp(&b.latest_block_hash))
-    });
-
-    let header = Header {
-        parents_hash_list: parents,
-        timestamp: 0, // blocklace doesn't carry timestamps at the block level
-        version: 1,
-        extra_bytes: vec![],
-    };
-
-    let body = Body {
-        state: F1r3flyState {
-            pre_state_hash: payload.state.pre_state_hash,
-            post_state_hash: payload.state.post_state_hash,
-            bonds: payload
-                .state
-                .bonds
-                .into_iter()
-                .map(bond_to_f1r3node)
-                .collect(),
-            block_number: u64_to_i64(payload.state.block_number, "block_number")?,
-        },
-        deploys: payload
-            .deploys
-            .into_iter()
-            .map(processed_deploy_to_f1r3node)
-            .collect::<Result<Vec<_>, _>>()?,
-        rejected_deploys: payload
-            .rejected_deploys
-            .into_iter()
-            .map(rejected_deploy_to_f1r3node)
-            .collect(),
-        system_deploys: payload
-            .system_deploys
-            .into_iter()
-            .map(system_deploy_to_f1r3node)
-            .collect(),
-        extra_bytes: vec![],
-    };
-
-    Ok(BlockMessage {
-        block_hash: block.identity.content_hash.to_vec(),
-        header,
-        body,
-        justifications,
-        sender: block.identity.creator.0.clone(),
-        seq_num: 0, // blocklace doesn't maintain a sequence number; caller may set later
-        sig: block.identity.signature.clone(),
-        sig_algorithm: "ed25519".to_string(),
-        shard_id: shard_id.to_string(),
-        extra_bytes: vec![],
-    })
+/// Mirror of f1r3node's `InvalidBlock`. Subset that the Cordial Miners
+/// validation pipeline can produce.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InvalidBlock {
+    InvalidBlockHash,
+    InvalidSignature,
+    InvalidSender,
+    InvalidParents,
+    AdmissibleEquivocation,
+    NotOfInterest,
+    /// Translation failure — block didn't decode against the wire format.
+    InvalidFormat,
+    HiddenEquivocation,
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// f1r3node → blocklace
-// ──────────────────────────────────────────────────────────────────────
+/// Mirror of f1r3node's `ValidBlock`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValidBlock {
+    Valid,
+}
 
-/// Translate an f1r3node [`BlockMessage`] into a blocklace [`Block`].
+/// Mirror of f1r3node's `DeployError`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeployError {
+    ParsingError(String),
+    MissingUser,
+    UnknownSignatureAlgorithm(String),
+    SignatureVerificationFailed,
+    /// Adapter-specific: the deploy failed pool admission.
+    PoolRejected(String),
+}
+
+/// Top-level adapter error. Mirrors f1r3node's `CasperError` superset.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CasperError {
+    /// Snapshot construction failed.
+    Snapshot(String),
+    /// Block translation failed.
+    Translation(String),
+    /// Adapter is in a state where the requested operation is invalid
+    /// (e.g. `get_approved_block` before one is set).
+    InvalidState(&'static str),
+}
+
+impl From<SnapshotError> for CasperError {
+    fn from(e: SnapshotError) -> Self {
+        CasperError::Snapshot(format!("{e:?}"))
+    }
+}
+
+impl From<TranslationError> for CasperError {
+    fn from(e: TranslationError) -> Self {
+        CasperError::Translation(format!("{e:?}"))
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Trait definitions (mirrors of f1r3node Casper / MultiParentCasper)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Local mirror of f1r3node's `Casper` trait.
+#[async_trait]
+pub trait CordialCasper<V: CryptoVerifier + Send + Sync> {
+    async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError>;
+
+    fn contains(&self, hash: &BlockHash) -> bool;
+    fn dag_contains(&self, hash: &BlockHash) -> bool;
+    fn buffer_contains(&self, hash: &BlockHash) -> bool;
+
+    fn get_approved_block(&self) -> Result<&BlockMessage, CasperError>;
+
+    fn deploy(
+        &self,
+        deploy: SignedDeployData,
+    ) -> Result<Either<DeployError, DeployId>, CasperError>;
+
+    /// Returns ranked tips (matches f1r3node's estimator: highest-stake-weight
+    /// fork first). Cordial Miners doesn't strictly need fork choice — see
+    /// [`fork_choice`] module doc — but we honour the trait shape.
+    async fn estimator(&self) -> Result<Vec<BlockHash>, CasperError>;
+
+    fn get_version(&self) -> i64;
+
+    async fn validate(
+        &self,
+        block: &BlockMessage,
+    ) -> Result<Either<BlockError, ValidBlock>, CasperError>;
+
+    async fn validate_self_created(
+        &self,
+        block: &BlockMessage,
+        pre_state_hash: Vec<u8>,
+        post_state_hash: Vec<u8>,
+    ) -> Result<Either<BlockError, ValidBlock>, CasperError>;
+
+    async fn handle_valid_block(&self, block: &BlockMessage) -> Result<(), CasperError>;
+
+    fn handle_invalid_ablock(
+        &self,
+        block: &BlockMessage,
+        status: &InvalidBlock,
+    ) -> Result<(), CasperError>;
+
+    fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError>;
+    fn get_all_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError>;
+}
+
+/// Local mirror of f1r3node's `MultiParentCasper` trait. Adds finality
+/// query and on-chain state accessors. The RSpace-coupled methods
+/// (`runtime_manager`, `block_store`, `get_history_exporter`) are
+/// intentionally omitted — they belong to the future RSpace adapter
+/// crate (Phase 3 deferred work) since the standalone adapter has no
+/// RSpace runtime to expose.
+#[async_trait]
+pub trait CordialMultiParentCasper<V: CryptoVerifier + Send + Sync>:
+    CordialCasper<V> + Send + Sync
+{
+    async fn last_finalized_block(&self) -> Result<BlockMessage, CasperError>;
+
+    fn normalized_initial_fault(
+        &self,
+        weights: HashMap<Validator, u64>,
+    ) -> Result<f32, CasperError>;
+
+    async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Adapter implementation
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Adapter that wraps the Cordial Miners core types and exposes them
+/// through [`CordialCasper`] + [`CordialMultiParentCasper`].
 ///
-/// Predecessors are the union of `header.parents_hash_list` and
-/// `justifications.latest_block_hash` — any hash appearing in either list
-/// becomes a predecessor. Each predecessor identity needs a creator; we
-/// look it up via the `justifications` mapping and fall back to the block's
-/// `sender` if a parent hash is not in the justifications list.
-///
-/// The `Body` is packed back into a [`CordialBlockPayload`] and serialized
-/// into `BlockContent.payload`.
-pub fn message_to_block(msg: &BlockMessage) -> Result<Block, TranslationError> {
-    // Build a map hash -> creator from justifications
-    let mut hash_to_creator: std::collections::HashMap<&[u8], &[u8]> =
-        std::collections::HashMap::new();
-    for j in &msg.justifications {
-        hash_to_creator.insert(&j.latest_block_hash, &j.validator);
+/// Uses `tokio::sync::Mutex` for the blocklace, deploy pool, and buffer
+/// so the trait methods can be called concurrently from multiple tasks.
+pub struct CordialCasperAdapter<V: CryptoVerifier + Send + Sync> {
+    blocklace: tokio::sync::Mutex<Blocklace>,
+    deploy_pool: tokio::sync::Mutex<DeployPool>,
+    /// Pending blocks awaiting predecessor arrival, keyed by block_hash.
+    buffer: tokio::sync::Mutex<HashMap<BlockHash, BlockMessage>>,
+    /// Block hashes the adapter has marked invalid (so we don't re-process).
+    invalid_blocks: tokio::sync::Mutex<HashMap<BlockHash, Validator>>,
+    pub verifier: V,
+
+    bonds: HashMap<NodeId, u64>,
+    shard_conf: CasperShardConf,
+    shard_id: String,
+    approved_block: Option<BlockMessage>,
+    /// Validation knobs. Adapter callers may want to relax cordial check
+    /// when ingesting blocks from f1r3node since f1r3node doesn't enforce it.
+    validation_config: ValidationConfig,
+    /// Repository for persistent block storage.
+    repository: Option<Arc<dyn BlocklaceRepository>>,
+}
+
+// Backward-compatible constructor: default to Secp256k1 verifier when callers
+// don't supply one (keeps existing tests and call sites working).
+impl CordialCasperAdapter<cordial_miners_core::crypto::Secp256k1Scheme> {
+    pub fn new(
+        bonds: HashMap<NodeId, u64>,
+        shard_conf: CasperShardConf,
+        shard_id: impl Into<String>,
+        deploy_pool_config: DeployPoolConfig,
+        approved_block: Option<BlockMessage>,
+    ) -> Self {
+        Self::new_with_verifier(
+            bonds,
+            shard_conf,
+            shard_id,
+            deploy_pool_config,
+            approved_block,
+            cordial_miners_core::crypto::Secp256k1Scheme,
+        )
+    }
+}
+
+impl<V: CryptoVerifier + Send + Sync> CordialCasperAdapter<V>
+where
+    V::Error: std::fmt::Debug,
+{
+    /// Create a new adapter with an explicit verifier.
+    ///
+    /// Use `new_with_verifier` when a custom verifier (e.g. a mock) is needed.
+    pub fn new_with_verifier(
+        bonds: HashMap<NodeId, u64>,
+        shard_conf: CasperShardConf,
+        shard_id: impl Into<String>,
+        deploy_pool_config: DeployPoolConfig,
+        approved_block: Option<BlockMessage>,
+        verifier: V,
+    ) -> Self {
+        // Default to a relaxed validation config: skip the cordial check so
+        // blocks coming from a non-cordial source (f1r3node, replay) aren't
+        // rejected. Strict consensus tests can call `with_validation_config`.
+        let validation_config = ValidationConfig {
+            check_cordial: false,
+            ..ValidationConfig::default()
+        };
+
+        Self {
+            blocklace: tokio::sync::Mutex::new(Blocklace::new()),
+            deploy_pool: tokio::sync::Mutex::new(DeployPool::new(deploy_pool_config)),
+            buffer: tokio::sync::Mutex::new(HashMap::new()),
+            invalid_blocks: tokio::sync::Mutex::new(HashMap::new()),
+            verifier,
+            bonds,
+            shard_conf,
+            shard_id: shard_id.into(),
+            approved_block,
+            validation_config,
+            repository: None, // LMDB storage not wired in yet
+        }
+    }
+    /// Attach persistent LMDB storage to the adapter.
+    pub fn with_repository(mut self, repo: Arc<dyn BlocklaceRepository>) -> Self {
+        self.repository = Some(repo);
+        self
     }
 
-    // Union of parents and justification hashes, deduped
-    let mut pred_hashes: HashSet<Vec<u8>> = HashSet::new();
-    for p in &msg.header.parents_hash_list {
-        pred_hashes.insert(p.clone());
-    }
-    for j in &msg.justifications {
-        pred_hashes.insert(j.latest_block_hash.clone());
+    /// Override the validation config (e.g. enable strict cordial checks).
+    pub fn with_validation_config(mut self, cfg: ValidationConfig) -> Self {
+        self.validation_config = cfg;
+        self
     }
 
-    let mut predecessors = HashSet::new();
-    for hash in pred_hashes {
-        let content_hash: [u8; 32] =
-            hash.as_slice()
-                .try_into()
-                .map_err(|_| TranslationError::InvalidPredecessorHash {
-                    expected_len: 32,
-                    got: hash.len(),
-                })?;
-        let creator_bytes = hash_to_creator
-            .get(hash.as_slice())
-            .copied()
-            .unwrap_or(msg.sender.as_slice());
-        predecessors.insert(BlockIdentity {
-            content_hash,
-            creator: NodeId(creator_bytes.to_vec()),
-            // The f1r3node wire format doesn't carry the per-predecessor
-            // signature. Leave empty; downstream verification can re-fetch
-            // the referenced block and read its signature from there.
-            signature: vec![],
-        });
+    /// Direct access to the wrapped blocklace, for advanced callers that
+    /// need to inspect or seed state outside the trait surface.
+    pub fn blocklace(&self) -> &tokio::sync::Mutex<Blocklace> {
+        &self.blocklace
     }
 
-    // Rebuild the payload from Body
-    let payload = CordialBlockPayload {
-        state: cordial_miners_core::execution::BlockState {
-            pre_state_hash: msg.body.state.pre_state_hash.clone(),
-            post_state_hash: msg.body.state.post_state_hash.clone(),
-            bonds: msg
-                .body
-                .state
-                .bonds
+    /// Direct access to the deploy pool.
+    pub fn deploy_pool(&self) -> &tokio::sync::Mutex<DeployPool> {
+        &self.deploy_pool
+    }
+
+    /// Helper: convert our core `InvalidBlock` to the adapter's mirror enum.
+    fn map_core_error(err: &CoreInvalidBlock) -> InvalidBlock {
+        match err {
+            CoreInvalidBlock::InvalidContentHash { .. } => InvalidBlock::InvalidBlockHash,
+            CoreInvalidBlock::InvalidSignature => InvalidBlock::InvalidSignature,
+            CoreInvalidBlock::UnknownSender { .. } => InvalidBlock::InvalidSender,
+            CoreInvalidBlock::MissingPredecessors { .. } => InvalidBlock::InvalidParents,
+            CoreInvalidBlock::Equivocation { .. } => InvalidBlock::AdmissibleEquivocation,
+            CoreInvalidBlock::NotCordial { .. } => InvalidBlock::NotOfInterest,
+            CoreInvalidBlock::HiddenEquivocation { .. } => InvalidBlock::HiddenEquivocation,
+        }
+    }
+
+    /// Internal: validate a translated `Block` using the configured rules.
+    async fn validate_translated_block(
+        &self,
+        block: &Block,
+        cfg: &ValidationConfig,
+    ) -> ValidationResult {
+        let bl = self.blocklace.lock().await;
+        core_validate_block(block, &bl, &self.bonds, cfg)
+    }
+
+    /// Internal: build a snapshot using the current blocklace + bonds.
+    async fn build_current_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
+        let bl = self.blocklace.lock().await;
+        Ok(build_snapshot(
+            &bl,
+            &self.bonds,
+            self.shard_conf.to_snapshot_conf(),
+            &self.shard_id,
+        )?)
+    }
+}
+
+#[async_trait]
+impl<V: CryptoVerifier + Send + Sync> CordialCasper<V> for CordialCasperAdapter<V>
+where
+    V::Error: std::fmt::Debug,
+{
+    async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
+        self.build_current_snapshot().await
+    }
+
+    fn contains(&self, hash: &BlockHash) -> bool {
+        // Synchronous trait method but we hold an async Mutex. Use try_lock
+        // for the common uncontended case; fall back to checking the buffer
+        // alone if contended (callers can retry).
+        if let Ok(bl) = self.blocklace.try_lock()
+            && bl
+                .dom()
                 .iter()
-                .map(bond_from_f1r3node)
-                .collect::<Result<Vec<_>, _>>()?,
-            block_number: i64_to_u64(msg.body.state.block_number, "block_number")?,
-        },
-        deploys: msg
-            .body
-            .deploys
-            .iter()
-            .map(processed_deploy_from_f1r3node)
-            .collect::<Result<Vec<_>, _>>()?,
-        rejected_deploys: msg
-            .body
-            .rejected_deploys
-            .iter()
-            .map(rejected_deploy_from_f1r3node)
-            .collect(),
-        system_deploys: msg
-            .body
-            .system_deploys
-            .iter()
-            .map(system_deploy_from_f1r3node)
-            .collect(),
-    };
-
-    let content = BlockContent {
-        payload: payload.to_bytes(),
-        predecessors,
-    };
-
-    // The block's content_hash is recomputed so the blocklace structure
-    // stays internally consistent. f1r3node's `block_hash` is advisory and
-    // discarded — the hash we compute is over the translated content.
-    let content_hash = hash_content(&content);
-
-    Ok(Block {
-        identity: BlockIdentity {
-            content_hash,
-            creator: NodeId(msg.sender.clone()),
-            signature: msg.sig.clone(),
-        },
-        content,
-    })
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Helpers: payload-level translation
-// ═══════════════════════════════════════════════════════════════════════════
-
-fn bond_to_f1r3node(b: CmBond) -> Bond {
-    Bond {
-        validator: b.validator.0,
-        stake: b.stake as i64,
+                .any(|id| id.content_hash.as_slice() == hash.as_slice())
+        {
+            return true;
+        }
+        if let Ok(buf) = self.buffer.try_lock() {
+            return buf.contains_key(hash);
+        }
+        false
     }
-}
 
-fn bond_from_f1r3node(b: &Bond) -> Result<CmBond, TranslationError> {
-    Ok(CmBond {
-        validator: NodeId(b.validator.clone()),
-        stake: i64_to_u64(b.stake, "bond.stake")?,
-    })
-}
-
-fn deploy_to_f1r3node(d: CmDeploy) -> Result<DeployData, TranslationError> {
-    Ok(DeployData {
-        term: String::from_utf8_lossy(&d.term).into_owned(),
-        time_stamp: u64_to_i64(d.timestamp, "deploy.timestamp")?,
-        phlo_price: u64_to_i64(d.phlo_price, "deploy.phlo_price")?,
-        phlo_limit: u64_to_i64(d.phlo_limit, "deploy.phlo_limit")?,
-        valid_after_block_number: u64_to_i64(
-            d.valid_after_block_number,
-            "deploy.valid_after_block_number",
-        )?,
-        shard_id: d.shard_id,
-        expiration_timestamp: None, // blocklace Deploy doesn't carry this yet
-    })
-}
-
-fn deploy_from_f1r3node(d: &DeployData) -> Result<CmDeploy, TranslationError> {
-    Ok(CmDeploy {
-        term: d.term.as_bytes().to_vec(),
-        timestamp: i64_to_u64(d.time_stamp, "deploy.time_stamp")?,
-        phlo_price: i64_to_u64(d.phlo_price, "deploy.phlo_price")?,
-        phlo_limit: i64_to_u64(d.phlo_limit, "deploy.phlo_limit")?,
-        valid_after_block_number: i64_to_u64(
-            d.valid_after_block_number,
-            "deploy.valid_after_block_number",
-        )?,
-        shard_id: d.shard_id.clone(),
-    })
-}
-
-fn signed_deploy_to_f1r3node(sd: CmSignedDeploy) -> Result<SignedDeployData, TranslationError> {
-    Ok(SignedDeployData {
-        data: deploy_to_f1r3node(sd.deploy)?,
-        pk: sd.deployer,
-        sig: sd.signature,
-        sig_algorithm: "ed25519".to_string(),
-    })
-}
-
-fn signed_deploy_from_f1r3node(sd: &SignedDeployData) -> Result<CmSignedDeploy, TranslationError> {
-    Ok(CmSignedDeploy {
-        deploy: deploy_from_f1r3node(&sd.data)?,
-        deployer: sd.pk.clone(),
-        signature: sd.sig.clone(),
-    })
-}
-
-fn processed_deploy_to_f1r3node(
-    pd: CmProcessedDeploy,
-) -> Result<ProcessedDeploy, TranslationError> {
-    Ok(ProcessedDeploy {
-        deploy: signed_deploy_to_f1r3node(pd.deploy)?,
-        cost: u64_to_i64(pd.cost, "processed_deploy.cost")?,
-        deploy_log: vec![], // blocklace doesn't model execution events
-        is_failed: pd.is_failed,
-        system_deploy_error: None,
-    })
-}
-
-fn processed_deploy_from_f1r3node(
-    pd: &ProcessedDeploy,
-) -> Result<CmProcessedDeploy, TranslationError> {
-    Ok(CmProcessedDeploy {
-        deploy: signed_deploy_from_f1r3node(&pd.deploy)?,
-        cost: i64_to_u64(pd.cost, "processed_deploy.cost")?,
-        is_failed: pd.is_failed,
-    })
-}
-
-fn rejected_deploy_to_f1r3node(rd: CmRejectedDeploy) -> RejectedDeploy {
-    // The reason is dropped — f1r3node's wire RejectedDeploy only carries the
-    // signature. Consumers who need the reason must track it separately.
-    RejectedDeploy {
-        sig: rd.deploy.signature,
+    fn dag_contains(&self, hash: &BlockHash) -> bool {
+        if let Ok(bl) = self.blocklace.try_lock() {
+            bl.dom()
+                .iter()
+                .any(|id| id.content_hash.as_slice() == hash.as_slice())
+        } else {
+            false
+        }
     }
-}
 
-fn rejected_deploy_from_f1r3node(rd: &RejectedDeploy) -> CmRejectedDeploy {
-    // We don't know the reason from the wire — default to InvalidSignature.
-    // We also don't have the full deploy; reconstruct a minimal SignedDeploy
-    // with the signature and empty fields. The caller is expected to correlate
-    // with the deploy pool if richer data is needed.
-    CmRejectedDeploy {
-        deploy: CmSignedDeploy {
-            deploy: CmDeploy {
-                term: vec![],
-                timestamp: 0,
-                phlo_price: 0,
-                phlo_limit: 0,
-                valid_after_block_number: 0,
-                shard_id: String::new(),
+    fn buffer_contains(&self, hash: &BlockHash) -> bool {
+        if let Ok(buf) = self.buffer.try_lock() {
+            buf.contains_key(hash)
+        } else {
+            false
+        }
+    }
+
+    fn get_approved_block(&self) -> Result<&BlockMessage, CasperError> {
+        self.approved_block
+            .as_ref()
+            .ok_or(CasperError::InvalidState("no approved block set"))
+    }
+
+    fn deploy(
+        &self,
+        deploy: SignedDeployData,
+    ) -> Result<Either<DeployError, DeployId>, CasperError> {
+        // Translate the wire deploy into our core type
+        let cm_signed = CmSignedDeploy {
+            deploy: cordial_miners_core::execution::Deploy {
+                term: deploy.data.term.as_bytes().to_vec(),
+                timestamp: u64::try_from(deploy.data.time_stamp).unwrap_or(0),
+                phlo_price: u64::try_from(deploy.data.phlo_price).unwrap_or(0),
+                phlo_limit: u64::try_from(deploy.data.phlo_limit).unwrap_or(0),
+                valid_after_block_number: u64::try_from(deploy.data.valid_after_block_number)
+                    .unwrap_or(0),
+                shard_id: deploy.data.shard_id.clone(),
             },
-            deployer: vec![],
-            signature: rd.sig.clone(),
-        },
-        reason: CmRejectReason::InvalidSignature,
+            deployer: deploy.pk.clone(),
+            signature: deploy.sig.clone(),
+        };
+        let sig = cm_signed.signature.clone();
+
+        let mut pool = match self.deploy_pool.try_lock() {
+            Ok(p) => p,
+            Err(_) => {
+                return Err(CasperError::InvalidState("deploy pool locked"));
+            }
+        };
+        match pool.add(cm_signed) {
+            Ok(()) => Ok(Either::Right(sig)),
+            Err(PoolError::Duplicate) => Ok(Either::Left(DeployError::PoolRejected(
+                "duplicate signature".into(),
+            ))),
+            Err(PoolError::InvalidSignature) => {
+                Ok(Either::Left(DeployError::SignatureVerificationFailed))
+            }
+            Err(PoolError::InsufficientPhloPrice { required, actual }) => Ok(Either::Left(
+                DeployError::PoolRejected(format!("phlo price {actual} below required {required}")),
+            )),
+        }
+    }
+
+    async fn estimator(&self) -> Result<Vec<BlockHash>, CasperError> {
+        let bl = self.blocklace.lock().await;
+        let fc = fork_choice(&bl, &self.bonds);
+        Ok(fc
+            .map(|fc| {
+                fc.tips
+                    .into_iter()
+                    .map(|id| id.content_hash.to_vec())
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    fn get_version(&self) -> i64 {
+        self.shard_conf.casper_version
+    }
+
+    async fn validate(
+        &self,
+        block: &BlockMessage,
+    ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
+        // Translate wire -> core
+        let core_block = match message_to_block(block) {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = e;
+                return Ok(Either::Left(BlockError::Invalid(
+                    InvalidBlock::InvalidFormat,
+                )));
+            }
+        };
+
+        let result = self
+            .validate_translated_block(&core_block, &self.validation_config)
+            .await;
+        match result {
+            ValidationResult::Valid => Ok(Either::Right(ValidBlock::Valid)),
+            ValidationResult::Invalid(errs) => {
+                // Surface the first error; missing predecessors map to MissingBlocks
+                if errs
+                    .iter()
+                    .any(|e| matches!(e, CoreInvalidBlock::MissingPredecessors { .. }))
+                {
+                    Ok(Either::Left(BlockError::MissingBlocks))
+                } else {
+                    let first = &errs[0];
+                    Ok(Either::Left(BlockError::Invalid(Self::map_core_error(
+                        first,
+                    ))))
+                }
+            }
+        }
+    }
+
+    async fn validate_self_created(
+        &self,
+        block: &BlockMessage,
+        _pre_state_hash: Vec<u8>,
+        _post_state_hash: Vec<u8>,
+    ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
+        // Self-created blocks skip the expensive checkpoint replay AND the
+        // signature/content-hash crypto checks (we just produced them).
+        let core_block = message_to_block(block)?;
+        let cfg = ValidationConfig {
+            check_content_hash: false,
+            check_signature: false,
+            ..self.validation_config.clone()
+        };
+        let result = self.validate_translated_block(&core_block, &cfg).await;
+        match result {
+            ValidationResult::Valid => Ok(Either::Right(ValidBlock::Valid)),
+            ValidationResult::Invalid(errs) => {
+                if errs
+                    .iter()
+                    .any(|e| matches!(e, CoreInvalidBlock::MissingPredecessors { .. }))
+                {
+                    Ok(Either::Left(BlockError::MissingBlocks))
+                } else {
+                    let first = &errs[0];
+                    Ok(Either::Left(BlockError::Invalid(Self::map_core_error(
+                        first,
+                    ))))
+                }
+            }
+        }
+    }
+
+    async fn handle_valid_block(&self, block: &BlockMessage) -> Result<(), CasperError> {
+    let core_block = message_to_block(block)?;
+
+    // ── ADDED: persist BEFORE inserting into the in-memory engine ─────────
+    //
+    // Write-order invariant: disk is always ahead of memory.
+    //
+    // If the node crashes after put_block() but before bl.insert(),
+    // recover_into_engine() replays this block from disk on next startup.
+    //
+    // If put_block() fails (I/O error, LMDB full) we return early —
+    // the block is neither on disk nor in memory, which is safe because
+    // the caller will retry or the block arrives again from the network.
+    if let Some(repo) = &self.repository {
+        repo.put_block(&core_block)
+            .map_err(|e| CasperError::InvalidState(
+                Box::leak(format!("put_block failed: {e}").into_boxed_str())
+            ))?;
+    }
+    
+
+    //  insert into in-memory DAG ───────────────────────────────
+    let mut bl = self.blocklace.lock().await;
+    bl.insert(core_block, &self.verifier).map_err(|e| {
+        CasperError::InvalidState(Box::leak(format!("insert: {e}").into_boxed_str()))
+    })?;
+
+    // ── ADDED: advance finalized cursor after successful insert ───────────
+    //
+    // find_last_finalized runs over the current DAG state. We call it after
+    // every insert because any new block may cross the 2/3-weight threshold
+    // that finalizes a previous block.
+    //
+    // put_finalized_cursor is cheap (one LMDB write). On restart,
+    // recover_into_engine() reads this cursor to know where the node
+    // left off before the crash.
+    if let Some(repo) = &self.repository {
+        if let Some(finalized_id) = find_last_finalized(&bl, &self.bonds) {
+            repo.put_finalized_cursor(&finalized_id)
+                .map_err(|e| CasperError::InvalidState(
+                    Box::leak(
+                        format!("put_finalized_cursor failed: {e}").into_boxed_str()
+                    )
+                ))?;
+        }
+    }
+    
+    //  drain the pending buffer ────────────────────────────────
+    // Re-check in a loop because each newly-inserted block may unblock more.
+    drop(bl);
+    let to_retry: Vec<BlockMessage> = {
+        let mut buf = self.buffer.lock().await;
+        buf.remove(&block.block_hash);
+        buf.values().cloned().collect()
+    };
+    let mut promoted = Vec::new();
+    for pending in to_retry {
+        if let Ok(translated) = message_to_block(&pending) {
+            let mut bl = self.blocklace.lock().await;
+            if bl.insert(translated, &self.verifier).is_ok() {
+                promoted.push(pending.block_hash.clone());
+            }
+        }
+    }
+    if !promoted.is_empty() {
+        let mut buf = self.buffer.lock().await;
+        for h in promoted {
+            buf.remove(&h);
+        }
+    }
+    Ok(())
+}
+
+    fn handle_invalid_block(
+        &self,
+        block: &BlockMessage,
+        status: &InvalidBlock,
+    ) -> Result<(), CasperError> {
+        // Track invalid hash; do NOT insert into the blocklace.
+        let mut invalid = self
+            .invalid_blocks
+            .try_lock()
+            .map_err(|_| CasperError::InvalidState("invalid_blocks locked"))?;
+        invalid.insert(block.block_hash.clone(), block.sender.clone());
+        // status is informational here; we don't gate on the variant.
+        let _ = status;
+        Ok(())
+    }
+
+    fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
+        let buf = self
+            .buffer
+            .try_lock()
+            .map_err(|_| CasperError::InvalidState("buffer locked"))?;
+        let bl = self
+            .blocklace
+            .try_lock()
+            .map_err(|_| CasperError::InvalidState("blocklace locked"))?;
+        let dom: HashSet<Vec<u8>> = bl.dom().iter().map(|id| id.content_hash.to_vec()).collect();
+
+        // A buffer entry is "dependency-free" when all its parent_hash_list
+        // entries are in the DAG.
+        let free = buf
+            .values()
+            .filter(|msg| msg.header.parents_hash_list.iter().all(|p| dom.contains(p)))
+            .cloned()
+            .collect();
+        Ok(free)
+    }
+
+    fn get_all_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
+        let buf = self
+            .buffer
+            .try_lock()
+            .map_err(|_| CasperError::InvalidState("buffer locked"))?;
+        Ok(buf.values().cloned().collect())
     }
 }
 
-fn system_deploy_to_f1r3node(sd: CmSystemDeploy) -> ProcessedSystemDeploy {
-    match sd {
-        CmSystemDeploy::Slash {
-            validator,
-            succeeded,
-        } => ProcessedSystemDeploy::Slash {
-            validator: validator.0,
-            succeeded,
-        },
-        CmSystemDeploy::CloseBlock { succeeded } => ProcessedSystemDeploy::CloseBlock { succeeded },
+#[async_trait]
+impl<V: CryptoVerifier + Send + Sync> CordialMultiParentCasper<V> for CordialCasperAdapter<V>
+where
+    V::Error: std::fmt::Debug,
+{
+    async fn last_finalized_block(&self) -> Result<BlockMessage, CasperError> {
+        let bl = self.blocklace.lock().await;
+        let id: BlockIdentity = match find_last_finalized(&bl, &self.bonds) {
+            Some(id) => id,
+            None => return Err(CasperError::InvalidState("no finalized block yet")),
+        };
+        let block = bl
+            .get(&id)
+            .ok_or(CasperError::InvalidState("LFB not in blocklace"))?;
+        Ok(block_to_message(&block, &self.shard_id)?)
     }
-}
 
-fn system_deploy_from_f1r3node(sd: &ProcessedSystemDeploy) -> CmSystemDeploy {
-    match sd {
-        ProcessedSystemDeploy::Slash {
-            validator,
-            succeeded,
-        } => CmSystemDeploy::Slash {
-            validator: NodeId(validator.clone()),
-            succeeded: *succeeded,
-        },
-        ProcessedSystemDeploy::CloseBlock { succeeded } => CmSystemDeploy::CloseBlock {
-            succeeded: *succeeded,
-        },
+    fn normalized_initial_fault(
+        &self,
+        weights: HashMap<Validator, u64>,
+    ) -> Result<f32, CasperError> {
+        // Cordial Miners excludes equivocators from the honest stake. In
+        // f1r3node terms: "initial fault" = sum of equivocator stake / total stake.
+        let bl = self
+            .blocklace
+            .try_lock()
+            .map_err(|_| CasperError::InvalidState("blocklace locked"))?;
+        let equivocators = bl.find_equivacators();
+        let total: u64 = weights.values().sum();
+        if total == 0 {
+            return Ok(0.0);
+        }
+        let fault: u64 = weights
+            .iter()
+            .filter(|(v, _)| equivocators.contains(&NodeId(v.to_vec())))
+            .map(|(_, s)| *s)
+            .sum();
+        Ok(fault as f32 / total as f32)
     }
-}
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Numeric conversion helpers
-// ═══════════════════════════════════════════════════════════════════════════
-
-fn u64_to_i64(v: u64, field: &'static str) -> Result<i64, TranslationError> {
-    i64::try_from(v).map_err(|_| TranslationError::NumericOverflow(field))
-}
-
-fn i64_to_u64(v: i64, field: &'static str) -> Result<u64, TranslationError> {
-    u64::try_from(v).map_err(|_| TranslationError::NumericOverflow(field))
+    async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError> {
+        let pool = self.deploy_pool.lock().await;
+        Ok(!pool.is_empty())
+    }
 }
