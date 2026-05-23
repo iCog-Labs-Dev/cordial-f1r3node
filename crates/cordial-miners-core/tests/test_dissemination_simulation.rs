@@ -34,6 +34,10 @@ fn simulation_validation_config() -> ValidationConfig {
     }
 }
 
+fn leader_node1(_wave: u64) -> Option<NodeId> {
+    Some(node(1))
+}
+
 #[test]
 fn out_of_order_delivery_is_buffered_then_resolved_after_parent_arrives() {
     let mut bonds = HashMap::new();
@@ -199,4 +203,66 @@ fn proposal_construction_converges_after_nodes_catch_up_on_visible_tips() {
 
     assert_eq!(candidate_a.payload, candidate_b_after.payload); // Check that the payloads of the two candidates are the same, which indicates that both nodes constructed their candidates using the same set of visible tips and thus converged on the same proposal content
     assert_eq!(candidate_a.predecessors, candidate_b_after.predecessors); // Check that the predecessors of the two candidates are the same, which indicates that both nodes constructed their candidates using the same set of visible tips and thus converged on the same proposal content
+}
+
+#[test]
+fn finality_and_tau_converge_after_out_of_order_wave_delivery() {
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
+    bonds.insert(node(3), 100);
+    bonds.insert(node(4), 100);
+
+    let node_a = SimNode::new(node(30), bonds.clone(), simulation_validation_config());
+    let node_b = SimNode::new(node(31), bonds, simulation_validation_config());
+    let mut network = SimNetwork::new(vec![node_a, node_b]);
+
+    let wavelength = 3u64;
+    let n = 4usize;
+    let f = 1usize;
+
+    let leader = create_block(1, 1, HashSet::new());
+
+    let r1_v2 = create_block(2, 2, HashSet::from([leader.identity.clone()]));
+    let r1_v3 = create_block(3, 3, HashSet::from([leader.identity.clone()]));
+    let r1_v4 = create_block(4, 4, HashSet::from([leader.identity.clone()]));
+
+    let round1_preds = HashSet::from([
+        r1_v2.identity.clone(),
+        r1_v3.identity.clone(),
+        r1_v4.identity.clone(),
+    ]);
+    let r2_v2 = create_block(2, 5, round1_preds.clone());
+    let r2_v3 = create_block(3, 6, round1_preds.clone());
+    let r2_v4 = create_block(4, 7, round1_preds);
+
+    for block in [&leader, &r1_v2, &r1_v3, &r1_v4, &r2_v2, &r2_v3, &r2_v4] {
+        network.queue_delivery(node(30), block.clone());
+    }
+
+    for block in [&r2_v3, &r1_v2, &r2_v2, &leader, &r1_v4, &r2_v4, &r1_v3] {
+        network.queue_delivery(node(31), block.clone());
+    }
+
+    while network.deliver_next_to(&node(30)).is_some() {}
+    while network.deliver_next_to(&node(31)).is_some() {}
+    network.retry_all_buffers();
+
+    let node_a = network.node(&node(30)).expect("node A should exist");
+    let node_b = network.node(&node(31)).expect("node B should exist");
+
+    let final_a = node_a.latest_final_leader(wavelength, n, f, leader_node1);
+    let final_b = node_b.latest_final_leader(wavelength, n, f, leader_node1);
+    assert_eq!(final_a, Some(leader.identity.clone()));
+    assert_eq!(final_b, Some(leader.identity.clone()));
+
+    let tau_a = node_a
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node A should produce ordered output");
+    let tau_b = node_b
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node B should produce ordered output");
+
+    assert!(!tau_a.is_empty(), "finalized wave should produce non-empty tau");
+    assert_eq!(tau_a, tau_b);
 }
