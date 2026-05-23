@@ -4,8 +4,9 @@ use crate::Block;
 use crate::blocklace::Blocklace;
 use crate::consensus::{
     InvalidBlock, PendingBlockBuffer, ProposalError, ValidationConfig, ValidationResult,
-    build_block_candidate, validated_insert,
+    build_block_candidate, latest_final_leader, tau, validated_insert,
 };
+use crate::consensus::OrderingError;
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 
 /// Outcome of delivering a block to a simulated node.
@@ -97,6 +98,32 @@ impl SimNode {
     /// Build a local block candidate from the node's current view.
     pub fn build_block_candidate(&self, payload: Vec<u8>) -> Result<BlockContent, ProposalError> {
         build_block_candidate(&self.blocklace, &self.bonds, payload)
+    }
+
+    pub fn latest_final_leader<F>(
+        &self,
+        wavelength: u64,
+        n: usize,
+        f: usize,
+        leader_selection: F,
+    ) -> Option<BlockIdentity>
+    where
+        F: Fn(u64) -> Option<NodeId> + Copy,
+    {
+        latest_final_leader(&self.blocklace, wavelength, n, f, leader_selection)
+    }
+
+    pub fn ordered_output<F>(
+        &self,
+        wavelength: u64,
+        n: usize,
+        f: usize,
+        leader_selection: F,
+    ) -> Result<Vec<BlockIdentity>, OrderingError>
+    where
+        F: Fn(u64) -> Option<NodeId> + Copy,
+    {
+        tau(&self.blocklace, wavelength, n, f, leader_selection)
     }
 }
 
