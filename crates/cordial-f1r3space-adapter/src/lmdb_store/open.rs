@@ -52,13 +52,13 @@ impl RSpaceBlocklaceRepository {
         //   restart     → opens the existing database (no data lost)
         let mut wtxn = env.write_txn()?;
         let blocks_db = env.create_database(&mut wtxn, Some(BLOCKS_DB))?;
-        let meta_db   = env.create_database(&mut wtxn, Some(META_DB))?;
+        let meta_db = env.create_database(&mut wtxn, Some(META_DB))?;
         wtxn.commit()?;
 
         Ok(Self {
-            env:       Arc::new(env),
+            env: Arc::new(env),
             blocks_db: Arc::new(Mutex::new(blocks_db)),
-            meta_db:   Arc::new(Mutex::new(meta_db)),
+            meta_db: Arc::new(Mutex::new(meta_db)),
         })
     }
 }
