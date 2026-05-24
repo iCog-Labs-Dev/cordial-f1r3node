@@ -12,6 +12,10 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 ///  - CHAIN: all blocks from a correct node are totally ordered under  ≺
 pub struct Blocklace {
     pub(crate) blocks: HashMap<BlockIdentity, BlockContent>,
+    pub(crate) checkpoint: Option<BlockIdentity>,
+    pub(crate) checkpoint_depth: Option<u64>,
+    pub(crate) checkpoint_order_prefix: Vec<BlockIdentity>,
+    pub(crate) checkpoint_weighted_order_prefix: Vec<BlockIdentity>,
 }
 
 // Construction
@@ -19,6 +23,10 @@ impl Blocklace {
     pub fn new() -> Self {
         Self {
             blocks: HashMap::new(),
+            checkpoint: None,
+            checkpoint_depth: None,
+            checkpoint_order_prefix: Vec::new(),
+            checkpoint_weighted_order_prefix: Vec::new(),
         }
     }
 }
@@ -51,6 +59,32 @@ impl Blocklace {
     /// dom(B) - the set of all known block identities
     pub fn dom(&self) -> HashSet<&BlockIdentity> {
         self.blocks.keys().collect()
+    }
+
+    /// The latest finalized block being treated as the in-memory genesis
+    /// boundary, if checkpoint pruning has run.
+    pub fn checkpoint(&self) -> Option<&BlockIdentity> {
+        self.checkpoint.as_ref()
+    }
+
+    /// Logical depth of the checkpoint in the original, unpruned DAG.
+    ///
+    /// Consensus depth remains monotonic after pruning: descendants of the
+    /// checkpoint continue from this depth instead of restarting at zero.
+    pub fn checkpoint_depth(&self) -> Option<u64> {
+        self.checkpoint_depth
+    }
+
+    pub(crate) fn checkpoint_order_prefix(&self) -> &[BlockIdentity] {
+        &self.checkpoint_order_prefix
+    }
+
+    pub(crate) fn checkpoint_weighted_order_prefix(&self) -> &[BlockIdentity] {
+        &self.checkpoint_weighted_order_prefix
+    }
+
+    pub(crate) fn is_checkpoint_boundary(&self, id: &BlockIdentity) -> bool {
+        self.checkpoint.as_ref() == Some(id)
     }
 }
 
@@ -93,11 +127,12 @@ impl Blocklace {
     // }
 
     pub fn is_closed(&self) -> bool {
-        self.blocks.values().all(|content| {
-            content
-                .predecessors
-                .iter()
-                .all(|pred_id| self.blocks.contains_key(pred_id))
+        self.blocks.iter().all(|(id, content)| {
+            self.is_checkpoint_boundary(id)
+                || content
+                    .predecessors
+                    .iter()
+                    .all(|pred_id| self.blocks.contains_key(pred_id))
         })
     }
 }
@@ -123,9 +158,13 @@ impl Blocklace {
         let mut queue: Vec<BlockIdentity> = vec![id.clone()];
 
         while let Some(current_id) = queue.pop() {
+            if self.is_checkpoint_boundary(&current_id) {
+                continue;
+            }
+
             if let Some(content) = self.content(&current_id) {
                 for pred_id in &content.predecessors {
-                    if visited.insert(pred_id.clone()) {
+                    if self.blocks.contains_key(pred_id) && visited.insert(pred_id.clone()) {
                         queue.push(pred_id.clone());
                     }
                 }
@@ -138,15 +177,23 @@ impl Blocklace {
         let mut visited = BTreeSet::new();
         let mut queue = VecDeque::new();
 
+        if !self.blocks.contains_key(from) {
+            return visited;
+        }
+
         // Start from the block itself (inclusive closure)
         queue.push_back(from.clone());
         visited.insert(from.clone());
 
         while let Some(current_id) = queue.pop_front() {
+            if self.is_checkpoint_boundary(&current_id) {
+                continue;
+            }
+
             if let Some(content) = self.content(&current_id) {
                 for pred_id in &content.predecessors {
                     // BTreeSet.insert returns false if the item was already present
-                    if visited.insert(pred_id.clone()) {
+                    if self.blocks.contains_key(pred_id) && visited.insert(pred_id.clone()) {
                         queue.push_back(pred_id.clone());
                     }
                 }
