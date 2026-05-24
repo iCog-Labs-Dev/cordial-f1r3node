@@ -369,6 +369,9 @@ name = "bitflags"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
+dependencies = [
+ "serde_core",
+]
 
 [[package]]
 name = "bitmaps"
@@ -429,6 +432,7 @@ dependencies = [
  "hex",
  "imbl",
  "lz4_flex",
+ "metrics",
  "models",
  "once_cell",
  "proptest",
@@ -488,7 +492,7 @@ dependencies = [
  "itertools",
  "lazy_static",
  "lz4_flex",
- "metrics 0.23.1",
+ "metrics",
  "models",
  "num_cpus",
  "proptest",
@@ -622,7 +626,7 @@ dependencies = [
  "hyper 1.9.0",
  "igd-next",
  "local-ip-address",
- "metrics 0.23.1",
+ "metrics",
  "models",
  "p256",
  "paste",
@@ -651,6 +655,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "console"
+version = "0.16.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d64e8af5551369d19cf50138de61f1c42074ab970f74e99be916646777f8fc87"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "unicode-width",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -672,6 +688,7 @@ dependencies = [
  "blake2",
  "casper",
  "clap",
+ "cordial-f1r3space-adapter",
  "cordial-miners-core",
  "ed25519-dalek",
  "either",
@@ -687,16 +704,21 @@ dependencies = [
 name = "cordial-f1r3space-adapter"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "casper",
- "cordial-f1r3node-adapter",
  "cordial-miners-core",
  "crypto",
+ "heed 0.20.5",
  "models",
  "prost",
  "rholang",
  "rspace_plus_plus",
+ "serde",
  "shared",
+ "tempfile",
+ "thiserror 1.0.69",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1048,6 +1070,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
 
 [[package]]
+name = "doxygen-rs"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "415b6ec780d34dcf624666747194393603d0373b7141eef01d12ee58881507d9"
+dependencies = [
+ "phf",
+]
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1123,6 +1154,12 @@ dependencies = [
  "subtle",
  "zeroize",
 ]
+
+[[package]]
+name = "encode_unicode"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
 name = "encoding_rs"
@@ -1562,12 +1599,31 @@ checksum = "269c7486ed6def5d7b59a427cec3e87b4d4dd4381d01e21c8c9f2d3985688392"
 dependencies = [
  "bytemuck",
  "byteorder",
- "heed-traits",
- "heed-types",
+ "heed-traits 0.8.0",
+ "heed-types 0.8.0",
  "libc",
  "lmdb-rkv-sys",
  "once_cell",
- "page_size",
+ "page_size 0.4.2",
+ "serde",
+ "synchronoise",
+ "url",
+]
+
+[[package]]
+name = "heed"
+version = "0.20.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d4f449bab7320c56003d37732a917e18798e2f1709d80263face2b4f9436ddb"
+dependencies = [
+ "bitflags 2.11.0",
+ "byteorder",
+ "heed-traits 0.20.0",
+ "heed-types 0.20.1",
+ "libc",
+ "lmdb-master-sys",
+ "once_cell",
+ "page_size 0.6.0",
  "serde",
  "synchronoise",
  "url",
@@ -1580,6 +1636,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a53a94e5b2fd60417e83ffdfe136c39afacff0d4ac1d8d01cd66928ac610e1a2"
 
 [[package]]
+name = "heed-traits"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb3130048d404c57ce5a1ac61a903696e8fcde7e8c2991e9fcfc1f27c3ef74ff"
+
+[[package]]
 name = "heed-types"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1588,7 +1650,20 @@ dependencies = [
  "bincode",
  "bytemuck",
  "byteorder",
- "heed-traits",
+ "heed-traits 0.8.0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "heed-types"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d3f528b053a6d700b2734eabcd0fd49cb8230647aa72958467527b0b7917114"
+dependencies = [
+ "bincode",
+ "byteorder",
+ "heed-traits 0.20.0",
  "serde",
  "serde_json",
 ]
@@ -2155,6 +2230,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
+name = "lmdb-master-sys"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aaeb9bd22e73bd1babffff614994b341e9b2008de7bb73bf1f7e9154f1978f8b"
+dependencies = [
+ "cc",
+ "doxygen-rs",
+ "libc",
+]
+
+[[package]]
 name = "lmdb-rkv-sys"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2253,16 +2339,6 @@ name = "metrics"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3045b4193fbdc5b5681f32f11070da9be3609f189a79f3390706d42587f46bb5"
-dependencies = [
- "ahash",
- "portable-atomic",
-]
-
-[[package]]
-name = "metrics"
-version = "0.24.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d5312e9ba3771cfa961b585728215e3d972c950a3eed9252aa093d6301277e8"
 dependencies = [
  "ahash",
  "portable-atomic",
@@ -2591,6 +2667,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "page_size"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2684,6 +2770,48 @@ dependencies = [
  "fixedbitset",
  "hashbrown 0.15.5",
  "indexmap",
+]
+
+[[package]]
+name = "phf"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd6780a80ae0c52cc120a26a1a42c1ae51b247a253e4e06113d23d2c2edd078"
+dependencies = [
+ "phf_macros",
+ "phf_shared",
+]
+
+[[package]]
+name = "phf_generator"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c80231409c20246a13fddb31776fb942c38553c51e871f8cbd687a4cfb5843d"
+dependencies = [
+ "phf_shared",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "phf_macros"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f84ac04429c13a7ff43785d75ad27569f2951ce0ffd30a3321230db2fc727216"
+dependencies = [
+ "phf_generator",
+ "phf_shared",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "phf_shared"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
+dependencies = [
+ "siphasher",
 ]
 
 [[package]]
@@ -3249,9 +3377,12 @@ dependencies = [
 name = "rholang"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "bincode",
  "cc",
  "clap",
+ "console",
  "crypto",
  "dotenv",
  "futures",
@@ -3260,7 +3391,7 @@ dependencies = [
  "itertools",
  "k256",
  "lazy_static",
- "metrics 0.24.3",
+ "metrics",
  "models",
  "num-bigint",
  "num-integer",
@@ -3357,11 +3488,11 @@ dependencies = [
  "counter",
  "dashmap",
  "futures",
- "heed",
+ "heed 0.11.0",
  "hex",
  "itertools",
  "lazy_static",
- "metrics 0.23.1",
+ "metrics",
  "monadic",
  "multiset",
  "once_cell",
@@ -3722,13 +3853,13 @@ dependencies = [
  "bincode",
  "bytes",
  "futures",
- "heed",
+ "heed 0.11.0",
  "hex",
  "http 1.4.0",
  "http-body-util",
  "indexmap",
  "lz4_flex",
- "metrics 0.24.3",
+ "metrics",
  "proptest",
  "prost",
  "rand 0.9.4",
@@ -3768,6 +3899,12 @@ dependencies = [
  "digest",
  "rand_core 0.6.4",
 ]
+
+[[package]]
+name = "siphasher"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "slab"
@@ -3836,7 +3973,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.52.0",
  "windows-sys 0.59.0",
 ]
 
@@ -4443,6 +4579,12 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-width"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
 name = "unicode-xid"
