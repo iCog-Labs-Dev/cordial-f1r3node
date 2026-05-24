@@ -83,27 +83,6 @@ use crate::snapshot::{CasperSnapshot, SnapshotError, build_snapshot};
 use std::sync::Arc;
 use cordial_f1r3space_adapter::BlocklaceRepository;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Mirror types for the trait surface
-// ═══════════════════════════════════════════════════════════════════════════
-
-// In casper_adapter.rs — CordialCasperAdapter struct, add the repo field:
-pub struct CordialCasperAdapter<V: CryptoVerifier> {
-    pub(crate) blocklace:      Mutex<Blocklace>,
-    pub(crate) deploy_pool:    Mutex<DeployPool>,
-    pub(crate) bonds:          HashMap<NodeId, u64>,
-    pub(crate) shard_conf:     CasperShardConf,
-    pub(crate) shard_id:       String,
-    pub(crate) approved_block: Option<BlockMessage>,
-    pub(crate) buffer:         Mutex<HashMap<Vec<u8>, BlockMessage>>,
-    pub(crate) invalid_blocks: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
-    pub(crate) verifier:       V,
-    pub(crate) validation_config: ValidationConfig,
-
-    /// Persistent storage — added for LMDB feature.
-    /// Optional so the adapter still compiles without storage wired in.
-    pub(crate) repository: Option<Arc<dyn BlocklaceRepository>>,
-}
 
 /// Mirror of f1r3node's `BlockHash` (a `Bytes` newtype). We use `Vec<u8>`.
 pub type BlockHash = Vec<u8>;
@@ -226,7 +205,7 @@ pub trait CordialCasper<V: CryptoVerifier + Send + Sync> {
 
     async fn handle_valid_block(&self, block: &BlockMessage) -> Result<(), CasperError>;
 
-    fn handle_invalid_ablock(
+    fn handle_invalid_block(
         &self,
         block: &BlockMessage,
         status: &InvalidBlock,
@@ -398,6 +377,19 @@ where
             self.shard_conf.to_snapshot_conf(),
             &self.shard_id,
         )?)
+    }
+    
+    /// Return the current weighted ordered finalized output as block hashes.
+    ///
+    /// This is a convenience adapter-facing view over the snapshot's
+    /// `ordered_finalized_blocks` field, allowing callers to retrieve the
+    /// finalized ordered sequence without manually rebuilding and unpacking
+    /// a full snapshot.
+    pub async fn ordered_finalized_blocks(&self) -> Result<Vec<BlockHash>, CasperError> {
+        Ok(self
+            .build_current_snapshot()
+            .await?
+            .ordered_finalized_blocks)
     }
 }
 
