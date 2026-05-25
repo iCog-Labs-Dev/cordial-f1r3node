@@ -562,3 +562,84 @@ fn unbonded_sender_injection_is_rejected_and_honest_nodes_still_converge() {
 
     assert_eq!(tau_a, tau_b);
 }
+
+#[test]
+fn duplicate_delivery_after_convergence_does_not_change_finality_or_tau() {
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
+    bonds.insert(node(3), 100);
+    bonds.insert(node(4), 100);
+
+    let node_a = SimNode::new(node(70), bonds.clone(), simulation_validation_config());
+    let node_b = SimNode::new(node(71), bonds, simulation_validation_config());
+    let mut network = SimNetwork::new(vec![node_a, node_b]);
+
+    let wavelength = 3u64;
+    let n = 4usize;
+    let f = 1usize;
+
+    // Honest wave that should finalize leader 1.
+    let leader = create_block(1, 1, HashSet::new());
+    let r1_v2 = create_block(2, 2, HashSet::from([leader.identity.clone()]));
+    let r1_v3 = create_block(3, 3, HashSet::from([leader.identity.clone()]));
+    let r1_v4 = create_block(4, 4, HashSet::from([leader.identity.clone()]));
+
+    let round1_preds = HashSet::from([
+        r1_v2.identity.clone(),
+        r1_v3.identity.clone(),
+        r1_v4.identity.clone(),
+    ]);
+    let r2_v2 = create_block(2, 5, round1_preds.clone());
+    let r2_v3 = create_block(3, 6, round1_preds.clone());
+    let r2_v4 = create_block(4, 7, round1_preds);
+
+    for recipient in [node(70), node(71)] {
+        for block in [&leader, &r1_v2, &r1_v3, &r1_v4, &r2_v2, &r2_v3, &r2_v4] {
+            network.queue_delivery(recipient.clone(), block.clone());
+        }
+    }
+
+    while network.deliver_next_to(&node(70)).is_some() {}
+    while network.deliver_next_to(&node(71)).is_some() {}
+    network.retry_all_buffers();
+
+    let node_b = network.node(&node(71)).expect("node B should exist");
+    let final_before = node_b.latest_final_leader(wavelength, n, f, leader_node1);
+    let tau_before = node_b
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node B should produce ordered output");
+
+    assert_eq!(final_before, Some(leader.identity.clone()));
+    assert!(!tau_before.is_empty());
+
+    // The network replays already-known honest blocks to node B after it has
+    // already converged. They should be treated as harmless duplicates.
+    for block in [&leader, &r1_v2, &r2_v3] {
+        network.queue_delivery(node(71), block.clone());
+    }
+
+    assert_eq!(
+        network.deliver_next_to(&node(71)),
+        Some(DeliveryOutcome::Inserted)
+    );
+    assert_eq!(
+        network.deliver_next_to(&node(71)),
+        Some(DeliveryOutcome::Inserted)
+    );
+    assert_eq!(
+        network.deliver_next_to(&node(71)),
+        Some(DeliveryOutcome::Inserted)
+    );
+    network.retry_all_buffers();
+
+    let node_b = network.node(&node(71)).expect("node B should still exist");
+    let final_after = node_b.latest_final_leader(wavelength, n, f, leader_node1);
+    let tau_after = node_b
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node B should still produce ordered output");
+
+    assert_eq!(node_b.pending_len(), 0);
+    assert_eq!(final_before, final_after);
+    assert_eq!(tau_before, tau_after);
+}
