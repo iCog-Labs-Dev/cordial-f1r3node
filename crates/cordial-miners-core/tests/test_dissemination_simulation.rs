@@ -382,3 +382,97 @@ fn equivocating_leader_attempt_is_rejected_and_honest_wave_still_converges() {
 
     assert_eq!(tau_a, tau_b);
 }
+
+#[test]
+fn partitioned_node_catches_up_on_finality_and_tau_after_heal() {
+    // Standard 4-validator setting with n = 4, f = 1 so a single honest wave
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
+    bonds.insert(node(3), 100);
+    bonds.insert(node(4), 100);
+
+    // Node A will see the full wave and finalize the leader.
+    // Node B will see only part of the wave due to a network partition, then heal and receive the rest of the wave, but not necessarily in dependency order.
+    let node_a = SimNode::new(node(50), bonds.clone(), simulation_validation_config());
+    let node_b = SimNode::new(node(51), bonds, simulation_validation_config());
+    let mut network = SimNetwork::new(vec![node_a, node_b]);
+
+    // Set parameters such that a single honest wave can finalize its leader and produce non-empty tau, even if one node receives the blocks in a different order and has to buffer them until it can process them in the correct order.
+    let wavelength = 3u64;
+    let n = 4usize;
+    let f = 1usize;
+
+    // Honest wave: leader, round-1 witnesses, then round-2 super-ratifiers.
+    let leader = create_block(1, 1, HashSet::new());
+    let r1_v2 = create_block(2, 2, HashSet::from([leader.identity.clone()]));
+    let r1_v3 = create_block(3, 3, HashSet::from([leader.identity.clone()]));
+    let r1_v4 = create_block(4, 4, HashSet::from([leader.identity.clone()]));
+
+    let round1_preds = HashSet::from([
+        r1_v2.identity.clone(),
+        r1_v3.identity.clone(),
+        r1_v4.identity.clone(),
+    ]);
+    let r2_v2 = create_block(2, 5, round1_preds.clone());
+    let r2_v3 = create_block(3, 6, round1_preds.clone());
+    let r2_v4 = create_block(4, 7, round1_preds);
+
+    // Node A sees the full wave and can finalize normally.
+    for block in [&leader, &r1_v2, &r1_v3, &r1_v4, &r2_v2, &r2_v3, &r2_v4] {
+        network.queue_delivery(node(50), block.clone());
+    }
+
+    // During the partition, node B sees only the leader plus one witness.
+    // That is not enough to super-ratify the wave or to compute non-empty tau.
+    for block in [&leader, &r1_v2] {
+        network.queue_delivery(node(51), block.clone());
+    }
+
+    // Deliver what node B sees during the partition, then let any out-of-order dependencies resolve from the buffer.
+    while network.deliver_next_to(&node(50)).is_some() {}
+    while network.deliver_next_to(&node(51)).is_some() {}
+    network.retry_all_buffers();
+
+    let node_b_before_heal = network.node(&node(51)).expect("node B should exist");
+    assert_eq!(
+        node_b_before_heal.latest_final_leader(wavelength, n, f, leader_node1),
+        None
+    );
+    assert!(
+        node_b_before_heal
+            .ordered_output(wavelength, n, f, leader_node1)
+            .expect("partitioned node should still compute tau")
+            .is_empty(),
+        "partitioned node should not order anything before enough witnesses arrive"
+    );
+
+    // Partition heals: node B receives the missing witness and round-2 blocks,
+    // but not necessarily in dependency order.
+    for block in [&r2_v4, &r1_v4, &r2_v2, &r2_v3, &r1_v3] {
+        network.queue_delivery(node(51), block.clone());
+    }
+
+    // Deliver the remaining blocks to node B, then let any out-of-order dependencies resolve from the buffer.
+    while network.deliver_next_to(&node(51)).is_some() {}
+    network.retry_all_buffers();
+
+    // After healing, node B should have the same finalized leader and the same tau output as node A, demonstrating that it successfully caught up on the wave despite the initial partition and out-of-order delivery.
+    let node_a = network.node(&node(50)).expect("node A should exist");
+    let node_b = network.node(&node(51)).expect("node B should exist");
+
+    // Both nodes should finalize the same leader block, demonstrating that node B was able to catch up on the wave and achieve finality on the same leader as node A despite the initial partition and out-of-order delivery.
+    let final_a: Option<BlockIdentity> = node_a.latest_final_leader(wavelength, n, f, leader_node1);
+    let final_b = node_b.latest_final_leader(wavelength, n, f, leader_node1);
+    assert_eq!(final_a, Some(leader.identity.clone()));
+    assert_eq!(final_b, Some(leader.identity.clone()));
+
+    let tau_a = node_a
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node A should produce ordered output");
+    let tau_b = node_b
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node B should produce ordered output after healing");
+
+    assert_eq!(tau_a, tau_b); // Both nodes should produce the same tau output, demonstrating that node B successfully caught up on the wave and converged on the same view of finality and the same tau output as node A despite the initial partition and out-of-order delivery.
+}
