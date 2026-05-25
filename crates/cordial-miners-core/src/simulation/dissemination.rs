@@ -5,7 +5,8 @@ use crate::blocklace::Blocklace;
 use crate::consensus::OrderingError;
 use crate::consensus::{
     InvalidBlock, PendingBlockBuffer, ProposalError, ValidationConfig, ValidationResult,
-    build_block_candidate, latest_final_leader, tau, validated_insert,
+    build_block_candidate, latest_final_leader, latest_weighted_final_leader, tau,
+    validated_insert, weighted_tau,
 };
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 
@@ -124,6 +125,28 @@ impl SimNode {
         F: Fn(u64) -> Option<NodeId> + Copy,
     {
         tau(&self.blocklace, wavelength, n, f, leader_selection)
+    }
+
+    pub fn latest_weighted_final_leader<F>(
+        &self,
+        wavelength: u64,
+        leader_selection: F,
+    ) -> Option<BlockIdentity>
+    where
+        F: Fn(u64) -> Option<NodeId> + Copy,
+    {
+        latest_weighted_final_leader(&self.blocklace, wavelength, &self.bonds, leader_selection)
+    }
+
+    pub fn weighted_ordered_output<F>(
+        &self,
+        wavelength: u64,
+        leader_selection: F,
+    ) -> Result<Vec<BlockIdentity>, OrderingError>
+    where
+        F: Fn(u64) -> Option<NodeId> + Copy,
+    {
+        weighted_tau(&self.blocklace, wavelength, &self.bonds, leader_selection)
     }
 }
 

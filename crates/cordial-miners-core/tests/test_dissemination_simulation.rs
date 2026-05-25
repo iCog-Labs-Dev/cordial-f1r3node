@@ -664,3 +664,87 @@ fn duplicate_delivery_after_convergence_does_not_change_finality_or_tau() {
     assert_eq!(final_before, final_after);
     assert_eq!(tau_before, tau_after);
 }
+
+#[test]
+fn weighted_path_can_remain_empty_after_unweighted_convergence() {
+    // Four active validators build an honest wave, but a fifth bonded validator
+    // holds most of the stake and never appears in the blocklace. This should
+    // allow unweighted convergence while keeping the weighted path empty.
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 1);
+    bonds.insert(node(2), 1);
+    bonds.insert(node(3), 1);
+    bonds.insert(node(4), 1);
+    bonds.insert(node(9), 100);
+
+    let node_a = SimNode::new(node(80), bonds.clone(), simulation_validation_config());
+    let node_b = SimNode::new(node(81), bonds, simulation_validation_config());
+    let mut network = SimNetwork::new(vec![node_a, node_b]);
+
+    let wavelength = 3u64;
+    let n = 4usize;
+    let f = 1usize;
+
+    let leader = create_block(1, 1, HashSet::new());
+    let r1_v2 = create_block(2, 2, HashSet::from([leader.identity.clone()]));
+    let r1_v3 = create_block(3, 3, HashSet::from([leader.identity.clone()]));
+    let r1_v4 = create_block(4, 4, HashSet::from([leader.identity.clone()]));
+
+    let round1_preds = HashSet::from([
+        r1_v2.identity.clone(),
+        r1_v3.identity.clone(),
+        r1_v4.identity.clone(),
+    ]);
+    let r2_v2 = create_block(2, 5, round1_preds.clone());
+    let r2_v3 = create_block(3, 6, round1_preds.clone());
+    let r2_v4 = create_block(4, 7, round1_preds);
+
+    for recipient in [node(80), node(81)] {
+        network.queue_delivery(recipient.clone(), leader.clone());
+        network.queue_delivery(recipient.clone(), r2_v3.clone());
+        network.queue_delivery(recipient.clone(), r1_v2.clone());
+        network.queue_delivery(recipient.clone(), r2_v2.clone());
+        network.queue_delivery(recipient.clone(), r1_v4.clone());
+        network.queue_delivery(recipient.clone(), r2_v4.clone());
+        network.queue_delivery(recipient, r1_v3.clone());
+    }
+
+    while network.deliver_next_to(&node(80)).is_some() {}
+    while network.deliver_next_to(&node(81)).is_some() {}
+    network.retry_all_buffers();
+
+    let node_a = network.node(&node(80)).expect("node A should exist");
+    let node_b = network.node(&node(81)).expect("node B should exist");
+
+    // Unweighted path converges normally on the honest leader and a non-empty tau.
+    assert_eq!(
+        node_a.latest_final_leader(wavelength, n, f, leader_node1),
+        Some(leader.identity.clone())
+    );
+    assert_eq!(
+        node_b.latest_final_leader(wavelength, n, f, leader_node1),
+        Some(leader.identity.clone())
+    );
+
+    let unweighted_tau_a = node_a
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node A should produce unweighted tau");
+    let unweighted_tau_b = node_b
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node B should produce unweighted tau");
+    assert!(!unweighted_tau_a.is_empty());
+    assert_eq!(unweighted_tau_a, unweighted_tau_b);
+
+    // Weighted path stays empty because the high-stake validator never contributes.
+    assert_eq!(node_a.latest_weighted_final_leader(wavelength, leader_node1), None);
+    assert_eq!(node_b.latest_weighted_final_leader(wavelength, leader_node1), None);
+
+    let weighted_tau_a = node_a
+        .weighted_ordered_output(wavelength, leader_node1)
+        .expect("node A should compute weighted tau");
+    let weighted_tau_b = node_b
+        .weighted_ordered_output(wavelength, leader_node1)
+        .expect("node B should compute weighted tau");
+    assert!(weighted_tau_a.is_empty());
+    assert_eq!(weighted_tau_a, weighted_tau_b);
+}
