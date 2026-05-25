@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use crate::Block;
 use crate::blocklace::Blocklace;
+use crate::consensus::OrderingError;
 use crate::consensus::{
     InvalidBlock, PendingBlockBuffer, ProposalError, ValidationConfig, ValidationResult,
     build_block_candidate, latest_final_leader, tau, validated_insert,
 };
-use crate::consensus::OrderingError;
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 
 /// Outcome of delivering a block to a simulated node.
