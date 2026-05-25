@@ -51,8 +51,8 @@
 //! | `get_dependency_free_from_buffer` | Buffer entries whose preds all exist        |
 //! | `get_all_from_buffer`         | All buffer entries                               |
 //!
-//! `MultiParentCasper` adds `last_finalized_block` (from the adapter's
-//! paper-native final-leader lookup), `block_dag` (rebuilt from snapshot), and
+//! `MultiParentCasper` adds `last_finalized_block` (from
+//! [`latest_finalized_block_id`]), `block_dag` (rebuilt from snapshot), and
 //! `has_pending_deploys_in_storage` (DeployPool emptiness check). The
 //! RSpace-specific `runtime_manager`, `block_store`, and
 //! `get_history_exporter` methods are stubbed — they return adapter-local
@@ -80,10 +80,8 @@ use crate::block_translation::{
 };
 use crate::shard_conf::CasperShardConf;
 use crate::snapshot::{CasperSnapshot, SnapshotError, build_snapshot, latest_finalized_block_id};
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Mirror types for the trait surface
-// ═══════════════════════════════════════════════════════════════════════════
+use cordial_f1r3space_adapter::BlocklaceRepository;
+use std::sync::Arc;
 
 /// Mirror of f1r3node's `BlockHash` (a `Bytes` newtype). We use `Vec<u8>`.
 pub type BlockHash = Vec<u8>;
@@ -261,6 +259,8 @@ pub struct CordialCasperAdapter<V: CryptoVerifier + Send + Sync> {
     /// Validation knobs. Adapter callers may want to relax cordial check
     /// when ingesting blocks from f1r3node since f1r3node doesn't enforce it.
     validation_config: ValidationConfig,
+    /// Repository for persistent block storage.
+    repository: Option<Arc<dyn BlocklaceRepository>>,
 }
 
 // Backward-compatible constructor: default to Secp256k1 verifier when callers
@@ -318,7 +318,13 @@ where
             shard_id: shard_id.into(),
             approved_block,
             validation_config,
+            repository: None, // LMDB storage not wired in yet
         }
+    }
+    /// Attach persistent LMDB storage to the adapter.
+    pub fn with_repository(mut self, repo: Arc<dyn BlocklaceRepository>) -> Self {
+        self.repository = Some(repo);
+        self
     }
 
     /// Override the validation config (e.g. enable strict cordial checks).
@@ -566,24 +572,60 @@ where
 
     async fn handle_valid_block(&self, block: &BlockMessage) -> Result<(), CasperError> {
         let core_block = message_to_block(block)?;
+
+        // ── ADDED: persist BEFORE inserting into the in-memory engine ─────────
+        //
+        // Write-order invariant: disk is always ahead of memory.
+        //
+        // If the node crashes after put_block() but before bl.insert(),
+        // recover_into_engine() replays this block from disk on next startup.
+        //
+        // If put_block() fails (I/O error, LMDB full) we return early —
+        // the block is neither on disk nor in memory, which is safe because
+        // the caller will retry or the block arrives again from the network.
+        if let Some(repo) = &self.repository {
+            repo.put_block(&core_block).map_err(|e| {
+                CasperError::InvalidState(Box::leak(
+                    format!("put_block failed: {e}").into_boxed_str(),
+                ))
+            })?;
+        }
+
+        //  insert into in-memory DAG ───────────────────────────────
         let mut bl = self.blocklace.lock().await;
         bl.insert(core_block, &self.verifier).map_err(|e| {
             CasperError::InvalidState(Box::leak(format!("insert: {e}").into_boxed_str()))
         })?;
 
-        // Drain the pending buffer for blocks whose predecessors are now
-        // satisfied. We re-check in a loop because each newly-inserted block
-        // may unblock more.
+        // ── ADDED: advance finalized cursor after successful insert ───────────
+        //
+        // latest_finalized_block_id runs over the current DAG state. We call it
+        // after every insert because any new block may cross the 2/3-weight
+        // threshold that finalizes a previous block.
+        //
+        // put_finalized_cursor is cheap (one LMDB write). On restart,
+        // recover_into_engine() reads this cursor to know where the node
+        // left off before the crash.
+        if let Some(repo) = &self.repository
+            && let Some(finalized_id) = latest_finalized_block_id(&bl, &self.bonds)
+        {
+            repo.put_finalized_cursor(&finalized_id).map_err(|e| {
+                CasperError::InvalidState(Box::leak(
+                    format!("put_finalized_cursor failed: {e}").into_boxed_str(),
+                ))
+            })?;
+        }
+
+        //  drain the pending buffer ────────────────────────────────
+        // Re-check in a loop because each newly-inserted block may unblock more.
         drop(bl);
         let to_retry: Vec<BlockMessage> = {
             let mut buf = self.buffer.lock().await;
             buf.remove(&block.block_hash);
-            // Snapshot entries; we'll filter below.
             buf.values().cloned().collect()
         };
         let mut promoted = Vec::new();
         for pending in to_retry {
-            // Try to translate + insert; if it succeeds, drop from buffer.
             if let Ok(translated) = message_to_block(&pending) {
                 let mut bl = self.blocklace.lock().await;
                 if bl.insert(translated, &self.verifier).is_ok() {
