@@ -24,7 +24,6 @@ use crate::repository::BlocklaceRepository;
 use super::{CURSOR_KEY, RSpaceBlocklaceRepository};
 
 impl BlocklaceRepository for RSpaceBlocklaceRepository {
-
     // ── put_block ─────────────────────────────────────────────────────────
 
     fn put_block(&self, block: &Block) -> Result<(), RepoError> {
@@ -48,16 +47,16 @@ impl BlocklaceRepository for RSpaceBlocklaceRepository {
     fn get_block(&self, id: &BlockIdentity) -> Result<Option<Block>, RepoError> {
         let key: Vec<u8> = bincode::serialize(id)?;
 
-        let db   = self.blocks_db.lock()?;
+        let db = self.blocks_db.lock()?;
         // LOCK ACQUIRED
         let rtxn = self.env.read_txn()?;
         // Copy bytes out before dropping — minimizes lock hold time.
         let bytes = db.get(&rtxn, key.as_slice())?.map(|b| b.to_vec());
         drop(rtxn); // read transaction closed — MVCC snapshot released
-        drop(db);   // LOCK RELEASED
+        drop(db); // LOCK RELEASED
 
         match bytes {
-            None    => Ok(None),
+            None => Ok(None),
             Some(b) => Ok(Some(bincode::deserialize::<Block>(&b)?)),
         }
     }
@@ -81,7 +80,7 @@ impl BlocklaceRepository for RSpaceBlocklaceRepository {
     // ── finalized_cursor ──────────────────────────────────────────────────
 
     fn finalized_cursor(&self) -> Result<Option<BlockIdentity>, RepoError> {
-        let db   = self.meta_db.lock()?;
+        let db = self.meta_db.lock()?;
         // LOCK ACQUIRED
         let rtxn = self.env.read_txn()?;
         let bytes = db.get(&rtxn, CURSOR_KEY)?.map(|b| b.to_vec());
@@ -90,7 +89,7 @@ impl BlocklaceRepository for RSpaceBlocklaceRepository {
         // LOCK RELEASED
 
         match bytes {
-            None    => Ok(None),
+            None => Ok(None),
             Some(b) => Ok(Some(bincode::deserialize::<BlockIdentity>(&b)?)),
         }
     }
