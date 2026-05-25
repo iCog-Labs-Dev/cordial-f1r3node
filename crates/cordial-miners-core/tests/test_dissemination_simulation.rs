@@ -476,3 +476,89 @@ fn partitioned_node_catches_up_on_finality_and_tau_after_heal() {
 
     assert_eq!(tau_a, tau_b); // Both nodes should produce the same tau output, demonstrating that node B successfully caught up on the wave and converged on the same view of finality and the same tau output as node A despite the initial partition and out-of-order delivery.
 }
+
+#[test]
+fn unbonded_sender_injection_is_rejected_and_honest_nodes_still_converge() {
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
+    bonds.insert(node(3), 100);
+    bonds.insert(node(4), 100);
+
+    let node_a = SimNode::new(node(60), bonds.clone(), simulation_validation_config());
+    let node_b = SimNode::new(node(61), bonds, simulation_validation_config());
+    let mut network = SimNetwork::new(vec![node_a, node_b]);
+
+    let wavelength = 3u64;
+    let n = 4usize;
+    let f = 1usize;
+
+    // Honest wave that should finalize normally.
+    let leader = create_block(1, 1, HashSet::new());
+    let r1_v2 = create_block(2, 2, HashSet::from([leader.identity.clone()]));
+    let r1_v3 = create_block(3, 3, HashSet::from([leader.identity.clone()]));
+    let r1_v4 = create_block(4, 4, HashSet::from([leader.identity.clone()]));
+
+    let round1_preds = HashSet::from([
+        r1_v2.identity.clone(),
+        r1_v3.identity.clone(),
+        r1_v4.identity.clone(),
+    ]);
+    let r2_v2 = create_block(2, 5, round1_preds.clone());
+    let r2_v3 = create_block(3, 6, round1_preds.clone());
+    let r2_v4 = create_block(4, 7, round1_preds);
+
+    // Block by an unbonded creator. It should be rejected immediately by node B.
+    let injected = create_block(9, 99, HashSet::from([leader.identity.clone()]));
+
+    for block in [&leader, &r1_v2, &r1_v3, &r1_v4, &r2_v2, &r2_v3, &r2_v4] {
+        network.queue_delivery(node(60), block.clone());
+    }
+
+    network.queue_delivery(node(61), leader.clone());
+    network.queue_delivery(node(61), injected.clone());
+    for block in [&r1_v2, &r1_v3, &r1_v4, &r2_v2, &r2_v3, &r2_v4] {
+        network.queue_delivery(node(61), block.clone());
+    }
+
+    while network.deliver_next_to(&node(60)).is_some() {}
+
+    assert_eq!(
+        network.deliver_next_to(&node(61)),
+        Some(DeliveryOutcome::Inserted)
+    );
+
+    let injected_outcome = network
+        .deliver_next_to(&node(61))
+        .expect("unbonded block should be delivered");
+    assert!(
+        matches!(injected_outcome, DeliveryOutcome::Rejected(errors)
+            if errors.iter().any(|error| matches!(
+                error,
+                cordial_miners_core::consensus::InvalidBlock::UnknownSender { .. }
+            ))),
+        "unbonded sender should be rejected by the receiving node"
+    );
+
+    while network.deliver_next_to(&node(61)).is_some() {}
+    network.retry_all_buffers();
+
+    let node_a = network.node(&node(60)).expect("node A should exist");
+    let node_b = network.node(&node(61)).expect("node B should exist");
+
+    assert!(!node_b.knows_block(&injected.identity));
+
+    let final_a = node_a.latest_final_leader(wavelength, n, f, leader_node1);
+    let final_b = node_b.latest_final_leader(wavelength, n, f, leader_node1);
+    assert_eq!(final_a, Some(leader.identity.clone()));
+    assert_eq!(final_b, Some(leader.identity.clone()));
+
+    let tau_a = node_a
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node A should produce ordered output");
+    let tau_b = node_b
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node B should produce ordered output");
+
+    assert_eq!(tau_a, tau_b);
+}
