@@ -554,10 +554,10 @@ fn unbonded_sender_injection_is_rejected_and_honest_nodes_still_converge() {
         .expect("unbonded block should be delivered");
     assert!(
         matches!(injected_outcome, DeliveryOutcome::Rejected(errors)
-            if errors.iter().any(|error| matches!(
-                error,
-                cordial_miners_core::consensus::InvalidBlock::UnknownSender { .. }
-            ))),
+        if errors.iter().any(|error| matches!(
+            error,
+            cordial_miners_core::consensus::InvalidBlock::UnknownSender { .. }
+        ))),
         "unbonded sender should be rejected by the receiving node"
     );
 
@@ -663,4 +663,312 @@ fn duplicate_delivery_after_convergence_does_not_change_finality_or_tau() {
     assert_eq!(node_b.pending_len(), 0);
     assert_eq!(final_before, final_after);
     assert_eq!(tau_before, tau_after);
+}
+
+#[test]
+fn weighted_path_can_remain_empty_after_unweighted_convergence() {
+    // Four active validators build an honest wave, but a fifth bonded validator
+    // holds most of the stake and never appears in the blocklace. This should
+    // allow unweighted convergence while keeping the weighted path empty.
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 1);
+    bonds.insert(node(2), 1);
+    bonds.insert(node(3), 1);
+    bonds.insert(node(4), 1);
+    bonds.insert(node(9), 100);
+
+    let node_a = SimNode::new(node(80), bonds.clone(), simulation_validation_config());
+    let node_b = SimNode::new(node(81), bonds, simulation_validation_config());
+    let mut network = SimNetwork::new(vec![node_a, node_b]);
+
+    let wavelength = 3u64;
+    let n = 4usize;
+    let f = 1usize;
+
+    let leader = create_block(1, 1, HashSet::new());
+    let r1_v2 = create_block(2, 2, HashSet::from([leader.identity.clone()]));
+    let r1_v3 = create_block(3, 3, HashSet::from([leader.identity.clone()]));
+    let r1_v4 = create_block(4, 4, HashSet::from([leader.identity.clone()]));
+
+    let round1_preds = HashSet::from([
+        r1_v2.identity.clone(),
+        r1_v3.identity.clone(),
+        r1_v4.identity.clone(),
+    ]);
+    let r2_v2 = create_block(2, 5, round1_preds.clone());
+    let r2_v3 = create_block(3, 6, round1_preds.clone());
+    let r2_v4 = create_block(4, 7, round1_preds);
+
+    for recipient in [node(80), node(81)] {
+        network.queue_delivery(recipient.clone(), leader.clone());
+        network.queue_delivery(recipient.clone(), r2_v3.clone());
+        network.queue_delivery(recipient.clone(), r1_v2.clone());
+        network.queue_delivery(recipient.clone(), r2_v2.clone());
+        network.queue_delivery(recipient.clone(), r1_v4.clone());
+        network.queue_delivery(recipient.clone(), r2_v4.clone());
+        network.queue_delivery(recipient, r1_v3.clone());
+    }
+
+    while network.deliver_next_to(&node(80)).is_some() {}
+    while network.deliver_next_to(&node(81)).is_some() {}
+    network.retry_all_buffers();
+
+    let node_a = network.node(&node(80)).expect("node A should exist");
+    let node_b = network.node(&node(81)).expect("node B should exist");
+
+    // Unweighted path converges normally on the honest leader and a non-empty tau.
+    assert_eq!(
+        node_a.latest_final_leader(wavelength, n, f, leader_node1),
+        Some(leader.identity.clone())
+    );
+    assert_eq!(
+        node_b.latest_final_leader(wavelength, n, f, leader_node1),
+        Some(leader.identity.clone())
+    );
+
+    let unweighted_tau_a = node_a
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node A should produce unweighted tau");
+    let unweighted_tau_b = node_b
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node B should produce unweighted tau");
+    assert!(!unweighted_tau_a.is_empty());
+    assert_eq!(unweighted_tau_a, unweighted_tau_b);
+
+    // Weighted path stays empty because the high-stake validator never contributes.
+    assert_eq!(
+        node_a.latest_weighted_final_leader(wavelength, leader_node1),
+        None
+    );
+    assert_eq!(
+        node_b.latest_weighted_final_leader(wavelength, leader_node1),
+        None
+    );
+
+    let weighted_tau_a = node_a
+        .weighted_ordered_output(wavelength, leader_node1)
+        .expect("node A should compute weighted tau");
+    let weighted_tau_b = node_b
+        .weighted_ordered_output(wavelength, leader_node1)
+        .expect("node B should compute weighted tau");
+    assert!(weighted_tau_a.is_empty());
+    assert_eq!(weighted_tau_a, weighted_tau_b);
+}
+
+#[test]
+fn weighted_finality_and_tau_converge_after_high_stake_participants_catch_up() {
+    // Stake is skewed toward validators 2 and 3, so the weighted path depends
+    // on them participating in the witness rounds.
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 1);
+    bonds.insert(node(2), 45);
+    bonds.insert(node(3), 45);
+    bonds.insert(node(4), 9);
+
+    let node_a = SimNode::new(node(90), bonds.clone(), simulation_validation_config());
+    let node_b = SimNode::new(node(91), bonds, simulation_validation_config());
+    let mut network = SimNetwork::new(vec![node_a, node_b]);
+
+    let wavelength = 3u64;
+
+    // Honest wave led by node 1. Weighted finality should depend on the
+    // participation of the high-stake validators 2 and 3.
+    let leader = create_block(1, 1, HashSet::new());
+    let r1_v2 = create_block(2, 2, HashSet::from([leader.identity.clone()]));
+    let r1_v3 = create_block(3, 3, HashSet::from([leader.identity.clone()]));
+    let r1_v4 = create_block(4, 4, HashSet::from([leader.identity.clone()]));
+
+    let round1_preds = HashSet::from([
+        r1_v2.identity.clone(),
+        r1_v3.identity.clone(),
+        r1_v4.identity.clone(),
+    ]);
+    let r2_v2 = create_block(2, 5, round1_preds.clone());
+    let r2_v3 = create_block(3, 6, round1_preds.clone());
+    let r2_v4 = create_block(4, 7, round1_preds);
+
+    // Node A sees the complete wave and should achieve weighted finality.
+    for block in [&leader, &r1_v2, &r1_v3, &r1_v4, &r2_v2, &r2_v3, &r2_v4] {
+        network.queue_delivery(node(90), block.clone());
+    }
+
+    // Node B is temporarily missing the high-stake validator 3 path, so the
+    // weighted path should stay empty until the partition heals.
+    for block in [&leader, &r1_v2, &r1_v4, &r2_v2, &r2_v4] {
+        network.queue_delivery(node(91), block.clone());
+    }
+
+    while network.deliver_next_to(&node(90)).is_some() {}
+    while network.deliver_next_to(&node(91)).is_some() {}
+    network.retry_all_buffers();
+
+    let node_b_before_heal = network.node(&node(91)).expect("node B should exist");
+
+    assert_eq!(
+        network
+            .node(&node(90))
+            .expect("node A should exist")
+            .latest_weighted_final_leader(wavelength, leader_node1),
+        Some(leader.identity.clone())
+    );
+    assert_eq!(
+        node_b_before_heal.latest_weighted_final_leader(wavelength, leader_node1),
+        None
+    );
+    assert!(
+        node_b_before_heal
+            .weighted_ordered_output(wavelength, leader_node1)
+            .expect("partitioned node should still compute weighted tau")
+            .is_empty(),
+        "without the missing high-stake path, weighted tau should stay empty"
+    );
+
+    // Heal the partition by delivering the missing high-stake validator 3 path.
+    for block in [&r1_v3, &r2_v3] {
+        network.queue_delivery(node(91), block.clone());
+    }
+
+    while network.deliver_next_to(&node(91)).is_some() {}
+    network.retry_all_buffers();
+
+    let node_a = network.node(&node(90)).expect("node A should exist");
+    let node_b = network
+        .node(&node(91))
+        .expect("node B should exist after heal");
+
+    let weighted_final_a = node_a.latest_weighted_final_leader(wavelength, leader_node1);
+    let weighted_final_b = node_b.latest_weighted_final_leader(wavelength, leader_node1);
+    assert_eq!(weighted_final_a, Some(leader.identity.clone()));
+    assert_eq!(weighted_final_b, Some(leader.identity.clone()));
+
+    let weighted_tau_a = node_a
+        .weighted_ordered_output(wavelength, leader_node1)
+        .expect("node A should produce weighted tau");
+    let weighted_tau_b = node_b
+        .weighted_ordered_output(wavelength, leader_node1)
+        .expect("node B should produce weighted tau after healing");
+
+    assert!(!weighted_tau_a.is_empty());
+    assert_eq!(weighted_tau_a, weighted_tau_b);
+}
+
+#[test]
+fn tau_grows_monotonically_across_multiple_finalized_waves_after_catch_up() {
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
+    bonds.insert(node(3), 100);
+    bonds.insert(node(4), 100);
+
+    let node_a = SimNode::new(node(100), bonds.clone(), simulation_validation_config());
+    let node_b = SimNode::new(node(101), bonds, simulation_validation_config());
+    let mut network = SimNetwork::new(vec![node_a, node_b]);
+
+    let wavelength = 3u64;
+    let n = 4usize;
+    let f = 1usize;
+
+    // Wave 0 led by validator 1.
+    let w0_leader = create_block(1, 1, HashSet::new());
+    let w0_r1_v2 = create_block(2, 2, HashSet::from([w0_leader.identity.clone()]));
+    let w0_r1_v3 = create_block(3, 3, HashSet::from([w0_leader.identity.clone()]));
+    let w0_r1_v4 = create_block(4, 4, HashSet::from([w0_leader.identity.clone()]));
+    let w0_r1_preds = HashSet::from([
+        w0_r1_v2.identity.clone(),
+        w0_r1_v3.identity.clone(),
+        w0_r1_v4.identity.clone(),
+    ]);
+    let w0_r2_v2 = create_block(2, 5, w0_r1_preds.clone());
+    let w0_r2_v3 = create_block(3, 6, w0_r1_preds.clone());
+    let w0_r2_v4 = create_block(4, 7, w0_r1_preds);
+
+    // Wave 1 leader extends the finalized wave-0 witnesses.
+    let w1_leader = create_block(
+        1,
+        8,
+        HashSet::from([
+            w0_r2_v2.identity.clone(),
+            w0_r2_v3.identity.clone(),
+            w0_r2_v4.identity.clone(),
+        ]),
+    );
+    let w1_r1_v2 = create_block(2, 9, HashSet::from([w1_leader.identity.clone()]));
+    let w1_r1_v3 = create_block(3, 10, HashSet::from([w1_leader.identity.clone()]));
+    let w1_r1_v4 = create_block(4, 11, HashSet::from([w1_leader.identity.clone()]));
+    let w1_r1_preds = HashSet::from([
+        w1_r1_v2.identity.clone(),
+        w1_r1_v3.identity.clone(),
+        w1_r1_v4.identity.clone(),
+    ]);
+    let w1_r2_v2 = create_block(2, 12, w1_r1_preds.clone());
+    let w1_r2_v3 = create_block(3, 13, w1_r1_preds.clone());
+    let w1_r2_v4 = create_block(4, 14, w1_r1_preds);
+
+    // Both nodes first learn only wave 0, though node B receives it scrambled.
+    for block in [
+        &w0_leader, &w0_r1_v2, &w0_r1_v3, &w0_r1_v4, &w0_r2_v2, &w0_r2_v3, &w0_r2_v4,
+    ] {
+        network.queue_delivery(node(100), block.clone());
+    }
+    for block in [
+        &w0_r2_v3, &w0_r1_v2, &w0_r2_v2, &w0_leader, &w0_r1_v4, &w0_r2_v4, &w0_r1_v3,
+    ] {
+        network.queue_delivery(node(101), block.clone());
+    }
+
+    while network.deliver_next_to(&node(100)).is_some() {}
+    while network.deliver_next_to(&node(101)).is_some() {}
+    network.retry_all_buffers();
+
+    let node_a = network.node(&node(100)).expect("node A should exist");
+    let node_b = network.node(&node(101)).expect("node B should exist");
+
+    let tau_wave0_a = node_a
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node A should produce tau after wave 0");
+    let tau_wave0_b = node_b
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node B should produce tau after wave 0");
+    assert!(!tau_wave0_a.is_empty());
+    assert_eq!(tau_wave0_a, tau_wave0_b);
+
+    // Now both nodes receive wave 1. We already stressed out-of-order recovery
+    // in earlier scenarios, so this test focuses on monotonic growth across
+    // finalized waves rather than adding another source of variance here.
+    for block in [
+        &w1_leader, &w1_r1_v2, &w1_r1_v3, &w1_r1_v4, &w1_r2_v2, &w1_r2_v3, &w1_r2_v4,
+    ] {
+        network.queue_delivery(node(100), block.clone());
+    }
+    for block in [
+        &w1_leader, &w1_r1_v2, &w1_r1_v3, &w1_r1_v4, &w1_r2_v2, &w1_r2_v3, &w1_r2_v4,
+    ] {
+        network.queue_delivery(node(101), block.clone());
+    }
+
+    while network.deliver_next_to(&node(100)).is_some() {}
+    while network.deliver_next_to(&node(101)).is_some() {}
+    network.retry_all_buffers();
+
+    let node_a = network.node(&node(100)).expect("node A should still exist");
+    let node_b = network.node(&node(101)).expect("node B should still exist");
+
+    let tau_wave1_a = node_a
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node A should produce tau after wave 1");
+    let tau_wave1_b = node_b
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node B should produce tau after wave 1");
+
+    assert_eq!(tau_wave1_a, tau_wave1_b);
+    assert_eq!(node_b.pending_len(), 0);
+    assert!(
+        tau_wave1_a.len() > tau_wave0_a.len(),
+        "later finalized waves should extend the ordered output"
+    );
+    assert_eq!(
+        &tau_wave1_a[..tau_wave0_a.len()],
+        tau_wave0_a.as_slice(),
+        "tau should grow monotonically without rewriting earlier output"
+    );
 }
