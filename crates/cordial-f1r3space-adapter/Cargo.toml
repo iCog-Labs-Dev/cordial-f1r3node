@@ -6,7 +6,7 @@ edition.workspace = true
 
 [dependencies]
 'cordial-miners-core' = { path = "../cordial-miners-core" }
-'cordial-f1r3node-adapter' = { path = "../cordial-f1r3node-adapter" }
+
 
 # ───────────────────────────────────────────────────────────────────────
 # f1r3node path dependencies — the whole point of this crate.
@@ -26,4 +26,19 @@ shared = { path = "../../../f1r3node/shared" }
 prost = "0.14"
 tokio.workspace = true
 
+# LMDB — same library F1R3FLY uses in rspace_store_manager.rs
+heed      = "0.20"
+
+# Binary serialization for Block ↔ bytes
+bincode   = "1.3"
+serde     = { version = "1", features = ["derive"] }
+
+# Structured errors
+thiserror = "1"
+
+# Logging in recovery path
+tracing   = "0.1"
+
 [dev-dependencies]
+
+tempfile = "3"
