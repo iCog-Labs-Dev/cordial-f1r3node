@@ -554,10 +554,10 @@ fn unbonded_sender_injection_is_rejected_and_honest_nodes_still_converge() {
         .expect("unbonded block should be delivered");
     assert!(
         matches!(injected_outcome, DeliveryOutcome::Rejected(errors)
-            if errors.iter().any(|error| matches!(
-                error,
-                cordial_miners_core::consensus::InvalidBlock::UnknownSender { .. }
-            ))),
+        if errors.iter().any(|error| matches!(
+            error,
+            cordial_miners_core::consensus::InvalidBlock::UnknownSender { .. }
+        ))),
         "unbonded sender should be rejected by the receiving node"
     );
 
@@ -736,8 +736,14 @@ fn weighted_path_can_remain_empty_after_unweighted_convergence() {
     assert_eq!(unweighted_tau_a, unweighted_tau_b);
 
     // Weighted path stays empty because the high-stake validator never contributes.
-    assert_eq!(node_a.latest_weighted_final_leader(wavelength, leader_node1), None);
-    assert_eq!(node_b.latest_weighted_final_leader(wavelength, leader_node1), None);
+    assert_eq!(
+        node_a.latest_weighted_final_leader(wavelength, leader_node1),
+        None
+    );
+    assert_eq!(
+        node_b.latest_weighted_final_leader(wavelength, leader_node1),
+        None
+    );
 
     let weighted_tau_a = node_a
         .weighted_ordered_output(wavelength, leader_node1)
@@ -746,5 +752,102 @@ fn weighted_path_can_remain_empty_after_unweighted_convergence() {
         .weighted_ordered_output(wavelength, leader_node1)
         .expect("node B should compute weighted tau");
     assert!(weighted_tau_a.is_empty());
+    assert_eq!(weighted_tau_a, weighted_tau_b);
+}
+
+#[test]
+fn weighted_finality_and_tau_converge_after_high_stake_participants_catch_up() {
+    // Stake is skewed toward validators 2 and 3, so the weighted path depends
+    // on them participating in the witness rounds.
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 1);
+    bonds.insert(node(2), 45);
+    bonds.insert(node(3), 45);
+    bonds.insert(node(4), 9);
+
+    let node_a = SimNode::new(node(90), bonds.clone(), simulation_validation_config());
+    let node_b = SimNode::new(node(91), bonds, simulation_validation_config());
+    let mut network = SimNetwork::new(vec![node_a, node_b]);
+
+    let wavelength = 3u64;
+
+    // Honest wave led by node 1. Weighted finality should depend on the
+    // participation of the high-stake validators 2 and 3.
+    let leader = create_block(1, 1, HashSet::new());
+    let r1_v2 = create_block(2, 2, HashSet::from([leader.identity.clone()]));
+    let r1_v3 = create_block(3, 3, HashSet::from([leader.identity.clone()]));
+    let r1_v4 = create_block(4, 4, HashSet::from([leader.identity.clone()]));
+
+    let round1_preds = HashSet::from([
+        r1_v2.identity.clone(),
+        r1_v3.identity.clone(),
+        r1_v4.identity.clone(),
+    ]);
+    let r2_v2 = create_block(2, 5, round1_preds.clone());
+    let r2_v3 = create_block(3, 6, round1_preds.clone());
+    let r2_v4 = create_block(4, 7, round1_preds);
+
+    // Node A sees the complete wave and should achieve weighted finality.
+    for block in [&leader, &r1_v2, &r1_v3, &r1_v4, &r2_v2, &r2_v3, &r2_v4] {
+        network.queue_delivery(node(90), block.clone());
+    }
+
+    // Node B is temporarily missing the high-stake validator 3 path, so the
+    // weighted path should stay empty until the partition heals.
+    for block in [&leader, &r1_v2, &r1_v4, &r2_v2, &r2_v4] {
+        network.queue_delivery(node(91), block.clone());
+    }
+
+    while network.deliver_next_to(&node(90)).is_some() {}
+    while network.deliver_next_to(&node(91)).is_some() {}
+    network.retry_all_buffers();
+
+    let node_b_before_heal = network.node(&node(91)).expect("node B should exist");
+
+    assert_eq!(
+        network
+            .node(&node(90))
+            .expect("node A should exist")
+            .latest_weighted_final_leader(wavelength, leader_node1),
+        Some(leader.identity.clone())
+    );
+    assert_eq!(
+        node_b_before_heal.latest_weighted_final_leader(wavelength, leader_node1),
+        None
+    );
+    assert!(
+        node_b_before_heal
+            .weighted_ordered_output(wavelength, leader_node1)
+            .expect("partitioned node should still compute weighted tau")
+            .is_empty(),
+        "without the missing high-stake path, weighted tau should stay empty"
+    );
+
+    // Heal the partition by delivering the missing high-stake validator 3 path.
+    for block in [&r1_v3, &r2_v3] {
+        network.queue_delivery(node(91), block.clone());
+    }
+
+    while network.deliver_next_to(&node(91)).is_some() {}
+    network.retry_all_buffers();
+
+    let node_a = network.node(&node(90)).expect("node A should exist");
+    let node_b = network
+        .node(&node(91))
+        .expect("node B should exist after heal");
+
+    let weighted_final_a = node_a.latest_weighted_final_leader(wavelength, leader_node1);
+    let weighted_final_b = node_b.latest_weighted_final_leader(wavelength, leader_node1);
+    assert_eq!(weighted_final_a, Some(leader.identity.clone()));
+    assert_eq!(weighted_final_b, Some(leader.identity.clone()));
+
+    let weighted_tau_a = node_a
+        .weighted_ordered_output(wavelength, leader_node1)
+        .expect("node A should produce weighted tau");
+    let weighted_tau_b = node_b
+        .weighted_ordered_output(wavelength, leader_node1)
+        .expect("node B should produce weighted tau after healing");
+
+    assert!(!weighted_tau_a.is_empty());
     assert_eq!(weighted_tau_a, weighted_tau_b);
 }
