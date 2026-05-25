@@ -274,3 +274,111 @@ fn finality_and_tau_converge_after_out_of_order_wave_delivery() {
     );
     assert_eq!(tau_a, tau_b);
 }
+
+#[test]
+fn equivocating_leader_attempt_is_rejected_and_honest_wave_still_converges() {
+    // Standard 4-validator setting with n = 4, f = 1 so a single honest wave
+    // can still finalize its leader after one adversarial attempt.
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
+    bonds.insert(node(3), 100);
+    bonds.insert(node(4), 100);
+
+    // Node A will see only the honest path.
+    // Node B will see the honest leader first, then a conflicting leader block.
+    let node_a = SimNode::new(node(40), bonds.clone(), simulation_validation_config());
+    let node_b = SimNode::new(node(41), bonds, simulation_validation_config());
+    let mut network = SimNetwork::new(vec![node_a, node_b]);
+
+    let wavelength = 3u64;
+    let n = 4usize;
+    let f = 1usize;
+
+    // Honest leader block for wave 0.
+    let leader = create_block(1, 1, HashSet::new());
+    // Conflicting block by the same creator. Since node B will already know
+    // `leader`, this second block should be rejected as an equivocation.
+    let equivocated_leader = create_block(1, 99, HashSet::new());
+
+    // Round-1 witness blocks that ratify the honest leader.
+    let r1_v2 = create_block(2, 2, HashSet::from([leader.identity.clone()]));
+    let r1_v3 = create_block(3, 3, HashSet::from([leader.identity.clone()]));
+    let r1_v4 = create_block(4, 4, HashSet::from([leader.identity.clone()]));
+
+    // Round-2 witness blocks that super-ratify the wave by observing all
+    // round-1 witnesses.
+    let round1_preds = HashSet::from([
+        r1_v2.identity.clone(),
+        r1_v3.identity.clone(),
+        r1_v4.identity.clone(),
+    ]);
+    let r2_v2 = create_block(2, 5, round1_preds.clone());
+    let r2_v3 = create_block(3, 6, round1_preds.clone());
+    let r2_v4 = create_block(4, 7, round1_preds);
+
+    // Node A receives the honest wave in dependency order.
+    for block in [&leader, &r1_v2, &r1_v3, &r1_v4, &r2_v2, &r2_v3, &r2_v4] {
+        network.queue_delivery(node(40), block.clone());
+    }
+
+    // Node B receives the honest leader first, then the conflicting leader
+    // attempt, then the rest of the honest wave in mixed order.
+    network.queue_delivery(node(41), leader.clone());
+    network.queue_delivery(node(41), equivocated_leader.clone());
+    for block in [&r2_v3, &r1_v2, &r2_v2, &r1_v4, &r2_v4, &r1_v3] {
+        network.queue_delivery(node(41), block.clone());
+    }
+
+    // Node A processes the honest path completely.
+    while network.deliver_next_to(&node(40)).is_some() {}
+
+    // Node B first accepts the honest leader.
+    assert_eq!(
+        network.deliver_next_to(&node(41)),
+        Some(DeliveryOutcome::Inserted)
+    );
+
+    // Node B then sees a second incomparable block by the same creator and
+    // must reject it as an equivocation instead of buffering or inserting it.
+    let equivocation_outcome = network
+        .deliver_next_to(&node(41))
+        .expect("equivocating leader attempt should be delivered");
+    assert!(
+        matches!(equivocation_outcome, DeliveryOutcome::Rejected(errors)
+        if errors.iter().any(|error| matches!(
+            error,
+            cordial_miners_core::consensus::InvalidBlock::Equivocation { .. }
+        ))),
+        "equivocating leader should be rejected by the receiving node"
+    );
+
+    // Deliver the remaining honest witness blocks to node B, then let any
+    // out-of-order dependencies resolve from the buffer.
+    while network.deliver_next_to(&node(41)).is_some() {}
+    network.retry_all_buffers();
+
+    let node_a = network.node(&node(40)).expect("node A should exist");
+    let node_b = network.node(&node(41)).expect("node B should exist");
+
+    // The rejected equivocation must never enter node B's local DAG.
+    assert!(!node_b.knows_block(&equivocated_leader.identity));
+
+    // Despite the adversarial attempt, both nodes should still finalize the
+    // same honest leader.
+    let final_a = node_a.latest_final_leader(wavelength, n, f, leader_node1);
+    let final_b = node_b.latest_final_leader(wavelength, n, f, leader_node1);
+    assert_eq!(final_a, Some(leader.identity.clone()));
+    assert_eq!(final_b, Some(leader.identity.clone()));
+
+    // And once delivery stabilizes, both nodes should compute the same ordered
+    // output sequence from that finalized view.
+    let tau_a = node_a
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node A should produce ordered output");
+    let tau_b = node_b
+        .ordered_output(wavelength, n, f, leader_node1)
+        .expect("node B should produce ordered output");
+
+    assert_eq!(tau_a, tau_b);
+}
