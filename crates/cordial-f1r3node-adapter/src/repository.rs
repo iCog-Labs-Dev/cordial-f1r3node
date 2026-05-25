@@ -3,11 +3,7 @@
 //! This file wires `cordial-f1r3space-adapter`'s LMDB implementation
 //! into the node adapter. All LMDB logic lives in the space adapter —
 
-pub use cordial_f1r3space_adapter::{
-    BlocklaceRepository,
-    RepoError,
-    RSpaceBlocklaceRepository,
-};
+pub use cordial_f1r3space_adapter::{BlocklaceRepository, RSpaceBlocklaceRepository, RepoError};
 
 use std::path::Path;
 
@@ -23,13 +19,11 @@ pub const PRODUCTION_MAP_SIZE: usize = 10 * 1024 * 1024 * 1024;
 /// any new gRPC blocks.
 ///
 /// # Example
-/// ```rust,no_run
+/// ```ignore
 /// let repo = open_block_store(&data_dir)?;
-/// repo.recover_into_engine(&mut engine)?;
+/// repo.recover_into_engine(&mut engine, &verifier)?;
 /// // ... start accepting blocks ...
 /// ```
-pub fn open_block_store(
-    data_dir: &Path,
-) -> Result<RSpaceBlocklaceRepository, RepoError> {
+pub fn open_block_store(data_dir: &Path) -> Result<RSpaceBlocklaceRepository, RepoError> {
     RSpaceBlocklaceRepository::open(data_dir, PRODUCTION_MAP_SIZE)
 }

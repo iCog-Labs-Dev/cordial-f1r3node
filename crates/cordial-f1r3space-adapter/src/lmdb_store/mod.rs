@@ -39,15 +39,7 @@ pub(crate) const CURSOR_KEY: &[u8] = b"finalized_cursor";
 /// Construct with [`open::RSpaceBlocklaceRepository::open`].
 /// All public methods are implemented across the three submodules.
 pub struct RSpaceBlocklaceRepository {
-    pub(crate) env:       Arc<Env>,
+    pub(crate) env: Arc<Env>,
     pub(crate) blocks_db: Arc<Mutex<Database<Bytes, Bytes>>>,
-    pub(crate) meta_db:   Arc<Mutex<Database<Bytes, Bytes>>>,
+    pub(crate) meta_db: Arc<Mutex<Database<Bytes, Bytes>>>,
 }
-
-// Re-export so external callers use the flat path:
-//   cordial_f1r3space_adapter::RSpaceBlocklaceRepository
-// instead of:
-//   cordial_f1r3space_adapter::lmdb_store::RSpaceBlocklaceRepository
-pub use self::open::*;
-pub use self::recovery::*;
-pub use self::repository_impl::*;
