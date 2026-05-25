@@ -208,54 +208,58 @@ fn proposal_construction_converges_after_nodes_catch_up_on_visible_tips() {
 #[test]
 fn finality_and_tau_converge_after_out_of_order_wave_delivery() {
     let mut bonds = HashMap::new();
-    bonds.insert(node(1), 100);
+    bonds.insert(node(1), 100); // Include a bond for the block creator to ensure blocks are considered valid
     bonds.insert(node(2), 100);
     bonds.insert(node(3), 100);
     bonds.insert(node(4), 100);
 
-    let node_a = SimNode::new(node(30), bonds.clone(), simulation_validation_config());
-    let node_b = SimNode::new(node(31), bonds, simulation_validation_config());
+    let node_a = SimNode::new(node(30), bonds.clone(), simulation_validation_config()); // Create a separate bonds map for node A to ensure it has the same bond information as node B
+    let node_b = SimNode::new(node(31), bonds, simulation_validation_config()); // Create a separate bonds map for node B to ensure it has the same bond information as node A
     let mut network = SimNetwork::new(vec![node_a, node_b]);
 
-    let wavelength = 3u64;
-    let n = 4usize;
-    let f = 1usize;
+    let wavelength = 3u64; // Set the wavelength to 3 so that the leader selection will rotate every 3 waves, which allows us to test finality and tau convergence across multiple waves with the same leader and then a wave with a different leader
+    let n = 4usize; // Set n to 4 to allow for a small number of nodes while still enabling finality with f=1
+    let f = 1usize; // Set f to 1 to allow for finality with n=4 while still enabling some tolerance for out-of-order delivery and buffering, here f represents the maximum number of faulty nodes that can be tolerated while still achieving finality, and setting it to 1 allows us to test that the protocol can still achieve finality even if one node receives blocks in a different order and has to buffer them until it can process them in the correct order
 
-    let leader = create_block(1, 1, HashSet::new());
+    let leader = create_block(1, 1, HashSet::new()); // Create a leader block for the first wave with a bond for the creator to ensure it's considered valid, this will be the only block in the first wave and will be the parent of all subsequent blocks in the second wave, which allows us to test that both nodes can achieve finality on this leader block even if they receive the subsequent blocks in different orders
 
-    let r1_v2 = create_block(2, 2, HashSet::from([leader.identity.clone()]));
-    let r1_v3 = create_block(3, 3, HashSet::from([leader.identity.clone()]));
-    let r1_v4 = create_block(4, 4, HashSet::from([leader.identity.clone()]));
+    let r1_v2 = create_block(2, 2, HashSet::from([leader.identity.clone()])); // Create a block for the second wave that references the leader block, with a bond for the creator to ensure it's considered valid, this will be one of the blocks in the second wave and will be used to test that both nodes can achieve finality on the leader block even if they receive the blocks in different orders
+    let r1_v3 = create_block(3, 3, HashSet::from([leader.identity.clone()])); // Create another block for the second wave that references the leader block, with a bond for the creator to ensure it's considered valid, this will be another block in the second wave and will be used to test that both nodes can achieve finality on the leader block even if they receive the blocks in different orders
+    let r1_v4 = create_block(4, 4, HashSet::from([leader.identity.clone()])); // Create a third block for the second wave that references the leader block, with a bond for the creator to ensure it's considered valid, this will be another block in the second wave and will be used to test that both nodes can achieve finality on the leader block even if they receive the blocks in different orders
 
     let round1_preds = HashSet::from([
+        // Create a set of predecessors for the third wave blocks that includes all the blocks from the second wave, which allows us to test that both nodes can achieve finality on the leader block and then produce the same tau even if they receive the blocks in different orders
         r1_v2.identity.clone(),
         r1_v3.identity.clone(),
         r1_v4.identity.clone(),
     ]);
-    let r2_v2 = create_block(2, 5, round1_preds.clone());
-    let r2_v3 = create_block(3, 6, round1_preds.clone());
-    let r2_v4 = create_block(4, 7, round1_preds);
+    let r2_v2 = create_block(2, 5, round1_preds.clone()); // Create a block for the third wave that references all the blocks from the second wave, with a bond for the creator to ensure it's considered valid, this will be one of the blocks in the third wave and will be used to test that both nodes can produce the same tau even if they receive the blocks in different orders
+    let r2_v3 = create_block(3, 6, round1_preds.clone()); // Create another block for the third wave that references all the blocks from the second wave, with a bond for the creator to ensure it's considered valid, this will be another block in the third wave and will be used to test that both nodes can produce the same tau even if they receive the blocks in different orders
+    let r2_v4 = create_block(4, 7, round1_preds); // Create a third block for the third wave that references all the blocks from the second wave, with a bond for the creator to ensure it's considered valid, this will be another block in the third wave and will be used to test that both nodes can produce the same tau even if they receive the blocks in different orders
 
     for block in [&leader, &r1_v2, &r1_v3, &r1_v4, &r2_v2, &r2_v3, &r2_v4] {
+        // Queue all the blocks for delivery to node A in order of their creation, which simulates node A receiving the blocks in the order they were created and thus being able to process them without buffering
         network.queue_delivery(node(30), block.clone());
     }
 
     for block in [&r2_v3, &r1_v2, &r2_v2, &leader, &r1_v4, &r2_v4, &r1_v3] {
+        // Queue all the blocks for delivery to node B in a different order that simulates it receiving the blocks in a more jumbled order, which will require it to buffer some blocks until it can process them in the correct order based on their dependencies, this tests that even with out-of-order delivery and buffering, node B can still achieve finality on the leader block and produce the same tau as node A once it has processed all the blocks
         network.queue_delivery(node(31), block.clone());
     }
 
-    while network.deliver_next_to(&node(30)).is_some() {}
-    while network.deliver_next_to(&node(31)).is_some() {}
-    network.retry_all_buffers();
+    while network.deliver_next_to(&node(30)).is_some() {} // Deliver all the blocks to node A, which should be processed in order without buffering since they were queued in creation order
+    while network.deliver_next_to(&node(31)).is_some() {} // Deliver all the blocks to node B, which should require buffering for some blocks until their dependencies are processed, but should ultimately result in all blocks being processed once their dependencies are met
+    network.retry_all_buffers(); // Retry all buffered blocks in the network to ensure that any blocks that were buffered due to out-of-order delivery are now processed once their dependencies have been met, this is especially important for node B which received the blocks in a jumbled order and thus likely had to buffer several blocks until it could process them in the correct order
 
-    let node_a = network.node(&node(30)).expect("node A should exist");
-    let node_b = network.node(&node(31)).expect("node B should exist");
+    let node_a = network.node(&node(30)).expect("node A should exist"); // Retrieve node A from the network to check its finality and tau output
+    let node_b = network.node(&node(31)).expect("node B should exist"); // Retrieve node B from the network to check its finality and tau output
 
-    let final_a = node_a.latest_final_leader(wavelength, n, f, leader_node1);
-    let final_b = node_b.latest_final_leader(wavelength, n, f, leader_node1);
-    assert_eq!(final_a, Some(leader.identity.clone()));
-    assert_eq!(final_b, Some(leader.identity.clone()));
+    let final_a = node_a.latest_final_leader(wavelength, n, f, leader_node1); // Check the latest final leader for node A, which should be the leader block since both nodes should have achieved finality on it despite the out-of-order delivery and buffering
+    let final_b = node_b.latest_final_leader(wavelength, n, f, leader_node1); // Check the latest final leader for node B, which should also be the leader block since both nodes should have achieved finality on it despite the out-of-order delivery and buffering
+    assert_eq!(final_a, Some(leader.identity.clone())); // Assert that the final leader for node A is the leader block, which indicates that node A successfully achieved finality on the leader block despite the out-of-order delivery and buffering of subsequent blocks
+    assert_eq!(final_b, Some(leader.identity.clone())); // Assert that the final leader for node B is also the leader block, which indicates that node B successfully achieved finality on the leader block despite the out-of-order delivery and buffering of subsequent blocks
 
+    // Check the tau output for both nodes, which should be the same and should reflect the same set of finalized blocks and their dependencies, thus demonstrating that both nodes converged on the same view of finality and the same tau output despite receiving the blocks in different orders and having to buffer some blocks until they could process them in the correct order
     let tau_a = node_a
         .ordered_output(wavelength, n, f, leader_node1)
         .expect("node A should produce ordered output");
@@ -263,6 +267,10 @@ fn finality_and_tau_converge_after_out_of_order_wave_delivery() {
         .ordered_output(wavelength, n, f, leader_node1)
         .expect("node B should produce ordered output");
 
-    assert!(!tau_a.is_empty(), "finalized wave should produce non-empty tau");
+    // Assert that the tau output for both nodes is not empty, which indicates that they were able to produce a tau output based on the finalized blocks and their dependencies, and that the tau output reflects the same view of finality and the same set of blocks despite the out-of-order delivery and buffering
+    assert!(
+        !tau_a.is_empty(),
+        "finalized wave should produce non-empty tau"
+    );
     assert_eq!(tau_a, tau_b);
 }
