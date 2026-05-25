@@ -40,24 +40,31 @@ fn leader_node1(_wave: u64) -> Option<NodeId> {
 
 #[test]
 fn out_of_order_delivery_is_buffered_then_resolved_after_parent_arrives() {
+    // Minimal 2-validator setting: validator 1 creates the parent, validator 2
+    // creates a child that depends on it.
     let mut bonds = HashMap::new();
     bonds.insert(node(1), 100);
     bonds.insert(node(2), 100);
 
+    // Single simulated node receiving blocks from the network.
     let mut sim_node = SimNode::new(node(9), bonds, simulation_validation_config());
 
     let genesis = create_block(1, 1, HashSet::new());
     let child = create_block(2, 2, HashSet::from([genesis.identity.clone()]));
 
+    // The child arrives before its parent, so it cannot be inserted yet and
+    // must be buffered.
     let early_delivery = sim_node.receive_block(child.clone());
     assert_eq!(early_delivery, DeliveryOutcome::Buffered);
     assert_eq!(sim_node.pending_len(), 1);
     assert!(!sim_node.knows_block(&child.identity));
 
+    // Once the parent arrives, it is inserted normally.
     let parent_delivery = sim_node.receive_block(genesis.clone());
     assert_eq!(parent_delivery, DeliveryOutcome::Inserted);
     assert!(sim_node.knows_block(&genesis.identity));
 
+    // Retrying the buffer should now resolve the child as well.
     sim_node.retry_buffered_blocks();
 
     assert_eq!(sim_node.pending_len(), 0);
@@ -66,116 +73,129 @@ fn out_of_order_delivery_is_buffered_then_resolved_after_parent_arrives() {
 
 #[test]
 fn two_nodes_converge_after_receiving_the_same_blocks_in_different_orders() {
+    // Two bonded creators produce a tiny parent/child chain.
     let mut bonds = HashMap::new();
-    bonds.insert(node(1), 100); // Include a bond for the block creator to ensure blocks are considered valid
-    bonds.insert(node(2), 100); // Include a bond for the block creator to ensure blocks are considered valid
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
 
-    let node_a = SimNode::new(node(10), bonds.clone(), simulation_validation_config()); // Create a separate bonds map for node A to ensure it has the same bond information as node B
-    let node_b = SimNode::new(node(11), bonds, simulation_validation_config()); // Create a separate bonds map for node B to ensure it has the same bond information as node A
+    // Node A and node B start from empty local views.
+    let node_a = SimNode::new(node(10), bonds.clone(), simulation_validation_config());
+    let node_b = SimNode::new(node(11), bonds, simulation_validation_config());
     let mut network = SimNetwork::new(vec![node_a, node_b]);
 
-    let genesis = create_block(1, 1, HashSet::new()); // Create a genesis block with a bond for the creator to ensure it's considered valid
-    let child = create_block(2, 2, HashSet::from([genesis.identity.clone()])); // Create a child block that references the genesis block
+    let genesis = create_block(1, 1, HashSet::new());
+    let child = create_block(2, 2, HashSet::from([genesis.identity.clone()]));
 
-    network.queue_delivery(node(10), genesis.clone()); // Queue the genesis block for delivery to node A
-    network.queue_delivery(node(10), child.clone()); // Queue the child block for delivery to node A
-    network.queue_delivery(node(11), child.clone()); // Queue the child block for delivery to node B before the genesis block to simulate out-of-order delivery
-    network.queue_delivery(node(11), genesis.clone()); // Queue the genesis block for delivery to node B after the child block to simulate out-of-order delivery
-    // in the queue for node B, the child block will be attempted for delivery before the genesis block, which should result in it being buffered until the genesis block is delivered and processed
-    assert_eq!(network.queued_delivery_count(), 4); // Ensure all blocks are queued for delivery
+    // Node A receives the chain in order.
+    network.queue_delivery(node(10), genesis.clone());
+    network.queue_delivery(node(10), child.clone());
+    // Node B sees the same chain out of order and must buffer the child first.
+    network.queue_delivery(node(11), child.clone());
+    network.queue_delivery(node(11), genesis.clone());
+    assert_eq!(network.queued_delivery_count(), 4);
 
     assert_eq!(
-        network.deliver_next_to(&node(10)), // Deliver the genesis block to node A, which should be inserted successfully
+        network.deliver_next_to(&node(10)),
         Some(DeliveryOutcome::Inserted)
     );
     assert_eq!(
-        network.deliver_next_to(&node(10)), // Deliver the child block to node A, which should be inserted successfully since the genesis block is already known
+        network.deliver_next_to(&node(10)),
         Some(DeliveryOutcome::Inserted)
     );
 
+    // Node B cannot yet insert the child because it does not know the parent.
     assert_eq!(
         network.deliver_next_to(&node(11)),
-        Some(DeliveryOutcome::Buffered) // Deliver the child block to node B, which should be buffered since the genesis block is not yet known
+        Some(DeliveryOutcome::Buffered)
     );
     assert_eq!(
         network
             .node(&node(11))
             .expect("node B should exist")
-            .pending_len(), // Check that the child block is in the pending buffer of node B
+            .pending_len(),
         1
     );
 
+    // Once the parent arrives, node B can process it and later resolve the child.
     assert_eq!(
         network.deliver_next_to(&node(11)),
-        Some(DeliveryOutcome::Inserted) // Deliver the genesis block to node B, which should be inserted successfully and trigger a retry of the buffered child block
+        Some(DeliveryOutcome::Inserted)
     );
 
-    network.retry_all_buffers(); // Retry all buffered blocks in the network, which should result in the child block being inserted into node B since its parent (the genesis block) is now known
+    network.retry_all_buffers();
 
-    let node_a = network.node(&node(10)).expect("node A should exist"); // Retrieve node A from the network to check its known blocks
-    let node_b = network.node(&node(11)).expect("node B should exist"); // Retrieve node B from the network to check its known blocks
+    let node_a = network.node(&node(10)).expect("node A should exist");
+    let node_b = network.node(&node(11)).expect("node B should exist");
 
-    assert!(node_a.knows_block(&genesis.identity)); // Check that node A knows the genesis block
-    assert!(node_a.knows_block(&child.identity)); // Check that node A knows the child block
-    assert!(node_b.knows_block(&genesis.identity)); // Check that node B knows the genesis block
-    assert!(node_b.knows_block(&child.identity)); // Check that node B knows the child block after the genesis block was delivered and the buffered child block was retried
-    assert_eq!(node_b.pending_len(), 0); // Check that node B's pending buffer is empty after the buffered child block was successfully inserted
+    // After catch-up, both nodes should know the same chain and the buffer
+    // should be empty again.
+    assert!(node_a.knows_block(&genesis.identity));
+    assert!(node_a.knows_block(&child.identity));
+    assert!(node_b.knows_block(&genesis.identity));
+    assert!(node_b.knows_block(&child.identity));
+    assert_eq!(node_b.pending_len(), 0);
 }
 
 #[test]
 fn proposal_construction_converges_after_nodes_catch_up_on_visible_tips() {
+    // Four bonded validators so the unweighted acknowledgement threshold is 3.
     let mut bonds = HashMap::new();
-    bonds.insert(node(1), 100); // Include a bond for the block creator to ensure blocks are considered valid
-    bonds.insert(node(2), 100); // Include a bond for the block creator to ensure blocks are considered valid
-    bonds.insert(node(3), 100); // Include a bond for the block creator to ensure blocks are considered valid
-    bonds.insert(node(4), 100); // Include a bond for the block creator to ensure blocks are considered valid
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
+    bonds.insert(node(3), 100);
+    bonds.insert(node(4), 100);
 
-    let node_a = SimNode::new(node(20), bonds.clone(), simulation_validation_config()); // Create a separate bonds map for node A to ensure it has the same bond information as node B
-    let node_b = SimNode::new(node(21), bonds, simulation_validation_config()); // Create a separate bonds map for node B to ensure it has the same bond information as node A
-    let mut network = SimNetwork::new(vec![node_a, node_b]); // Create a simulation network with both nodes
+    // Node A will have a complete local view. Node B will initially miss one tip.
+    let node_a = SimNode::new(node(20), bonds.clone(), simulation_validation_config());
+    let node_b = SimNode::new(node(21), bonds, simulation_validation_config());
+    let mut network = SimNetwork::new(vec![node_a, node_b]);
 
-    let tip1 = create_block(1, 1, HashSet::new()); // Create a tip block with a bond for the creator to ensure it's considered valid
-    let tip2 = create_block(2, 2, HashSet::new()); // Create another tip block with a bond for the creator to ensure it's considered valid
-    let tip3 = create_block(3, 3, HashSet::new()); // Create a third tip block with a bond for the creator to ensure it's considered valid
+    let tip1 = create_block(1, 1, HashSet::new());
+    let tip2 = create_block(2, 2, HashSet::new());
+    let tip3 = create_block(3, 3, HashSet::new());
 
+    // Node A sees all three visible tips.
     for block in [&tip1, &tip2, &tip3] {
-        network.queue_delivery(node(20), block.clone()); // Queue all three tip blocks for delivery to node A to ensure it has all the visible tips needed for proposal construction
+        network.queue_delivery(node(20), block.clone());
     }
+    // Node B starts behind and sees only two of them.
     for block in [&tip1, &tip2] {
-        network.queue_delivery(node(21), block.clone()); // Queue only two of the tip blocks for delivery to node B to simulate it being slightly behind in terms of visible tips needed for proposal construction
+        network.queue_delivery(node(21), block.clone());
     }
 
     assert_eq!(
         network.deliver_next_to(&node(20)),
-        Some(DeliveryOutcome::Inserted) // Deliver the first tip block to node A, which should be inserted successfully
+        Some(DeliveryOutcome::Inserted)
     );
     assert_eq!(
         network.deliver_next_to(&node(20)),
-        Some(DeliveryOutcome::Inserted) // Deliver the second tip block to node A, which should be inserted successfully
+        Some(DeliveryOutcome::Inserted)
     );
     assert_eq!(
         network.deliver_next_to(&node(20)),
-        Some(DeliveryOutcome::Inserted) // Deliver the third tip block to node A, which should be inserted successfully
+        Some(DeliveryOutcome::Inserted)
     );
 
     assert_eq!(
         network.deliver_next_to(&node(21)),
-        Some(DeliveryOutcome::Inserted) // Deliver the first tip block to node B, which should be inserted successfully
+        Some(DeliveryOutcome::Inserted)
     );
     assert_eq!(
         network.deliver_next_to(&node(21)),
-        Some(DeliveryOutcome::Inserted) // Deliver the second tip block to node B, which should be inserted successfully
+        Some(DeliveryOutcome::Inserted)
     );
 
     let payload = vec![9, 9];
 
-    let candidate_a = network // Have node A attempt to build a block candidate using the three tip blocks it knows, which should succeed since it has all the required visible tips
+    // Node A can already build a proposal because it has enough visible tips.
+    let candidate_a = network
         .node(&node(20))
         .expect("node A should exist")
         .build_block_candidate(payload.clone())
         .expect("node A should have enough visible tips to propose");
 
-    let candidate_b_before = network // Have node B attempt to build a block candidate using the two tip blocks it knows, which should fail since it doesn't have all the required visible tips (it is missing tip3) and thus doesn't have enough acknowledgements to propose
+    // Node B cannot yet build a proposal because it is still missing one tip.
+    let candidate_b_before = network
         .node(&node(21))
         .expect("node B should exist")
         .build_block_candidate(payload.clone());
@@ -183,26 +203,27 @@ fn proposal_construction_converges_after_nodes_catch_up_on_visible_tips() {
     assert!(matches!(
         candidate_b_before,
         Err(ProposalError::InsufficientAcknowledgements {
-            // Check that the error is specifically about insufficient acknowledgements, which indicates that node B correctly identified that it doesn't have enough visible tips to propose
             observed: 2,
             required: 3,
         })
     ));
 
-    network.queue_delivery(node(21), tip3.clone()); // Queue the missing tip block for delivery to node B to simulate it catching up on the visible tips needed for proposal construction
+    // Once the missing tip arrives, node B should catch up to the same view.
+    network.queue_delivery(node(21), tip3.clone());
     assert_eq!(
         network.deliver_next_to(&node(21)),
         Some(DeliveryOutcome::Inserted)
     );
 
-    let candidate_b_after = network // Have node B attempt to build a block candidate using the three tip blocks it now knows, which should succeed since it has all the required visible tips
+    let candidate_b_after = network
         .node(&node(21))
         .expect("node B should exist")
         .build_block_candidate(payload)
         .expect("node B should propose after catching up");
 
-    assert_eq!(candidate_a.payload, candidate_b_after.payload); // Check that the payloads of the two candidates are the same, which indicates that both nodes constructed their candidates using the same set of visible tips and thus converged on the same proposal content
-    assert_eq!(candidate_a.predecessors, candidate_b_after.predecessors); // Check that the predecessors of the two candidates are the same, which indicates that both nodes constructed their candidates using the same set of visible tips and thus converged on the same proposal content
+    // After catch-up, both nodes should construct the same proposal.
+    assert_eq!(candidate_a.payload, candidate_b_after.payload);
+    assert_eq!(candidate_a.predecessors, candidate_b_after.predecessors);
 }
 
 #[test]
