@@ -18,7 +18,6 @@
 //! | [`shard_conf`]       | 3.6     | `CasperShardConf` equivalent               |
 //! | [`crypto_bridge`]    | 3.4     | Blake2b + Secp256k1 alignment              |
 //! | [`rspace_runtime`]   | 2.3*    | Real `RuntimeManager` impl against RSpace  |
-//! | [`proposer`]         | —       | Outbound block creation pipeline           |
 
 pub mod block_translation;
 pub mod casper_adapter;
