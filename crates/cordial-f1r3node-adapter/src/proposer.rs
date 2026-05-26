@@ -1,22 +1,3 @@
-//! Outbound block-creation pipeline for Cordial Miners.
-//!
-//! The proposer is the mirror of the inbound gRPC ingest path: it selects tips
-//! from the local blocklace, pulls deploys from the mempool, executes them
-//! through an [`ExecutionEngine`] (RSpace in production, [`MockRuntime`] in
-//! tests), signs the block, and broadcasts it.
-//!
-//! ## Pipeline (strictly sequential)
-//!
-//! 1. [`TipSelector::select_tips`] — parent block identities from the DAG
-//! 2. [`DeployPool::select_for_block`] — pending deploys from the mempool
-//! 3. [`ExecutionEngine::execute`] — run deploys, obtain `post_state_hash`
-//! 4. [`BlockSigner::sign_block`] — assemble and cryptographically sign
-//! 5. [`BlockBroadcaster::broadcast`] — publish to the network
-//!
-//! Multi-parent **state merge** is owned by f1r3node's `RuntimeManager` when
-//! wired to real RSpace. This module uses the highest `block_number` tip as
-//! the execution parent, which is sufficient for [`MockRuntime`] chaining.
-
 use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::Block;
