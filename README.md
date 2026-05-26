@@ -70,6 +70,7 @@ just ci
 - **[`docs/cordial-miners-vs-cbc-casper.md`](docs/cordial-miners-vs-cbc-casper.md)** — protocol comparison and integration roadmap. Read this if you're integrating into f1r3node or comparing the two consensus mechanisms.
 - **[`docs/INTEGRATION_NEXT_STEPS.md`](docs/INTEGRATION_NEXT_STEPS.md)** — open tasks for new contributors, ordered by impact. Each task has scope, difficulty, and files to read.
 - **[`crates/cordial-miners-core/src/network/NETWORK.md`](crates/cordial-miners-core/src/network/NETWORK.md)** — the P2P networking module's wire protocol and flow diagrams.
+- **[`docs/cordial-miners/15-proposer-pipeline.md`](docs/cordial-miners/15-proposer-pipeline.md)** — outbound block creation: tips, mempool, RSpace execution, signing, broadcast.
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — how to set up your environment, run tests, structure commits, and submit changes.
 
 ## Status
