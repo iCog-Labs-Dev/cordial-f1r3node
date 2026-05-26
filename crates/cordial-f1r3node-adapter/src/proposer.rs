@@ -30,20 +30,13 @@ use cordial_miners_core::execution::{
 };
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
-// ── Errors ───────────────────────────────────────────────────────────────
 
-/// Errors from the block proposal pipeline.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProposeError {
-    /// The blocklace has blocks but no honest tips are visible (e.g. only equivocators).
     NoTips,
-    /// Runtime execution failed.
     Execution(RuntimeError),
-    /// Block signing failed.
     Sign(String),
-    /// Broadcast failed.
     Broadcast(String),
-    /// Could not decode a predecessor's payload when deriving chain head.
     PayloadDecode(String),
 }
 
@@ -61,9 +54,6 @@ impl std::fmt::Display for ProposeError {
 
 impl std::error::Error for ProposeError {}
 
-// ── Traits ───────────────────────────────────────────────────────────────
-
-/// Selects parent block identities (tips) for a new block from the blocklace.
 pub trait TipSelector {
     fn select_tips(
         &self,
@@ -72,12 +62,10 @@ pub trait TipSelector {
     ) -> HashSet<BlockIdentity>;
 }
 
-/// Executes deploys against an execution backend (RSpace or mock).
 pub trait ExecutionEngine {
     fn execute(&mut self, request: ExecutionRequest) -> Result<ExecutionResult, RuntimeError>;
 }
 
-/// Signs block content and returns a complete [`BlockIdentity`].
 pub trait BlockSigner {
     fn sign_block(
         &self,
@@ -86,14 +74,10 @@ pub trait BlockSigner {
     ) -> Result<BlockIdentity, String>;
 }
 
-/// Publishes a newly created block to the network.
 pub trait BlockBroadcaster {
     fn broadcast(&self, block: &Block) -> Result<(), String>;
 }
 
-// ── Default adapters ─────────────────────────────────────────────────────
-
-/// Tip selector backed by the Cordial Miners dissemination layer.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DisseminationTipSelector;
 
@@ -107,7 +91,6 @@ impl TipSelector for DisseminationTipSelector {
     }
 }
 
-/// Execution engine wrapping any [`RuntimeManager`] implementation.
 pub struct RuntimeExecutionEngine<R> {
     runtime: R,
 }
@@ -128,7 +111,6 @@ impl<R: RuntimeManager> ExecutionEngine for RuntimeExecutionEngine<R> {
     }
 }
 
-/// Signs blocks with Secp256k1 (f1r3node-aligned defaults).
 pub struct Secp256k1BlockSigner {
     private_key: Vec<u8>,
 }
@@ -157,7 +139,6 @@ impl BlockSigner for Secp256k1BlockSigner {
     }
 }
 
-/// Broadcaster that invokes a closure (useful in tests).
 pub struct FnBroadcaster<F>
 where
     F: Fn(&Block) -> Result<(), String>,
@@ -183,7 +164,6 @@ where
     }
 }
 
-/// Collects broadcast blocks into a shared vector (test helper).
 pub struct RecordingBroadcaster {
     pub blocks: std::sync::Arc<std::sync::Mutex<Vec<Block>>>,
 }
@@ -212,12 +192,7 @@ impl BlockBroadcaster for RecordingBroadcaster {
     }
 }
 
-// ── Chain head derivation ────────────────────────────────────────────────
 
-/// Derive execution inputs from the selected predecessor tips.
-///
-/// Picks the tip with the highest `block_number` and uses its post-state as
-/// the next block's pre-state. See module docs for multi-parent caveats.
 fn derive_chain_head(
     blocklace: &Blocklace,
     predecessors: &HashSet<BlockIdentity>,
@@ -254,9 +229,7 @@ fn bonds_map_to_vec(bonds: &HashMap<NodeId, u64>) -> Vec<Bond> {
         .collect()
 }
 
-// ── CordialProposer ──────────────────────────────────────────────────────
 
-/// Orchestrates the outbound block-creation pipeline.
 pub struct CordialProposer<TS, EE, BS, BC> {
     tip_selector: TS,
     execution: EE,
@@ -290,7 +263,6 @@ impl<TS, EE, BS, BC> CordialProposer<TS, EE, BS, BC> {
         }
     }
 
-    /// When `false`, skip the `CloseBlock` system deploy (useful in unit tests).
     pub fn with_close_block(mut self, include: bool) -> Self {
         self.include_close_block = include;
         self
@@ -304,7 +276,6 @@ where
     BS: BlockSigner,
     BC: BlockBroadcaster,
 {
-    /// Run the full propose pipeline and return the signed block.
     pub fn propose(
         &mut self,
         blocklace: &Blocklace,
