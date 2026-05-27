@@ -16,9 +16,9 @@ pub use cordiality::{
     super_ratifies, weighted_ratifies, weighted_super_ratifies,
 };
 pub use dissemination::{
-    PendingBlockBuffer, ProposalError, build_block_candidate, required_acknowledgements,
-    select_predecessors, select_predecessors_sorted, validator_visible_tips,
-    weighted_required_acknowledgements,
+    PendingBlockBuffer, ProposalError, build_block_candidate, next_block_predecessors,
+    required_acknowledgements, select_predecessors, select_predecessors_sorted,
+    validator_visible_tips, weighted_required_acknowledgements,
 };
 pub use finality::{
     final_leader_for_wave, is_final_leader, is_weighted_final_leader, latest_final_leader,

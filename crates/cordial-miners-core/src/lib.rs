@@ -7,6 +7,7 @@ pub mod dag;
 pub mod execution;
 pub mod finality;
 pub mod network;
+pub mod simulation;
 pub mod types;
 pub mod wave;
 
