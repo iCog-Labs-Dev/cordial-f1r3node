@@ -694,6 +694,7 @@ dependencies = [
  "either",
  "k256",
  "models",
+ "prost",
  "rand 0.8.5",
  "serde",
  "sha2",
