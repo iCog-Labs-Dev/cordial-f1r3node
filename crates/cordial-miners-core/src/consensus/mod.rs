@@ -1,6 +1,7 @@
 pub mod approval;
 pub mod cordiality;
 pub mod dissemination;
+pub mod evidence;
 pub mod finality;
 pub mod fork_choice;
 pub mod ordering;
@@ -19,6 +20,10 @@ pub use cordiality::{
 pub use dissemination::{
     PendingBlockBuffer, required_acknowledgements, select_predecessors, select_predecessors_sorted,
     validator_visible_tips, weighted_required_acknowledgements,
+};
+pub use evidence::{
+    CordialEquivocationEvidence, CordialEvidencePool, EquivocationEvidence, EvidenceBlock,
+    EvidencePool, InMemoryEvidencePool,
 };
 pub use finality::{
     final_leader_for_wave, is_final_leader, is_weighted_final_leader, latest_final_leader,
