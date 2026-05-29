@@ -24,8 +24,8 @@ const MAP_SIZE: usize = 10 * 1024 * 1024;
 fn make_id(byte: u8) -> BlockIdentity {
     BlockIdentity {
         content_hash: [byte; 32],
-        creator:      NodeId(vec![byte]),
-        signature:    vec![byte],
+        creator: NodeId(vec![byte]),
+        signature: vec![byte],
     }
 }
 
@@ -34,14 +34,13 @@ fn make_block(byte: u8, preds: Vec<BlockIdentity>) -> Block {
         identity: make_id(byte),
         content: BlockContent {
             predecessors: preds.into_iter().collect::<HashSet<_>>(),
-            payload:      vec![byte],
+            payload: vec![byte],
         },
     }
 }
 
 fn open(dir: &std::path::Path) -> RSpaceBlocklaceRepository {
-    RSpaceBlocklaceRepository::open(dir, MAP_SIZE)
-        .expect("failed to open LMDB")
+    RSpaceBlocklaceRepository::open(dir, MAP_SIZE).expect("failed to open LMDB")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -50,8 +49,8 @@ fn open(dir: &std::path::Path) -> RSpaceBlocklaceRepository {
 
 #[test]
 fn put_then_get_returns_same_block() {
-    let dir   = tempdir().unwrap();
-    let repo  = open(dir.path());
+    let dir = tempdir().unwrap();
+    let repo = open(dir.path());
     let block = make_block(0xAA, vec![]);
 
     repo.put_block(&block).unwrap();
@@ -68,7 +67,7 @@ fn put_then_get_returns_same_block() {
 
 #[test]
 fn get_missing_block_returns_none() {
-    let dir  = tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let repo = open(dir.path());
 
     let result = repo.get_block(&make_id(0xFF)).unwrap();
@@ -78,7 +77,7 @@ fn get_missing_block_returns_none() {
 
 #[test]
 fn put_multiple_blocks_all_retrievable() {
-    let dir  = tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let repo = open(dir.path());
 
     let genesis = make_block(0x00, vec![]);
@@ -96,8 +95,8 @@ fn put_multiple_blocks_all_retrievable() {
 
 #[test]
 fn put_block_is_idempotent() {
-    let dir   = tempdir().unwrap();
-    let repo  = open(dir.path());
+    let dir = tempdir().unwrap();
+    let repo = open(dir.path());
     let block = make_block(0xBB, vec![]);
 
     repo.put_block(&block).unwrap();
@@ -114,7 +113,7 @@ fn put_block_is_idempotent() {
 #[test]
 fn finalized_cursor_survives_reopen() {
     let dir = tempdir().unwrap();
-    let id  = make_id(0x01);
+    let id = make_id(0x01);
 
     {
         let repo = open(dir.path());
@@ -123,7 +122,7 @@ fn finalized_cursor_survives_reopen() {
     }
 
     {
-        let repo   = open(dir.path());
+        let repo = open(dir.path());
         let cursor = repo.finalized_cursor().unwrap();
 
         assert_eq!(
@@ -136,7 +135,7 @@ fn finalized_cursor_survives_reopen() {
 
 #[test]
 fn cursor_is_none_on_fresh_open() {
-    let dir  = tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let repo = open(dir.path());
 
     assert_eq!(
@@ -148,7 +147,7 @@ fn cursor_is_none_on_fresh_open() {
 
 #[test]
 fn blocks_survive_reopen() {
-    let dir   = tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let block = make_block(0xCC, vec![]);
 
     {
@@ -158,11 +157,8 @@ fn blocks_survive_reopen() {
 
     {
         let repo = open(dir.path());
-        let got  = repo.get_block(&block.identity).unwrap();
-        assert!(
-            got.is_some(),
-            "block must survive LMDB environment reopen"
-        );
+        let got = repo.get_block(&block.identity).unwrap();
+        assert!(got.is_some(), "block must survive LMDB environment reopen");
     }
 }
 
@@ -202,7 +198,7 @@ fn recovery_replays_blocks_in_topological_order() {
     // cordial-f1r3space-adapter unit tests where Blocklace is accessible.
     // Here we verify persistence correctness through the public API.
     {
-        let repo   = open(dir.path());
+        let repo = open(dir.path());
         let cursor = repo.finalized_cursor().unwrap();
 
         assert_eq!(
@@ -235,10 +231,10 @@ fn recovery_replays_blocks_in_topological_order() {
 
 #[test]
 fn corrupt_value_is_skipped_not_panicked() {
-    use heed::types::Bytes;
     use heed::EnvOpenOptions;
+    use heed::types::Bytes;
 
-    let dir     = tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("blocklace");
     std::fs::create_dir_all(&db_path).unwrap();
 
@@ -246,22 +242,22 @@ fn corrupt_value_is_skipped_not_panicked() {
         // ── FIXED: options must match RSpaceBlocklaceRepository::open() exactly
         // map_size: same MAP_SIZE constant
         // max_dbs(10): same as open()
-        // max_readers(128): same as open() 
+        // max_readers(128): same as open()
         let env = unsafe {
             EnvOpenOptions::new()
-                .map_size(MAP_SIZE)   // same as our open()
-                .max_dbs(10)          // same as our open()
-                .max_readers(128)     // ← THIS was missing — caused BadOpenOptions
+                .map_size(MAP_SIZE) // same as our open()
+                .max_dbs(10) // same as our open()
+                .max_readers(128) // ← THIS was missing — caused BadOpenOptions
                 .open(&db_path)
                 .unwrap()
         };
         let mut wtxn = env.write_txn().unwrap();
-        let db: heed::Database<Bytes, Bytes> =
-            env.create_database(&mut wtxn, Some("cordial-blocks"))
-                .unwrap();
+        let db: heed::Database<Bytes, Bytes> = env
+            .create_database(&mut wtxn, Some("cordial-blocks"))
+            .unwrap();
 
         // Valid block
-        let good     = make_block(0xDD, vec![]);
+        let good = make_block(0xDD, vec![]);
         let good_key = bincode::serialize(&good.identity).unwrap();
         let good_val = bincode::serialize(&good).unwrap();
         db.put(&mut wtxn, &good_key, &good_val).unwrap();
@@ -271,7 +267,8 @@ fn corrupt_value_is_skipped_not_panicked() {
         db.put(&mut wtxn, &bad_key, b"\xFF\xFF\xFF\xFF").unwrap();
 
         // Corrupt entry: completely invalid key
-        db.put(&mut wtxn, b"not_a_serialized_key", b"\x00\x01\x02").unwrap();
+        db.put(&mut wtxn, b"not_a_serialized_key", b"\x00\x01\x02")
+            .unwrap();
 
         wtxn.commit().unwrap();
         // ── env dropped here — environment closed before repository opens it
@@ -281,7 +278,7 @@ fn corrupt_value_is_skipped_not_panicked() {
     let repo = open(dir.path());
 
     let good = make_block(0xDD, vec![]);
-    let got  = repo.get_block(&good.identity).unwrap();
+    let got = repo.get_block(&good.identity).unwrap();
     assert!(
         got.is_some(),
         "valid block must be retrievable even when corrupt entries exist"
@@ -293,7 +290,7 @@ fn partial_write_simulation_does_not_panic_on_open() {
     let dir = tempdir().unwrap();
 
     {
-        let repo  = open(dir.path());
+        let repo = open(dir.path());
         let _block = make_block(0x10, vec![]);
         // env dropped without calling put_block — simulates crash before commit
         let _ = repo;
@@ -316,10 +313,10 @@ fn get_block_with_corrupt_value_returns_error() {
     //
     // This is distinct from corrupt_value_is_skipped_not_panicked which
     // tests the recovery iterator path. This tests the direct get_block path.
-    use heed::types::Bytes;
     use heed::EnvOpenOptions;
+    use heed::types::Bytes;
 
-    let dir     = tempdir().unwrap();
+    let dir = tempdir().unwrap();
     let db_path = dir.path().join("blocklace");
     std::fs::create_dir_all(&db_path).unwrap();
 
@@ -333,28 +330,29 @@ fn get_block_with_corrupt_value_returns_error() {
             EnvOpenOptions::new()
                 .map_size(MAP_SIZE)
                 .max_dbs(10)
-                .max_readers(128)   // must match open() — learned from previous fix
+                .max_readers(128) // must match open() — learned from previous fix
                 .open(&db_path)
                 .unwrap()
         };
 
         let mut wtxn = env.write_txn().unwrap();
-        let db: heed::Database<Bytes, Bytes> =
-            env.create_database(&mut wtxn, Some("cordial-blocks"))
-                .unwrap();
+        let db: heed::Database<Bytes, Bytes> = env
+            .create_database(&mut wtxn, Some("cordial-blocks"))
+            .unwrap();
 
         // Serialize the key exactly as put_block does — so get_block finds it
         let key = bincode::serialize(&corrupt_id).unwrap();
 
         // Store garbage bytes as the value — not a valid bincode Block
-        db.put(&mut wtxn, &key, b"\xFF\xFE\xFD\xFC\x00\x01\x02\x03").unwrap();
+        db.put(&mut wtxn, &key, b"\xFF\xFE\xFD\xFC\x00\x01\x02\x03")
+            .unwrap();
 
         wtxn.commit().unwrap();
         // env dropped here — environment closed before repository opens it
     }
 
     // ── Step 2: open via repository and call get_block on the corrupt key ─
-    let repo   = open(dir.path());
+    let repo = open(dir.path());
     let result = repo.get_block(&corrupt_id);
 
     // ── Step 3: assert Err, not None, not panic ───────────────────────────
