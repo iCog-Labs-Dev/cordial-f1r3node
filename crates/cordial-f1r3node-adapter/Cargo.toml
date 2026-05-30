@@ -28,3 +28,13 @@ clap = { version = "4.6", features = ["derive"] }
 
 casper = { path = "../../../f1r3node/casper" }
 models = { path = "../../../f1r3node/models" }
+
+# ── logging ───────────────────────────────────────────────────────────────
+tracing      = "0.1"
+
+# ── error handling ────────────────────────────────────────────────────────
+thiserror    = "1"
+
+[dev-dependencies]
+tempfile  = "3"
+heed      = "0.20"
