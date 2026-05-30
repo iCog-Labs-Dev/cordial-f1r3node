@@ -62,13 +62,14 @@ pub trait EvidencePool<V, P, Id> {
     fn evidence_for(&self, validator: &V) -> Vec<EquivocationEvidence<V, P, Id>>;
 }
 
-/// In-memory evidence pool keyed first by `(validator, round)`.
+/// In-memory evidence pool keyed first by validator, then by round.
 ///
-/// Within each `(validator, round)` bucket, records are deduplicated by the
+/// Within each validator/round bucket, records are deduplicated by the
 /// sorted identities of the conflicting blocks. This means recording the same
 /// pair in the opposite order still produces one evidence record.
 type EvidenceBucket<P, Id, V> = BTreeMap<Vec<Id>, EquivocationEvidence<V, P, Id>>;
-type EvidenceRecords<V, P, Id> = BTreeMap<(V, u64), EvidenceBucket<P, Id, V>>;
+type EvidenceRounds<V, P, Id> = BTreeMap<u64, EvidenceBucket<P, Id, V>>;
+type EvidenceRecords<V, P, Id> = BTreeMap<V, EvidenceRounds<V, P, Id>>;
 
 #[derive(Debug, Clone)]
 pub struct InMemoryEvidencePool<V, P, Id> {
@@ -89,7 +90,11 @@ impl<V, P, Id> InMemoryEvidencePool<V, P, Id> {
     }
 
     pub fn len(&self) -> usize {
-        self.records.values().map(|bucket| bucket.len()).sum()
+        self.records
+            .values()
+            .flat_map(|rounds| rounds.values())
+            .map(|bucket| bucket.len())
+            .sum()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -118,7 +123,12 @@ where
 
         let evidence_key: Vec<Id> = unique_blocks.keys().cloned().collect();
         let evidence_blocks: Vec<P> = unique_blocks.into_values().collect();
-        let bucket = self.records.entry((validator.clone(), round)).or_default();
+        let bucket = self
+            .records
+            .entry(validator.clone())
+            .or_default()
+            .entry(round)
+            .or_default();
 
         if bucket.contains_key(&evidence_key) {
             return false;
@@ -133,9 +143,10 @@ where
 
     fn evidence_for(&self, validator: &V) -> Vec<EquivocationEvidence<V, P, Id>> {
         self.records
-            .iter()
-            .filter(|((record_validator, _), _)| record_validator == validator)
-            .flat_map(|(_, bucket)| bucket.values().cloned())
+            .get(validator)
+            .into_iter()
+            .flat_map(|rounds| rounds.values())
+            .flat_map(|bucket| bucket.values().cloned())
             .collect()
     }
 }
