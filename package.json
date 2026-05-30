@@ -1,0 +1,11 @@
+{
+  "name": "cordial-f1r3node",
+  "private": true,
+  "scripts": {
+    "prepare": "husky",
+    "prepush:ci": "bash scripts/pre-push-ci.sh"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}
