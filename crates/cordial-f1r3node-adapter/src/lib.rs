@@ -28,4 +28,5 @@ pub mod repository;
 pub mod rspace_runtime;
 pub mod runtime_bridge;
 pub mod shard_conf;
+pub mod slashing;
 pub mod snapshot;
