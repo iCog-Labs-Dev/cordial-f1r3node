@@ -318,7 +318,7 @@ where
             shard_id: shard_id.into(),
             approved_block,
             validation_config,
-            repository: None, // LMDB storage not wired in yet
+            repository: None,
         }
     }
     /// Attach persistent LMDB storage to the adapter.
@@ -344,6 +344,32 @@ where
         &self.deploy_pool
     }
 
+    /// Persist a core Cordial block before inserting it into the in-memory
+    /// blocklace. No-op when persistent storage has not been attached.
+    pub fn persist_block(&self, block: &Block) -> Result<(), CasperError> {
+        if let Some(repo) = &self.repository {
+            repo.put_block(block).map_err(|e| {
+                CasperError::InvalidState(Box::leak(
+                    format!("put_block failed: {e}").into_boxed_str(),
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Persist the latest finalized cursor. No-op when persistent storage has
+    /// not been attached.
+    pub fn persist_finalized_cursor(&self, id: &BlockIdentity) -> Result<(), CasperError> {
+        if let Some(repo) = &self.repository {
+            repo.put_finalized_cursor(id).map_err(|e| {
+                CasperError::InvalidState(Box::leak(
+                    format!("put_finalized_cursor failed: {e}").into_boxed_str(),
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
     /// Helper: convert our core `InvalidBlock` to the adapter's mirror enum.
     fn map_core_error(err: &CoreInvalidBlock) -> InvalidBlock {
         match err {
@@ -365,6 +391,32 @@ where
     ) -> ValidationResult {
         let bl = self.blocklace.lock().await;
         core_validate_block(block, &bl, &self.bonds, cfg)
+    }
+
+    /// Validate a native Cordial block without translating through f1r3node's
+    /// `BlockMessage` shape. This preserves full predecessor identities,
+    /// including signatures, which the f1r3node wire format does not carry.
+    pub async fn validate_core_block(&self, block: &Block) -> ValidationResult {
+        self.validate_translated_block(block, &self.validation_config)
+            .await
+    }
+
+    /// Persist and insert an already validated native Cordial block.
+    pub async fn handle_valid_core_block(&self, block: Block) -> Result<(), CasperError> {
+        self.persist_block(&block)?;
+
+        let mut bl = self.blocklace.lock().await;
+        if bl.content(&block.identity).is_none() {
+            bl.insert(block, &self.verifier).map_err(|e| {
+                CasperError::InvalidState(Box::leak(format!("insert: {e}").into_boxed_str()))
+            })?;
+        }
+
+        if let Some(finalized_id) = latest_finalized_block_id(&bl, &self.bonds) {
+            self.persist_finalized_cursor(&finalized_id)?;
+        }
+
+        Ok(())
     }
 
     /// Internal: build a snapshot using the current blocklace + bonds.
@@ -572,53 +624,10 @@ where
 
     async fn handle_valid_block(&self, block: &BlockMessage) -> Result<(), CasperError> {
         let core_block = message_to_block(block)?;
-
-        // ── ADDED: persist BEFORE inserting into the in-memory engine ─────────
-        //
-        // Write-order invariant: disk is always ahead of memory.
-        //
-        // If the node crashes after put_block() but before bl.insert(),
-        // recover_into_engine() replays this block from disk on next startup.
-        //
-        // If put_block() fails (I/O error, LMDB full) we return early —
-        // the block is neither on disk nor in memory, which is safe because
-        // the caller will retry or the block arrives again from the network.
-        if let Some(repo) = &self.repository {
-            repo.put_block(&core_block).map_err(|e| {
-                CasperError::InvalidState(Box::leak(
-                    format!("put_block failed: {e}").into_boxed_str(),
-                ))
-            })?;
-        }
-
-        //  insert into in-memory DAG ───────────────────────────────
-        let mut bl = self.blocklace.lock().await;
-        bl.insert(core_block, &self.verifier).map_err(|e| {
-            CasperError::InvalidState(Box::leak(format!("insert: {e}").into_boxed_str()))
-        })?;
-
-        // ── ADDED: advance finalized cursor after successful insert ───────────
-        //
-        // latest_finalized_block_id runs over the current DAG state. We call it
-        // after every insert because any new block may cross the 2/3-weight
-        // threshold that finalizes a previous block.
-        //
-        // put_finalized_cursor is cheap (one LMDB write). On restart,
-        // recover_into_engine() reads this cursor to know where the node
-        // left off before the crash.
-        if let Some(repo) = &self.repository
-            && let Some(finalized_id) = latest_finalized_block_id(&bl, &self.bonds)
-        {
-            repo.put_finalized_cursor(&finalized_id).map_err(|e| {
-                CasperError::InvalidState(Box::leak(
-                    format!("put_finalized_cursor failed: {e}").into_boxed_str(),
-                ))
-            })?;
-        }
+        self.handle_valid_core_block(core_block).await?;
 
         //  drain the pending buffer ────────────────────────────────
         // Re-check in a loop because each newly-inserted block may unblock more.
-        drop(bl);
         let to_retry: Vec<BlockMessage> = {
             let mut buf = self.buffer.lock().await;
             buf.remove(&block.block_hash);
