@@ -23,7 +23,7 @@ shared = { path = "../../../f1r3node/shared" }
 
 # Direct deps we use in translation code. All come transitively via
 # f1r3node anyway; listing them explicitly keeps the imports working.
-prost = "0.14"
+prost.workspace = true
 tokio.workspace = true
 
 # LMDB — same library F1R3FLY uses in rspace_store_manager.rs
