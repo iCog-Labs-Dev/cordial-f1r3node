@@ -131,12 +131,15 @@ fn select_invalid_block_hash(
         bail!("slash evidence contains a block from a different validator");
     }
 
+    // f1r3node's SlashDeploy names one invalid block hash. Cordial evidence
+    // retains the full conflicting set separately, so choose the lowest content
+    // hash as the deterministic representative independent of signature bytes.
     let mut identities = record
         .blocks
         .iter()
         .map(|block| &block.identity)
         .collect::<Vec<_>>();
-    identities.sort();
+    identities.sort_by_key(|identity| identity.content_hash);
 
     Ok(identities[0].content_hash)
 }
