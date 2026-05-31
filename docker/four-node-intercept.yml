@@ -1,0 +1,161 @@
+name: cordial-f1r3node-four-node-intercept
+
+x-cordial-node-common: &cordial-node-common
+  image: ${CORDIAL_F1R3NODE_IMAGE:-cordial-f1r3node:local}
+  user: root
+  restart: unless-stopped
+  networks:
+    - cordial-four-node
+  environment:
+    RUST_LOG: ${RUST_LOG:-info,cordial_f1r3node_adapter=debug,cordial_f1r3space_adapter=debug}
+    OPENAI_ENABLED: "false"
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://127.0.0.1:40403/api/status"]
+    interval: 30s
+    timeout: 10s
+    retries: 6
+    start_period: 120s
+
+services:
+  cordial-node-1:
+    <<: *cordial-node-common
+    container_name: cordial.node1
+    command:
+      - run
+      - -s
+      - --host=cordial-node-1
+      - --validator-private-key=${CORDIAL_FOUR_NODE_PRIVATE_KEY:-0101010101010101010101010101010101010101010101010101010101010101}
+      - --allow-private-addresses
+      - --no-upnp
+      - --consensus
+      - cordial-miners
+      - --native-token-name=${NATIVE_TOKEN_NAME:-F1R3CAP}
+      - --native-token-symbol=${NATIVE_TOKEN_SYMBOL:-F1R3}
+      - --native-token-decimals=${NATIVE_TOKEN_DECIMALS:-8}
+    ports:
+      - "51400:40400"
+      - "51401:40401"
+      - "51402:40402"
+      - "51403:40403"
+      - "51404:40404"
+      - "51405:40405"
+    volumes:
+      - cordial-four-node-1-data:/var/lib/rnode
+      - ./conf/cordial-four-node.conf:/var/lib/rnode/rnode.conf:ro
+      - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
+      - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
+
+  cordial-node-2:
+    <<: *cordial-node-common
+    container_name: cordial.node2
+    command:
+      - run
+      - -s
+      - --host=cordial-node-2
+      - --validator-private-key=${CORDIAL_FOUR_NODE_PRIVATE_KEY:-0101010101010101010101010101010101010101010101010101010101010101}
+      - --allow-private-addresses
+      - --no-upnp
+      - --consensus
+      - cordial-miners
+      - --native-token-name=${NATIVE_TOKEN_NAME:-F1R3CAP}
+      - --native-token-symbol=${NATIVE_TOKEN_SYMBOL:-F1R3}
+      - --native-token-decimals=${NATIVE_TOKEN_DECIMALS:-8}
+    ports:
+      - "52400:40400"
+      - "52401:40401"
+      - "52402:40402"
+      - "52403:40403"
+      - "52404:40404"
+      - "52405:40405"
+    volumes:
+      - cordial-four-node-2-data:/var/lib/rnode
+      - ./conf/cordial-four-node.conf:/var/lib/rnode/rnode.conf:ro
+      - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
+      - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
+
+  cordial-node-3:
+    <<: *cordial-node-common
+    container_name: cordial.node3
+    command:
+      - run
+      - -s
+      - --host=cordial-node-3
+      - --validator-private-key=${CORDIAL_FOUR_NODE_PRIVATE_KEY:-0101010101010101010101010101010101010101010101010101010101010101}
+      - --allow-private-addresses
+      - --no-upnp
+      - --consensus
+      - cordial-miners
+      - --native-token-name=${NATIVE_TOKEN_NAME:-F1R3CAP}
+      - --native-token-symbol=${NATIVE_TOKEN_SYMBOL:-F1R3}
+      - --native-token-decimals=${NATIVE_TOKEN_DECIMALS:-8}
+    ports:
+      - "53400:40400"
+      - "53401:40401"
+      - "53402:40402"
+      - "53403:40403"
+      - "53404:40404"
+      - "53405:40405"
+    volumes:
+      - cordial-four-node-3-data:/var/lib/rnode
+      - ./conf/cordial-four-node.conf:/var/lib/rnode/rnode.conf:ro
+      - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
+      - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
+
+  cordial-node-4:
+    <<: *cordial-node-common
+    container_name: cordial.node4
+    command:
+      - run
+      - -s
+      - --host=cordial-node-4
+      - --validator-private-key=${CORDIAL_FOUR_NODE_PRIVATE_KEY:-0101010101010101010101010101010101010101010101010101010101010101}
+      - --allow-private-addresses
+      - --no-upnp
+      - --consensus
+      - cordial-miners
+      - --native-token-name=${NATIVE_TOKEN_NAME:-F1R3CAP}
+      - --native-token-symbol=${NATIVE_TOKEN_SYMBOL:-F1R3}
+      - --native-token-decimals=${NATIVE_TOKEN_DECIMALS:-8}
+    ports:
+      - "54400:40400"
+      - "54401:40401"
+      - "54402:40402"
+      - "54403:40403"
+      - "54404:40404"
+      - "54405:40405"
+    volumes:
+      - cordial-four-node-4-data:/var/lib/rnode
+      - ./conf/cordial-four-node.conf:/var/lib/rnode/rnode.conf:ro
+      - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
+      - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
+
+  cordial-four-node-verifier:
+    image: ${CORDIAL_F1R3NODE_IMAGE:-cordial-f1r3node:local}
+    profiles:
+      - verify
+    entrypoint:
+      - /bin/sh
+      - /opt/cordial-demo/verify-four-node-order.sh
+    depends_on:
+      cordial-node-1:
+        condition: service_healthy
+      cordial-node-2:
+        condition: service_healthy
+      cordial-node-3:
+        condition: service_healthy
+      cordial-node-4:
+        condition: service_healthy
+    networks:
+      - cordial-four-node
+    volumes:
+      - ./scripts/verify-four-node-order.sh:/opt/cordial-demo/verify-four-node-order.sh:ro
+
+volumes:
+  cordial-four-node-1-data:
+  cordial-four-node-2-data:
+  cordial-four-node-3-data:
+  cordial-four-node-4-data:
+
+networks:
+  cordial-four-node:
+    driver: bridge
