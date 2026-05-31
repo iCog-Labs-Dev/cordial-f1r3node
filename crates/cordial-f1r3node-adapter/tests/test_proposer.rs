@@ -199,7 +199,7 @@ fn proposer_packages_post_state_hash_from_execution() {
     let mut proposer = build_proposer(
         creator,
         bond_map.clone(),
-        MockRuntime::new(),
+        MockRuntime::permissive(),
         Secp256k1BlockSigner::new(sk),
         recorder,
         false,
@@ -215,7 +215,7 @@ fn proposer_packages_post_state_hash_from_execution() {
     let selected_deploys = pool.select_for_block(1, 0, &in_scope).deploys;
 
     let expected = {
-        let mut rt = MockRuntime::new();
+        let mut rt = MockRuntime::permissive();
         rt.execute_block(ExecutionRequest {
             pre_state_hash: vec![0x10; 32],
             deploys: selected_deploys,
