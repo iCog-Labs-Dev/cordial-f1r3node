@@ -220,10 +220,16 @@ fn proposer_packages_post_state_hash_from_execution() {
             pre_state_hash: vec![0x10; 32],
             deploys: selected_deploys,
             system_deploys: vec![],
-            bonds: vec![Bond {
-                validator: node(1),
-                stake: 100,
-            }],
+            bonds: vec![
+                Bond {
+                    validator: node(1),
+                    stake: 100,
+                },
+                Bond {
+                    validator: node(2),
+                    stake: 100,
+                },
+            ],
             block_number: 1,
         })
         .expect("direct execution")
