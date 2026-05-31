@@ -5,9 +5,8 @@ use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::select_predecessors;
 use cordial_miners_core::crypto::{SignatureScheme, hash_content};
 use cordial_miners_core::execution::{
-    Bond, BlockState, CordialBlockPayload, DeployPool, DeployPoolConfig,
-    ExecutionRequest, ExecutionResult, RuntimeError, RuntimeManager, SystemDeployRequest,
-    compute_deploys_in_scope,
+    BlockState, Bond, CordialBlockPayload, DeployPool, DeployPoolConfig, ExecutionRequest,
+    ExecutionResult, RuntimeError, RuntimeManager, SystemDeployRequest, compute_deploys_in_scope,
 };
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
@@ -47,11 +46,8 @@ pub trait ExecutionEngine {
 }
 
 pub trait BlockSigner {
-    fn sign_block(
-        &self,
-        content: &BlockContent,
-        creator: &NodeId,
-    ) -> Result<BlockIdentity, String>;
+    fn sign_block(&self, content: &BlockContent, creator: &NodeId)
+    -> Result<BlockIdentity, String>;
 }
 
 pub trait BlockBroadcaster {
@@ -182,9 +178,9 @@ fn derive_chain_head(
     let mut bonds = Vec::new();
 
     for pred_id in predecessors {
-        let block = blocklace
-            .get(pred_id)
-            .ok_or_else(|| ProposeError::PayloadDecode(format!("missing predecessor {pred_id:?}")))?;
+        let block = blocklace.get(pred_id).ok_or_else(|| {
+            ProposeError::PayloadDecode(format!("missing predecessor {pred_id:?}"))
+        })?;
         let payload = CordialBlockPayload::from_bytes(&block.content.payload)
             .map_err(ProposeError::PayloadDecode)?;
         let n = payload.state.block_number;
@@ -197,8 +193,9 @@ fn derive_chain_head(
                     false
                 } else {
                     match best_id.as_ref() {
-                        Some(current) => compare_identity(pred_id, current)
-                            == std::cmp::Ordering::Greater,
+                        Some(current) => {
+                            compare_identity(pred_id, current) == std::cmp::Ordering::Greater
+                        }
                         None => true,
                     }
                 }

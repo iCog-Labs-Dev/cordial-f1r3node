@@ -5,8 +5,8 @@ use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::select_predecessors;
 use cordial_miners_core::crypto::{CryptoVerifier, hash_content};
 use cordial_miners_core::execution::{
-    compute_deploys_in_scope, Bond, CordialBlockPayload, Deploy, DeployPool, DeployPoolConfig,
-    ExecutionRequest, MockRuntime, RuntimeManager, SignedDeploy,
+    Bond, CordialBlockPayload, Deploy, DeployPool, DeployPoolConfig, ExecutionRequest, MockRuntime,
+    RuntimeManager, SignedDeploy, compute_deploys_in_scope,
 };
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
@@ -84,7 +84,11 @@ fn simple_payload(block_number: u64, post_byte: u8) -> CordialBlockPayload {
     }
 }
 
-fn make_block(creator: NodeId, payload: CordialBlockPayload, predecessors: HashSet<BlockIdentity>) -> Block {
+fn make_block(
+    creator: NodeId,
+    payload: CordialBlockPayload,
+    predecessors: HashSet<BlockIdentity>,
+) -> Block {
     let content = BlockContent {
         payload: payload.to_bytes(),
         predecessors,
