@@ -1,0 +1,60 @@
+name: cordial-f1r3node-standalone
+
+services:
+  cordial-standalone:
+    build:
+      context: ../..
+      dockerfile: cordial-f1r3node/docker/Dockerfile
+      target: runtime
+      args:
+        CORDIAL_RUST_BASE: ${CORDIAL_RUST_BASE:-rust:slim-bookworm}
+        RUST_TOOLCHAIN: ${RUST_TOOLCHAIN:-nightly-2026-02-09}
+    image: ${CORDIAL_SOURCE_IMAGE:-cordial-f1r3node:local}
+    pull_policy: build
+    container_name: ${CORDIAL_STANDALONE_HOST:-cordial.standalone}
+    user: root
+    restart: unless-stopped
+    networks:
+      cordial-demo:
+        aliases:
+          - ${CORDIAL_STANDALONE_HOST:-cordial.standalone}
+    command:
+      - run
+      - -s
+      - --host=${CORDIAL_STANDALONE_HOST:-cordial.standalone}
+      - --validator-private-key=${CORDIAL_STANDALONE_PRIVATE_KEY:-0101010101010101010101010101010101010101010101010101010101010101}
+      - --allow-private-addresses
+      - --no-upnp
+      - --consensus
+      - cordial-miners
+      - --native-token-name=${NATIVE_TOKEN_NAME:-F1R3CAP}
+      - --native-token-symbol=${NATIVE_TOKEN_SYMBOL:-F1R3}
+      - --native-token-decimals=${NATIVE_TOKEN_DECIMALS:-8}
+    ports:
+      - "40400:40400"
+      - "40401:40401"
+      - "40402:40402"
+      - "40403:40403"
+      - "40404:40404"
+      - "40405:40405"
+    volumes:
+      - cordial-source-standalone-data:/var/lib/rnode
+      - ./conf/cordial-standalone.conf:/var/lib/rnode/rnode.conf:ro
+      - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
+      - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
+    environment:
+      RUST_LOG: ${RUST_LOG:-info,cordial_f1r3node_adapter=debug,cordial_f1r3space_adapter=debug}
+      OPENAI_ENABLED: "false"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:40403/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+volumes:
+  cordial-source-standalone-data:
+
+networks:
+  cordial-demo:
+    driver: bridge
