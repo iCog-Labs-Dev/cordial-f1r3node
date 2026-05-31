@@ -41,7 +41,7 @@
 
 use blake2::Blake2b;
 use blake2::digest::consts::U32;
-use k256::ecdsa::signature::{Signer as K256Signer, Verifier as K256Verifier};
+use k256::ecdsa::signature::hazmat::{PrehashSigner, PrehashVerifier};
 use k256::ecdsa::{
     Signature as K256Signature, SigningKey as K256SigningKey, VerifyingKey as K256VerifyingKey,
 };
@@ -237,12 +237,11 @@ impl Signer for Secp256k1 {
                 actual: private_key.len(),
             }
         })?;
-        // k256's sign() hashes the input itself; we pass the pre-computed
-        // 32-byte digest through `sign_prehash_recoverable` to keep the
-        // contract uniform with the Ed25519 signer (which signs over the
-        // provided hash verbatim). Use `try_sign` on the already-hashed
-        // input to match f1r3node semantics.
-        let sig: K256Signature = signing_key.sign(hash);
+        // Sign the already-computed block hash directly. This matches the
+        // core Secp256k1Scheme and f1r3node-style block verification.
+        let sig: K256Signature = signing_key
+            .sign_prehash(hash)
+            .map_err(|_| CryptoError::InvalidSignature)?;
         Ok(sig.to_der().to_bytes().to_vec())
     }
 }
@@ -266,7 +265,7 @@ impl Verifier for Secp256k1 {
         let verifying_key = K256VerifyingKey::from_sec1_bytes(public_key)
             .map_err(|_| CryptoError::InvalidPublicKey)?;
         let sig = K256Signature::from_der(signature).map_err(|_| CryptoError::InvalidSignature)?;
-        Ok(verifying_key.verify(hash, &sig).is_ok())
+        Ok(verifying_key.verify_prehash(hash, &sig).is_ok())
     }
 }
 
