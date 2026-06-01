@@ -538,8 +538,7 @@ fn predecessors_are_in_blocklace() {
     for pred_id in &preds {
         assert!(
             blocklace.get(pred_id).is_some(),
-            "predecessor {:?} must exist in the blocklace",
-            pred_id
+            "predecessor {pred_id:?} must exist in the blocklace"
         );
     }
 }
@@ -806,16 +805,11 @@ fn required_acknowledgements_always_supermajority() {
         // Must be strictly greater than 2n/3
         assert!(
             threshold * 3 > 2 * n,
-            "n={}: threshold {} is not > 2n/3",
-            n,
-            threshold
+            "n={n}: threshold {threshold} is not > 2n/3"
         );
-        // Must not exceed n (can't require more acknowledgements than validators exist)
         assert!(
             threshold <= n,
-            "n={}: threshold {} exceeds validator count",
-            n,
-            threshold
+            "n={n}: threshold {threshold} exceeds validator count"
         );
     }
 }

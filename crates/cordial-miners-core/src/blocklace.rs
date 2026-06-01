@@ -99,7 +99,7 @@ impl Blocklace {
                 &block.identity.signature,
                 &block.identity.creator,
             )
-            .map_err(|e| format!("Invalid signature: {:?}", e))?;
+            .map_err(|e| format!("Invalid signature: {e:?}"))?;
 
         // 2. Closure Axiom Enforcement (Issue 1)
         for pred_id in &block.content.predecessors {
