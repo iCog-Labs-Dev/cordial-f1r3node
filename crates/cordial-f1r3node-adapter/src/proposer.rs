@@ -1,24 +1,52 @@
-//! Cordial Miners proposer pipeline.
-//!
-//! The proposer is the outbound side of consensus: it selects parents from the
-//! blocklace, checks whether the core has retained equivocation evidence,
-//! formats any slash evidence into f1r3node system deploy bytes, prepends those
-//! system deploys ahead of user deploys, executes the batch, signs the block,
-//! and broadcasts it.
+use std::collections::{BTreeSet, HashMap, HashSet};
 
-use std::collections::{BTreeSet, HashSet};
-
-use anyhow::Result;
-use cordial_miners_core::block::Block;
-use cordial_miners_core::consensus::{CordialEquivocationEvidence, EvidencePool};
-use cordial_miners_core::execution::{CordialBlockPayload, SignedDeploy};
+use cordial_miners_core::Block;
+use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::consensus::{
+    CordialEquivocationEvidence, EvidencePool, select_predecessors,
+};
+use cordial_miners_core::crypto::{SignatureScheme, hash_content};
+use cordial_miners_core::execution::{
+    BlockState, Bond, CordialBlockPayload, DeployPool, DeployPoolConfig, ExecutionRequest,
+    ExecutionResult, RuntimeError, RuntimeManager, SystemDeployRequest, compute_deploys_in_scope,
+};
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
+use models::casper::{ProcessedSystemDeployProto, system_deploy_data_proto::SystemDeploy};
+use prost::Message;
 
 use crate::slashing::SlashDeployFormatter;
 
-/// Selects the parent/tip set to reference from the next Cordial block.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProposeError {
+    NoTips,
+    Execution(RuntimeError),
+    Sign(String),
+    Broadcast(String),
+    PayloadDecode(String),
+    SlashFormat(String),
+}
+
+impl std::fmt::Display for ProposeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoTips => write!(f, "no honest tips available for proposal"),
+            Self::Execution(e) => write!(f, "execution failed: {e:?}"),
+            Self::Sign(msg) => write!(f, "signing failed: {msg}"),
+            Self::Broadcast(msg) => write!(f, "broadcast failed: {msg}"),
+            Self::PayloadDecode(msg) => write!(f, "payload decode failed: {msg}"),
+            Self::SlashFormat(msg) => write!(f, "slash deploy formatting failed: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for ProposeError {}
+
 pub trait TipSelector {
-    fn select_tips(&mut self) -> Result<HashSet<BlockIdentity>>;
+    fn select_tips(
+        &self,
+        blocklace: &Blocklace,
+        bonds: &HashMap<NodeId, u64>,
+    ) -> HashSet<BlockIdentity>;
 }
 
 /// Exposes equivocation evidence retained by the pure Cordial core.
@@ -26,45 +54,39 @@ pub trait EvidenceSource {
     fn pending_evidence(&mut self) -> Vec<CordialEquivocationEvidence>;
 }
 
-/// Pulls user deploys from the host node's deploy pool.
-pub trait DeploySource {
-    fn pending_deploys(&mut self) -> Result<Vec<SignedDeploy>>;
-}
-
-/// Executes an ordered proposer batch and returns the block payload.
 pub trait ExecutionEngine {
-    fn execute(
-        &mut self,
-        parents: &HashSet<BlockIdentity>,
-        batch: Vec<ExecutionBatchItem>,
-    ) -> Result<CordialBlockPayload>;
+    fn execute(&mut self, request: ExecutionRequest) -> Result<ExecutionResult, RuntimeError>;
 }
 
-/// Signs assembled block content into a Cordial block.
 pub trait BlockSigner {
-    fn sign(&self, content: BlockContent) -> Result<Block>;
+    fn sign_block(&self, content: &BlockContent, creator: &NodeId)
+    -> Result<BlockIdentity, String>;
 }
 
-/// Broadcasts a newly signed block to peers.
 pub trait BlockBroadcaster {
-    fn broadcast(&mut self, block: &Block) -> Result<()>;
+    fn broadcast(&self, block: &Block) -> Result<(), String>;
 }
 
-/// One item in the exact order sent to execution.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ExecutionBatchItem {
-    /// f1r3node slash system deploy bytes produced by [`SlashDeployFormatter`].
-    SlashSystemDeploy(Vec<u8>),
-    /// A normal user deploy from the mempool.
-    UserDeploy(SignedDeploy),
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DisseminationTipSelector;
+
+impl TipSelector for DisseminationTipSelector {
+    fn select_tips(
+        &self,
+        blocklace: &Blocklace,
+        bonds: &HashMap<NodeId, u64>,
+    ) -> HashSet<BlockIdentity> {
+        select_predecessors(blocklace, bonds)
+    }
 }
 
-/// Summary returned after a successful proposal.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProposedBlock {
-    pub block: Block,
-    pub slash_deploy_count: usize,
-    pub user_deploy_count: usize,
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoEvidenceSource;
+
+impl EvidenceSource for NoEvidenceSource {
+    fn pending_evidence(&mut self) -> Vec<CordialEquivocationEvidence> {
+        Vec::new()
+    }
 }
 
 /// Evidence source backed by a core [`EvidencePool`].
@@ -101,412 +123,389 @@ where
     }
 }
 
-/// Cordial Miners block proposer with host-specific dependencies injected.
-pub struct CordialProposer<T, E, D, F, X, S, B> {
-    tip_selector: T,
-    evidence_source: E,
-    deploy_source: D,
-    slash_formatter: F,
-    execution_engine: X,
-    signer: S,
-    broadcaster: B,
-}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoopSlashFormatter;
 
-impl<T, E, D, F, X, S, B> CordialProposer<T, E, D, F, X, S, B> {
-    pub fn new(
-        tip_selector: T,
-        evidence_source: E,
-        deploy_source: D,
-        slash_formatter: F,
-        execution_engine: X,
-        signer: S,
-        broadcaster: B,
-    ) -> Self {
-        Self {
-            tip_selector,
-            evidence_source,
-            deploy_source,
-            slash_formatter,
-            execution_engine,
-            signer,
-            broadcaster,
-        }
+impl SlashDeployFormatter<NodeId, Block, BlockIdentity> for NoopSlashFormatter {
+    fn to_slash_system_deploys(
+        &self,
+        _evidence: &[CordialEquivocationEvidence],
+    ) -> anyhow::Result<Vec<Vec<u8>>> {
+        Ok(Vec::new())
     }
 }
 
-impl<T, E, D, F, X, S, B> CordialProposer<T, E, D, F, X, S, B>
-where
-    T: TipSelector,
-    E: EvidenceSource,
-    D: DeploySource,
-    F: SlashDeployFormatter<NodeId, Block, BlockIdentity>,
-    X: ExecutionEngine,
-    S: BlockSigner,
-    B: BlockBroadcaster,
-{
-    /// Create, sign, and broadcast one Cordial block.
-    ///
-    /// Slashing evidence is intentionally queried and formatted before the
-    /// deploy source is touched. That makes slash system deploys the first
-    /// items in the execution batch and prevents user deploys from taking
-    /// priority over consensus safety penalties.
-    pub fn propose(&mut self) -> Result<ProposedBlock> {
-        let parents = self.tip_selector.select_tips()?;
-        let evidence = self.evidence_source.pending_evidence();
-        let slash_system_deploys = self.slash_formatter.to_slash_system_deploys(&evidence)?;
-        let user_deploys = self.deploy_source.pending_deploys()?;
+pub struct RuntimeExecutionEngine<R> {
+    runtime: R,
+}
 
-        let slash_deploy_count = slash_system_deploys.len();
-        let user_deploy_count = user_deploys.len();
-        let batch = execution_batch(slash_system_deploys, user_deploys);
-        let payload = self.execution_engine.execute(&parents, batch)?;
-        let content = BlockContent {
-            payload: payload.to_bytes(),
-            predecessors: parents,
-        };
-        let block = self.signer.sign(content)?;
+impl<R> RuntimeExecutionEngine<R> {
+    pub fn new(runtime: R) -> Self {
+        Self { runtime }
+    }
 
-        self.broadcaster.broadcast(&block)?;
+    pub fn into_inner(self) -> R {
+        self.runtime
+    }
+}
 
-        Ok(ProposedBlock {
-            block,
-            slash_deploy_count,
-            user_deploy_count,
+impl<R: RuntimeManager> ExecutionEngine for RuntimeExecutionEngine<R> {
+    fn execute(&mut self, request: ExecutionRequest) -> Result<ExecutionResult, RuntimeError> {
+        self.runtime.execute_block(request)
+    }
+}
+
+pub struct Secp256k1BlockSigner {
+    private_key: Vec<u8>,
+}
+
+impl Secp256k1BlockSigner {
+    pub fn new(private_key: Vec<u8>) -> Self {
+        Self { private_key }
+    }
+}
+
+impl BlockSigner for Secp256k1BlockSigner {
+    fn sign_block(
+        &self,
+        content: &BlockContent,
+        creator: &NodeId,
+    ) -> Result<BlockIdentity, String> {
+        use cordial_miners_core::crypto::Secp256k1Scheme;
+
+        let content_hash = hash_content(content);
+        let signature = Secp256k1Scheme.sign(&content_hash, &self.private_key)?;
+        Ok(BlockIdentity {
+            content_hash,
+            creator: creator.clone(),
+            signature,
         })
     }
 }
 
-/// Build the exact ordered batch sent to execution.
-///
-/// Slash system deploys are always first. User deploy order is preserved after
-/// the system deploy prefix.
-pub fn execution_batch(
-    slash_system_deploys: Vec<Vec<u8>>,
-    user_deploys: Vec<SignedDeploy>,
-) -> Vec<ExecutionBatchItem> {
-    slash_system_deploys
-        .into_iter()
-        .map(ExecutionBatchItem::SlashSystemDeploy)
-        .chain(user_deploys.into_iter().map(ExecutionBatchItem::UserDeploy))
+pub struct FnBroadcaster<F>
+where
+    F: Fn(&Block) -> Result<(), String>,
+{
+    f: F,
+}
+
+impl<F> FnBroadcaster<F>
+where
+    F: Fn(&Block) -> Result<(), String>,
+{
+    pub fn new(f: F) -> Self {
+        Self { f }
+    }
+}
+
+impl<F> BlockBroadcaster for FnBroadcaster<F>
+where
+    F: Fn(&Block) -> Result<(), String>,
+{
+    fn broadcast(&self, block: &Block) -> Result<(), String> {
+        (self.f)(block)
+    }
+}
+
+pub struct RecordingBroadcaster {
+    pub blocks: std::sync::Arc<std::sync::Mutex<Vec<Block>>>,
+}
+
+impl RecordingBroadcaster {
+    pub fn new() -> Self {
+        Self {
+            blocks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+}
+
+impl Default for RecordingBroadcaster {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BlockBroadcaster for RecordingBroadcaster {
+    fn broadcast(&self, block: &Block) -> Result<(), String> {
+        self.blocks
+            .lock()
+            .map_err(|e| format!("lock poisoned: {e}"))?
+            .push(block.clone());
+        Ok(())
+    }
+}
+
+fn derive_chain_head(
+    blocklace: &Blocklace,
+    predecessors: &HashSet<BlockIdentity>,
+) -> Result<(Vec<u8>, u64, Vec<Bond>), ProposeError> {
+    let mut best_number: Option<u64> = None;
+    let mut best_id: Option<BlockIdentity> = None;
+    let mut pre_state_hash = Vec::new();
+    let mut bonds = Vec::new();
+
+    for pred_id in predecessors {
+        let block = blocklace.get(pred_id).ok_or_else(|| {
+            ProposeError::PayloadDecode(format!("missing predecessor {pred_id:?}"))
+        })?;
+        let payload = CordialBlockPayload::from_bytes(&block.content.payload)
+            .map_err(ProposeError::PayloadDecode)?;
+        let n = payload.state.block_number;
+        let should_update = match best_number {
+            None => true,
+            Some(best) => {
+                if n > best {
+                    true
+                } else if n < best {
+                    false
+                } else {
+                    match best_id.as_ref() {
+                        Some(current) => {
+                            compare_identity(pred_id, current) == std::cmp::Ordering::Greater
+                        }
+                        None => true,
+                    }
+                }
+            }
+        };
+
+        if should_update {
+            best_number = Some(n);
+            best_id = Some(pred_id.clone());
+            pre_state_hash = payload.state.post_state_hash.clone();
+            bonds = payload.state.bonds.clone();
+        }
+    }
+
+    let block_number = best_number.map(|n| n + 1).unwrap_or(0);
+    Ok((pre_state_hash, block_number, bonds))
+}
+
+fn bonds_map_to_vec(bonds: &HashMap<NodeId, u64>) -> Vec<Bond> {
+    let mut out: Vec<Bond> = bonds
+        .iter()
+        .map(|(validator, stake)| Bond {
+            validator: validator.clone(),
+            stake: *stake,
+        })
+        .collect();
+    out.sort_by(|a, b| a.validator.0.cmp(&b.validator.0));
+    out
+}
+
+fn compare_identity(a: &BlockIdentity, b: &BlockIdentity) -> std::cmp::Ordering {
+    a.content_hash
+        .cmp(&b.content_hash)
+        .then_with(|| a.creator.0.cmp(&b.creator.0))
+        .then_with(|| a.signature.cmp(&b.signature))
+}
+
+fn slash_system_deploys<ES, SF>(
+    evidence_source: &mut ES,
+    slash_formatter: &SF,
+) -> Result<Vec<SystemDeployRequest>, ProposeError>
+where
+    ES: EvidenceSource,
+    SF: SlashDeployFormatter<NodeId, Block, BlockIdentity>,
+{
+    let evidence = evidence_source.pending_evidence();
+    if evidence.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let formatted = slash_formatter
+        .to_slash_system_deploys(&evidence)
+        .map_err(|err| ProposeError::SlashFormat(err.to_string()))?;
+
+    if formatted.len() != evidence.len() {
+        return Err(ProposeError::SlashFormat(format!(
+            "formatter returned {} slash deploys for {} evidence records",
+            formatted.len(),
+            evidence.len()
+        )));
+    }
+
+    evidence
+        .iter()
+        .zip(formatted.iter())
+        .map(|(record, bytes)| decode_slash_system_deploy(record, bytes))
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
+fn decode_slash_system_deploy(
+    record: &CordialEquivocationEvidence,
+    bytes: &[u8],
+) -> Result<SystemDeployRequest, ProposeError> {
+    let proto = ProcessedSystemDeployProto::decode(bytes)
+        .map_err(|err| ProposeError::SlashFormat(err.to_string()))?;
+    let system_deploy = proto
+        .system_deploy
+        .and_then(|data| data.system_deploy)
+        .ok_or_else(|| ProposeError::SlashFormat("missing slash system deploy".to_string()))?;
 
-    use cordial_miners_core::consensus::{CordialEvidencePool, EquivocationEvidence, EvidencePool};
-    use cordial_miners_core::execution::{
-        BlockState, Bond, CordialBlockPayload, Deploy, ProcessedSystemDeploy, SignedDeploy,
+    let SystemDeploy::SlashSystemDeploy(slash) = system_deploy else {
+        return Err(ProposeError::SlashFormat(
+            "formatted system deploy is not a slash deploy".to_string(),
+        ));
     };
 
-    use super::*;
+    let invalid_block_hash = slash.invalid_block_hash.to_vec();
+    SystemDeployRequest::validate_invalid_block_hash(&invalid_block_hash)
+        .map_err(ProposeError::SlashFormat)?;
 
-    type CallLog = Rc<RefCell<Vec<&'static str>>>;
+    Ok(SystemDeployRequest::Slash {
+        validator: record.validator.clone(),
+        invalid_block_hash,
+    })
+}
 
-    fn node(byte: u8) -> NodeId {
-        NodeId(vec![byte; 33])
-    }
+pub struct CordialProposer<TS, EE, BS, BC, ES = NoEvidenceSource, SF = NoopSlashFormatter> {
+    tip_selector: TS,
+    execution: EE,
+    signer: BS,
+    broadcaster: BC,
+    evidence_source: ES,
+    slash_formatter: SF,
+    creator: NodeId,
+    bonds: HashMap<NodeId, u64>,
+    deploy_pool_config: DeployPoolConfig,
+    include_close_block: bool,
+}
 
-    fn identity(creator: NodeId, tag: u8) -> BlockIdentity {
-        let mut content_hash = [0u8; 32];
-        content_hash[0] = tag;
-        BlockIdentity {
-            content_hash,
-            creator,
-            signature: vec![tag; 64],
-        }
-    }
-
-    fn block(creator: NodeId, tag: u8) -> Block {
-        Block {
-            identity: identity(creator, tag),
-            content: BlockContent {
-                payload: vec![tag],
-                predecessors: HashSet::new(),
-            },
-        }
-    }
-
-    fn signed_deploy(tag: u8) -> SignedDeploy {
-        SignedDeploy {
-            deploy: Deploy {
-                term: vec![tag],
-                timestamp: tag as u64,
-                phlo_price: 1,
-                phlo_limit: 1_000,
-                valid_after_block_number: 0,
-                shard_id: "root".to_string(),
-            },
-            deployer: vec![tag; 33],
-            signature: vec![tag; 64],
-        }
-    }
-
-    fn payload(system_deploys: Vec<ProcessedSystemDeploy>) -> CordialBlockPayload {
-        CordialBlockPayload {
-            state: BlockState {
-                pre_state_hash: vec![0x01],
-                post_state_hash: vec![0x02],
-                bonds: vec![Bond {
-                    validator: node(1),
-                    stake: 1,
-                }],
-                block_number: 1,
-            },
-            deploys: vec![],
-            rejected_deploys: vec![],
-            system_deploys,
-        }
-    }
-
-    struct MockTipSelector {
-        log: CallLog,
-        tips: HashSet<BlockIdentity>,
-    }
-
-    impl TipSelector for MockTipSelector {
-        fn select_tips(&mut self) -> Result<HashSet<BlockIdentity>> {
-            self.log.borrow_mut().push("select_tips");
-            Ok(self.tips.clone())
-        }
-    }
-
-    struct MockEvidenceSource {
-        log: CallLog,
-        evidence: Vec<CordialEquivocationEvidence>,
-    }
-
-    impl EvidenceSource for MockEvidenceSource {
-        fn pending_evidence(&mut self) -> Vec<CordialEquivocationEvidence> {
-            self.log.borrow_mut().push("query_evidence");
-            self.evidence.clone()
-        }
-    }
-
-    struct MockDeploySource {
-        log: CallLog,
-        deploys: Vec<SignedDeploy>,
-    }
-
-    impl DeploySource for MockDeploySource {
-        fn pending_deploys(&mut self) -> Result<Vec<SignedDeploy>> {
-            self.log.borrow_mut().push("pull_user_deploys");
-            Ok(self.deploys.clone())
-        }
-    }
-
-    struct MockSlashFormatter {
-        log: CallLog,
-        formatted: Vec<Vec<u8>>,
-        observed_evidence: Rc<RefCell<Vec<CordialEquivocationEvidence>>>,
-    }
-
-    impl SlashDeployFormatter<NodeId, Block, BlockIdentity> for MockSlashFormatter {
-        fn to_slash_system_deploys(
-            &self,
-            evidence: &[EquivocationEvidence<NodeId, Block, BlockIdentity>],
-        ) -> Result<Vec<Vec<u8>>> {
-            self.log.borrow_mut().push("format_slash_deploys");
-            *self.observed_evidence.borrow_mut() = evidence.to_vec();
-            Ok(self.formatted.clone())
-        }
-    }
-
-    struct MockExecutionEngine {
-        log: CallLog,
-        captured_batch: Rc<RefCell<Option<Vec<ExecutionBatchItem>>>>,
-        output: CordialBlockPayload,
-    }
-
-    impl ExecutionEngine for MockExecutionEngine {
-        fn execute(
-            &mut self,
-            _parents: &HashSet<BlockIdentity>,
-            batch: Vec<ExecutionBatchItem>,
-        ) -> Result<CordialBlockPayload> {
-            self.log.borrow_mut().push("execute_batch");
-            *self.captured_batch.borrow_mut() = Some(batch);
-            Ok(self.output.clone())
-        }
-    }
-
-    struct MockSigner {
-        log: CallLog,
+impl<TS, EE, BS, BC> CordialProposer<TS, EE, BS, BC, NoEvidenceSource, NoopSlashFormatter> {
+    pub fn new(
+        tip_selector: TS,
+        execution: EE,
+        signer: BS,
+        broadcaster: BC,
         creator: NodeId,
+        bonds: HashMap<NodeId, u64>,
+        deploy_pool_config: DeployPoolConfig,
+    ) -> Self {
+        Self {
+            tip_selector,
+            execution,
+            signer,
+            broadcaster,
+            evidence_source: NoEvidenceSource,
+            slash_formatter: NoopSlashFormatter,
+            creator,
+            bonds,
+            deploy_pool_config,
+            include_close_block: true,
+        }
     }
+}
 
-    impl BlockSigner for MockSigner {
-        fn sign(&self, content: BlockContent) -> Result<Block> {
-            self.log.borrow_mut().push("sign_block");
-            Ok(Block {
-                identity: identity(self.creator.clone(), 0x99),
-                content,
-            })
+impl<TS, EE, BS, BC, ES, SF> CordialProposer<TS, EE, BS, BC, ES, SF> {
+    pub fn with_slashing<NES, NSF>(
+        self,
+        evidence_source: NES,
+        slash_formatter: NSF,
+    ) -> CordialProposer<TS, EE, BS, BC, NES, NSF> {
+        CordialProposer {
+            tip_selector: self.tip_selector,
+            execution: self.execution,
+            signer: self.signer,
+            broadcaster: self.broadcaster,
+            evidence_source,
+            slash_formatter,
+            creator: self.creator,
+            bonds: self.bonds,
+            deploy_pool_config: self.deploy_pool_config,
+            include_close_block: self.include_close_block,
         }
     }
 
-    struct MockBroadcaster {
-        log: CallLog,
-        broadcasted: Rc<RefCell<Vec<Block>>>,
+    pub fn with_close_block(mut self, include: bool) -> Self {
+        self.include_close_block = include;
+        self
     }
+}
 
-    impl BlockBroadcaster for MockBroadcaster {
-        fn broadcast(&mut self, block: &Block) -> Result<()> {
-            self.log.borrow_mut().push("broadcast_block");
-            self.broadcasted.borrow_mut().push(block.clone());
-            Ok(())
+impl<TS, EE, BS, BC, ES, SF> CordialProposer<TS, EE, BS, BC, ES, SF>
+where
+    TS: TipSelector,
+    EE: ExecutionEngine,
+    BS: BlockSigner,
+    BC: BlockBroadcaster,
+    ES: EvidenceSource,
+    SF: SlashDeployFormatter<NodeId, Block, BlockIdentity>,
+{
+    pub fn propose(
+        &mut self,
+        blocklace: &Blocklace,
+        deploy_pool: &DeployPool,
+    ) -> Result<Block, ProposeError> {
+        let predecessors = self.tip_selector.select_tips(blocklace, &self.bonds);
+
+        let (pre_state_hash, block_number, bonds) = if predecessors.is_empty() {
+            if blocklace.dom().is_empty() {
+                (vec![], 0u64, bonds_map_to_vec(&self.bonds))
+            } else {
+                return Err(ProposeError::NoTips);
+            }
+        } else {
+            derive_chain_head(blocklace, &predecessors)?
+        };
+
+        let mut system_deploys =
+            slash_system_deploys(&mut self.evidence_source, &self.slash_formatter)?;
+        if self.include_close_block {
+            system_deploys.push(SystemDeployRequest::CloseBlock);
         }
-    }
 
-    #[test]
-    fn proposer_prepends_slash_deploys_before_user_deploys() {
-        let log = Rc::new(RefCell::new(Vec::new()));
-        let validator = node(7);
-        let evidence = vec![EquivocationEvidence::new(
-            validator.clone(),
-            2,
-            vec![block(validator.clone(), 0x01), block(validator, 0x02)],
-        )];
-        let slash_bytes = vec![0xfa, 0xce];
-        let user_deploy = signed_deploy(0x42);
-        let captured_batch = Rc::new(RefCell::new(None));
-        let observed_evidence = Rc::new(RefCell::new(Vec::new()));
-        let broadcasted = Rc::new(RefCell::new(Vec::new()));
-
-        let mut proposer = CordialProposer::new(
-            MockTipSelector {
-                log: Rc::clone(&log),
-                tips: HashSet::from([identity(node(1), 0x10)]),
-            },
-            MockEvidenceSource {
-                log: Rc::clone(&log),
-                evidence: evidence.clone(),
-            },
-            MockDeploySource {
-                log: Rc::clone(&log),
-                deploys: vec![user_deploy.clone()],
-            },
-            MockSlashFormatter {
-                log: Rc::clone(&log),
-                formatted: vec![slash_bytes.clone()],
-                observed_evidence: Rc::clone(&observed_evidence),
-            },
-            MockExecutionEngine {
-                log: Rc::clone(&log),
-                captured_batch: Rc::clone(&captured_batch),
-                output: payload(vec![]),
-            },
-            MockSigner {
-                log: Rc::clone(&log),
-                creator: node(8),
-            },
-            MockBroadcaster {
-                log: Rc::clone(&log),
-                broadcasted: Rc::clone(&broadcasted),
-            },
+        let deploys_in_scope = compute_deploys_in_scope(
+            blocklace,
+            &predecessors,
+            block_number,
+            self.deploy_pool_config.deploy_lifespan,
         );
 
-        let proposed = proposer.propose().unwrap();
+        let selected = deploy_pool.select_for_block(block_number, 0, &deploys_in_scope);
 
-        assert_eq!(proposed.slash_deploy_count, 1);
-        assert_eq!(proposed.user_deploy_count, 1);
-        assert_eq!(broadcasted.borrow().len(), 1);
-        assert_eq!(*observed_evidence.borrow(), evidence);
+        let request = ExecutionRequest {
+            pre_state_hash: pre_state_hash.clone(),
+            deploys: selected.deploys,
+            system_deploys,
+            bonds: bonds.clone(),
+            block_number,
+        };
 
-        let batch = captured_batch.borrow().clone().unwrap();
-        assert_eq!(
-            batch,
-            vec![
-                ExecutionBatchItem::SlashSystemDeploy(slash_bytes),
-                ExecutionBatchItem::UserDeploy(user_deploy),
-            ]
-        );
-        assert_eq!(
-            *log.borrow(),
-            vec![
-                "select_tips",
-                "query_evidence",
-                "format_slash_deploys",
-                "pull_user_deploys",
-                "execute_batch",
-                "sign_block",
-                "broadcast_block",
-            ]
-        );
-    }
+        let result = self
+            .execution
+            .execute(request)
+            .map_err(ProposeError::Execution)?;
 
-    #[test]
-    fn core_evidence_pool_and_adapter_formatter_remain_isolated_by_traits() {
-        let log = Rc::new(RefCell::new(Vec::new()));
-        let validator = node(3);
-        let left = block(validator.clone(), 0x11);
-        let right = block(validator.clone(), 0x22);
-        let mut pool = CordialEvidencePool::new();
-        assert!(pool.record_equivocation(validator.clone(), 4, vec![left.clone(), right.clone()]));
-
-        let slash_bytes = vec![0xab, 0xcd, 0xef];
-        let captured_batch = Rc::new(RefCell::new(None));
-        let observed_evidence = Rc::new(RefCell::new(Vec::new()));
-        let broadcasted = Rc::new(RefCell::new(Vec::new()));
-
-        let mut proposer = CordialProposer::new(
-            MockTipSelector {
-                log: Rc::clone(&log),
-                tips: HashSet::new(),
+        let payload = CordialBlockPayload {
+            state: BlockState {
+                pre_state_hash,
+                post_state_hash: result.post_state_hash,
+                bonds: result.new_bonds,
+                block_number,
             },
-            EvidencePoolSource::new(&pool, vec![validator.clone(), validator.clone()]),
-            MockDeploySource {
-                log: Rc::clone(&log),
-                deploys: vec![],
-            },
-            MockSlashFormatter {
-                log: Rc::clone(&log),
-                formatted: vec![slash_bytes.clone()],
-                observed_evidence: Rc::clone(&observed_evidence),
-            },
-            MockExecutionEngine {
-                log: Rc::clone(&log),
-                captured_batch: Rc::clone(&captured_batch),
-                output: payload(vec![ProcessedSystemDeploy::Slash {
-                    validator: validator.clone(),
-                    succeeded: true,
-                }]),
-            },
-            MockSigner {
-                log: Rc::clone(&log),
-                creator: node(9),
-            },
-            MockBroadcaster {
-                log: Rc::clone(&log),
-                broadcasted: Rc::clone(&broadcasted),
-            },
-        );
+            deploys: result.processed_deploys,
+            rejected_deploys: result.rejected_deploys,
+            system_deploys: result.system_deploys,
+        };
 
-        proposer.propose().unwrap();
+        let content = BlockContent {
+            payload: payload.to_bytes(),
+            predecessors: predecessors.clone(),
+        };
 
-        let observed = observed_evidence.borrow();
-        assert_eq!(observed.len(), 1);
-        assert_eq!(observed[0].validator, validator);
-        assert_eq!(observed[0].round, 4);
-        assert_eq!(observed[0].blocks, vec![left, right]);
+        let identity = self
+            .signer
+            .sign_block(&content, &self.creator)
+            .map_err(ProposeError::Sign)?;
 
-        let batch = captured_batch.borrow().clone().unwrap();
-        assert_eq!(
-            batch.first(),
-            Some(&ExecutionBatchItem::SlashSystemDeploy(slash_bytes))
-        );
-        assert_eq!(
-            *log.borrow(),
-            vec![
-                "select_tips",
-                "format_slash_deploys",
-                "pull_user_deploys",
-                "execute_batch",
-                "sign_block",
-                "broadcast_block",
-            ]
-        );
+        let block = Block { identity, content };
+
+        self.broadcaster
+            .broadcast(&block)
+            .map_err(ProposeError::Broadcast)?;
+
+        Ok(block)
     }
 }

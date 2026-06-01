@@ -692,13 +692,17 @@ dependencies = [
  "cordial-miners-core",
  "ed25519-dalek",
  "either",
+ "heed 0.20.5",
  "k256",
  "models",
  "prost",
  "rand 0.8.5",
  "serde",
  "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

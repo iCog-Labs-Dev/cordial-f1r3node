@@ -23,7 +23,7 @@ use crate::blocklace::Blocklace;
 use crate::consensus::cordiality::all_equivocations;
 use crate::consensus::fork_choice::collect_validator_tips;
 use crate::consensus::validation::{InvalidBlock, ValidationConfig, validated_insert};
-use crate::types::{BlockIdentity, NodeId};
+use crate::types::{BlockContent, BlockIdentity, NodeId};
 
 /// Collect the set of visible validator tips from the local blocklace.
 ///
@@ -202,6 +202,72 @@ pub fn weighted_required_acknowledgements(bonds: &HashMap<NodeId, u64>) -> u64 {
         return 0;
     }
     ((2 * total_stake) / 3 + 1) as u64
+}
+
+/// Reasons local proposal construction can fail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProposalError {
+    /// The local view does not contain enough visible honest validator tips to
+    /// satisfy the cordial acknowledgement threshold.
+    InsufficientAcknowledgements { observed: usize, required: usize },
+
+    /// No predecessors could be selected from the current local view.
+    NoPredecessorsAvailable,
+}
+
+/// Select the predecessor set for the next locally proposed block.
+///
+/// This helper does not decide *when* a node should propose; it only answers
+/// which predecessors should be referenced once an external scheduler requests
+/// a proposal.
+///
+/// As a special bootstrap case, an empty blocklace yields an empty predecessor
+/// set so the first block can be proposed before any tips exist.
+///
+/// For non-empty views, predecessor selection succeeds only when the local
+/// blocklace contains enough visible honest validator tips to satisfy
+/// `required_acknowledgements(...)`. The returned set itself comes from
+/// `select_predecessors(...)`, which may include additional known equivocation
+/// branches needed for cordiality.
+pub fn next_block_predecessors(
+    blocklace: &Blocklace,
+    bonds: &HashMap<NodeId, u64>,
+) -> Result<HashSet<BlockIdentity>, ProposalError> {
+    if blocklace.dom().is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let predecessors = select_predecessors(blocklace, bonds);
+    if predecessors.is_empty() {
+        return Err(ProposalError::NoPredecessorsAvailable);
+    }
+
+    let observed = validator_visible_tips(blocklace, bonds).len();
+    let required = required_acknowledgements(bonds);
+
+    if observed < required {
+        return Err(ProposalError::InsufficientAcknowledgements { observed, required });
+    }
+
+    Ok(predecessors)
+}
+
+/// Build a deterministic block-content candidate from the current local view.
+///
+/// This helper does not decide *when* a node should propose; it only answers
+/// *what* payload and predecessor set should be used once an external scheduler
+/// requests a proposal.
+pub fn build_block_candidate(
+    blocklace: &Blocklace,
+    bonds: &HashMap<NodeId, u64>,
+    payload: Vec<u8>,
+) -> Result<BlockContent, ProposalError> {
+    let predecessors = next_block_predecessors(blocklace, bonds)?;
+
+    Ok(BlockContent {
+        payload,
+        predecessors,
+    })
 }
 
 /// A buffer for blocks that arrive out of order (before their predecessors).
