@@ -296,7 +296,8 @@ pub fn four_node_convergence_trace() -> TraceDocument {
     events.push(TraceEvent {
         kind: "partition".to_string(),
         title: "Observer C partitioned".to_string(),
-        detail: "Observer C is temporarily cut off and can only see a partial view of the wave.".to_string(),
+        detail: "Observer C is temporarily cut off and can only see a partial view of the wave."
+            .to_string(),
         node: Some("C".to_string()),
         block: None,
         outcome: None,
@@ -313,10 +314,19 @@ pub fn four_node_convergence_trace() -> TraceDocument {
     ));
 
     let delivery_plan: Vec<(&str, Vec<&Block>)> = vec![
-        ("A", vec![&leader, &r1_v2, &r1_v3, &r1_v4, &r2_v2, &r2_v3, &r2_v4]),
-        ("B", vec![&r2_v3, &r1_v2, &r2_v2, &leader, &r1_v4, &r2_v4, &r1_v3]),
+        (
+            "A",
+            vec![&leader, &r1_v2, &r1_v3, &r1_v4, &r2_v2, &r2_v3, &r2_v4],
+        ),
+        (
+            "B",
+            vec![&r2_v3, &r1_v2, &r2_v2, &leader, &r1_v4, &r2_v4, &r1_v3],
+        ),
         ("C", vec![&leader, &r1_v2]),
-        ("D", vec![&leader, &r1_v4, &r2_v4, &r1_v3, &r2_v3, &r1_v2, &r2_v2]),
+        (
+            "D",
+            vec![&leader, &r1_v4, &r2_v4, &r1_v3, &r2_v3, &r1_v2, &r2_v2],
+        ),
     ];
 
     let recipient_ids: HashMap<&str, NodeId> = HashMap::from([
@@ -337,7 +347,10 @@ pub fn four_node_convergence_trace() -> TraceDocument {
             let block_label = label_for_tag(block.identity.signature[0]);
             let (detail, outcome_text) = match outcome {
                 DeliveryOutcome::Inserted => (
-                    format!("{} accepted {} into its local blocklace.", node_name, block_label),
+                    format!(
+                        "{} accepted {} into its local blocklace.",
+                        node_name, block_label
+                    ),
                     "inserted".to_string(),
                 ),
                 DeliveryOutcome::Buffered => (
@@ -434,7 +447,11 @@ pub fn four_node_convergence_trace() -> TraceDocument {
                 "buffered".to_string(),
             ),
             DeliveryOutcome::Rejected(errors) => (
-                format!("C rejected {} with {} validation errors.", block_label, errors.len()),
+                format!(
+                    "C rejected {} with {} validation errors.",
+                    block_label,
+                    errors.len()
+                ),
                 "rejected".to_string(),
             ),
         };

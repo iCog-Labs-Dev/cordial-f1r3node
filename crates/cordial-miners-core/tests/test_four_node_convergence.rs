@@ -134,7 +134,11 @@ fn four_nodes_converge_on_same_final_leader_and_tau_output() {
     for observer_id in observers {
         let observer = network.node(&observer_id).expect("observer should exist");
 
-        assert_eq!(observer.pending_len(), 0, "observer should have no buffered blocks left");
+        assert_eq!(
+            observer.pending_len(),
+            0,
+            "observer should have no buffered blocks left"
+        );
         for block in all_blocks {
             assert!(
                 observer.knows_block(&block.identity),
@@ -187,7 +191,10 @@ fn four_node_convergence_records_buffering_before_catch_up() {
         Some(DeliveryOutcome::Buffered)
     );
     assert_eq!(
-        network.node(&node(80)).expect("observer should exist").pending_len(),
+        network
+            .node(&node(80))
+            .expect("observer should exist")
+            .pending_len(),
         1
     );
 
