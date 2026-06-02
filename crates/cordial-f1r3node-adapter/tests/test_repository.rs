@@ -364,8 +364,7 @@ fn get_block_with_corrupt_value_returns_error() {
     assert!(
         result.is_err(),
         "get_block on corrupt value must return Err, not Ok(None) or panic. \
-         Got: {:?}",
-        result
+         Got: {result:?}"
     );
 
     // Verify the error is specifically a deserialization error, not an I/O error
@@ -375,9 +374,6 @@ fn get_block_with_corrupt_value_returns_error() {
         cordial_f1r3space_adapter::RepoError::Bincode(_) => {
             // correct — bincode failed to deserialize the garbage bytes
         }
-        other => panic!(
-            "Expected RepoError::Bincode for corrupt value, got: {:?}",
-            other
-        ),
+        other => panic!("Expected RepoError::Bincode for corrupt value, got: {other:?}"),
     }
 }
