@@ -162,7 +162,9 @@ fn known_labels(node: &SimNode) -> Vec<String> {
 fn buffered_labels(node: &SimNode) -> Vec<String> {
     let mut labels: Vec<_> = node
         .pending
-        .buffered_blocks.values().map(|block| label_for_tag(block.identity.signature[0]))
+        .buffered_blocks
+        .values()
+        .map(|block| label_for_tag(block.identity.signature[0]))
         .collect();
     labels.sort();
     labels
