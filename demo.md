@@ -1,8 +1,5 @@
 # Cordial Miners Demo
 
-This runbook mirrors the shape of `../f1r3node/demo.md`, but it is focused on
-proving that this checkout can run f1r3node with `--consensus cordial-miners`.
-
 The demo covers two layers:
 
 1. The deterministic Cordial Miners conformance tests, which exercise the
@@ -13,42 +10,6 @@ The demo covers two layers:
 3. A four-runtime Docker demo that starts four local f1r3node processes,
    intercepts the same local proposal stream through the Cordial adapter, and
    verifies that all four expose the exact same ordered view.
-
-## Quarter KR Mapping
-
-This quarter is a logic prototype. The goal is not to replace the production
-consensus layer in this demo. The goal is to show a non-breaking component that
-enters through f1r3node's existing API/runtime surface and locally orders
-messages through the Cordial Miners blocklace and tau ordering path.
-
-Objective One: Research & Systems Design
-
-- KR 1: Cordial Miners paper, IOTA DAG work, and DAG/BFT literature reviewed.
-- KR 2: f1r3node `casper`, `rholang`, API, and runtime startup paths audited.
-- KR 3: prototype `Block`, `Blocklace`, adapter, proposer, and node-facing
-  interfaces defined in the Cordial crates.
-- KR 4: blocklace adapter and tau ordering rules documented in
-  `docs/cordial-miners/`.
-
-Objective Two: Core Blocklace Library & Integration Bridge
-
-- KR 1: Rust block structure and multi-parent blocklace DAG are implemented in
-  `cordial-miners-core`.
-- KR 2: `observe`, approval, equivocation, cordiality, and ratification logic
-  are covered by focused core tests.
-- KR 3: the adapter includes the gRPC/block ingestion bridge and routes
-  f1r3node messages into the local DAG representation.
-- KR 4: repository and RSpace-backed persistence integration are covered by the
-  repository and recovery tests, with Docker using normal f1r3node data dirs.
-
-Objective Three: Logic Proof & Consensus Convergence
-
-- KR 1: supermajority approval rules are implemented and tested.
-- KR 2: leader finalization and stable tau prefix scenarios are covered by the
-  conformance suite.
-- KR 3: this runbook's four-node Docker demo verifies that four local
-  f1r3node runtimes produce the same ordered Cordial view for the same
-  intercepted input stream.
 
 ## Repository Layout
 
@@ -376,6 +337,35 @@ state.
 ## Validation Progress In This Checkout
 
 This section is updated as the demo commands are run from this repository.
+
+## Commit And CI Trace
+
+The demo work is split into atomic semantic commits on the `integrations`
+branch:
+
+| Commit type | Scope | Purpose |
+|---|---|---|
+| `fix(just)` | Rust verification recipes | Repairs the existing `fmt` and `clippy` recipes so local CI commands call the intended tools. |
+| `chore(docker)` | Demo infrastructure | Adds Dockerfiles, compose files, configs, genesis fixtures, and the four-node ordered-view verifier. |
+| `build(just)` | Demo commands | Adds `just demo-cordial-*` commands for config validation, conformance, live node startup, four-node verification, logs, and cleanup. |
+| `docs(demo)` | Runbooks | Documents the standalone Cordial demo, four-node local-intercept demo, troubleshooting notes, and validation evidence. |
+
+Before pushing this branch, run:
+
+```bash
+just ci
+git diff --check
+just demo-cordial-config
+just demo-cordial-four-node-config
+```
+
+For the Docker-backed KR proof, also run:
+
+```bash
+just demo-cordial-four-node-up
+just demo-cordial-four-node-verify
+just demo-cordial-four-node-down
+```
 
 | Command | Result |
 |---|---|
