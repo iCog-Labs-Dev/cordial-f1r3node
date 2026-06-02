@@ -1,0 +1,28 @@
+name: cordial-f1r3node-conformance
+
+services:
+  cordial-conformance:
+    build:
+      context: ../..
+      dockerfile: cordial-f1r3node/docker/Dockerfile
+      target: cordial-conformance
+      args:
+        CORDIAL_RUST_BASE: ${CORDIAL_RUST_BASE:-rust:slim-bookworm}
+        RUST_TOOLCHAIN: ${RUST_TOOLCHAIN:-nightly-2026-02-09}
+    image: ${CORDIAL_F1R3NODE_TEST_IMAGE:-cordial-f1r3node:conformance}
+    pull_policy: build
+    command:
+      - bash
+      - -lc
+      - /usr/local/cargo/bin/cargo test -p cordial-f1r3node-adapter --test conformance -- --nocapture
+    environment:
+      CARGO_INCREMENTAL: "0"
+    volumes:
+      - cordial-cargo-registry:/usr/local/cargo/registry
+      - cordial-cargo-git:/usr/local/cargo/git
+      - cordial-conformance-target:/build/cordial-f1r3node/target
+
+volumes:
+  cordial-cargo-registry:
+  cordial-cargo-git:
+  cordial-conformance-target:
