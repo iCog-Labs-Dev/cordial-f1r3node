@@ -1,5 +1,7 @@
 # Cordial F1R3node
 
+[Cordial Miners research paper](https://arxiv.org/abs/2205.09174)
+
 A Rust workspace for integrating **Cordial Miners** with the F1R3FLY node stack. The project is split into a pure consensus core crate and adapter crates for node/runtime integration.
 
 ## What it does
@@ -38,7 +40,11 @@ This builds and tests the standalone core crate. No f1r3node checkout is require
 You'll need:
 
 - `protoc` on PATH — `sudo apt install protobuf-compiler` (Linux) or `brew install protobuf` (Mac)
-- f1r3node checked out at `../f1r3node` relative to this repo (i.e. they're sibling directories)
+- the Cordial integration f1r3node fork checked out at `../f1r3node` relative to this repo (i.e. they're sibling directories):
+
+```bash
+git clone git@github.com:Nama21yo/f1r3node.git ../f1r3node
+```
 
 Then:
 

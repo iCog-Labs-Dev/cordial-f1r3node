@@ -283,8 +283,7 @@ fn pipeline_sequence_multiple_valid_blocks() {
             adapter.received_blocks()[i].identity.content_hash,
             <[u8; 32]>::try_from(block_msg.block_hash.as_slice())
                 .expect("block_hash should be 32 bytes"),
-            "Block {} content hash mismatch",
-            i
+            "Block {i} content hash mismatch"
         );
     }
 }
@@ -411,8 +410,7 @@ fn error_messages_are_descriptive() {
     let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("hash mismatch") || err_msg.contains("Signature"),
-        "Error should describe validation failure: {}",
-        err_msg
+        "Error should describe validation failure: {err_msg}"
     );
 
     // Test 3: Invalid signature
@@ -428,8 +426,7 @@ fn error_messages_are_descriptive() {
     let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("Signature"),
-        "Error should mention signature: {}",
-        err_msg
+        "Error should mention signature: {err_msg}"
     );
 }
 
@@ -474,8 +471,7 @@ fn complex_predecessor_chain() {
             adapter.received_blocks()[i].identity.content_hash,
             <[u8; 32]>::try_from(block_msg.block_hash.as_slice())
                 .expect("block_hash should be 32 bytes"),
-            "Block {} in chain",
-            i
+            "Block {i} in chain"
         );
     }
 
@@ -489,8 +485,7 @@ fn complex_predecessor_chain() {
         assert_eq!(
             adapter.received_blocks()[i].content.predecessors.len(),
             1,
-            "Block {} should have exactly 1 predecessor",
-            i
+            "Block {i} should have exactly 1 predecessor"
         );
     }
 }
@@ -596,8 +591,7 @@ fn block_with_corrupted_content_hash_rejected() {
     let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("hash mismatch") || err_msg.contains("Signature"),
-        "Error should describe validation failure: {}",
-        err_msg
+        "Error should describe validation failure: {err_msg}"
     );
 }
 
