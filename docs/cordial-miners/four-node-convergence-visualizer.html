@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Four-Node Convergence Visualizer</title>
+<style>
+  :root {
+    --bg: #f4efe4;
+    --panel: rgba(255, 251, 244, 0.85);
+    --panel-strong: rgba(255, 248, 238, 0.96);
+    --ink: #1f2a2b;
+    --muted: #6a7067;
+    --line: rgba(35, 45, 48, 0.16);
+    --teal: #0f8b8d;
+    --moss: #4d7c0f;
+    --amber: #d17d00;
+    --brick: #b8473e;
+    --indigo: #335c81;
+    --sand: #dbc8a5;
+    --cream: #fffaf0;
+    --shadow: 0 20px 40px rgba(67, 51, 29, 0.12);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background:
+      radial-gradient(circle at top left, rgba(15, 139, 141, 0.12), transparent 28%),
+      radial-gradient(circle at bottom right, rgba(209, 125, 0, 0.14), transparent 24%),
+      linear-gradient(180deg, #f6f1e7 0%, #f1e8d8 100%);
+    color: var(--ink);
+    font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  }
+
+  body {
+    padding: 24px;
+  }
+
+  .shell {
+    max-width: 1440px;
+    margin: 0 auto;
+    display: grid;
+    gap: 18px;
+  }
+
+  .hero {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 18px;
+  }
+
+  .panel {
+    background: var(--panel);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    border-radius: 24px;
+    box-shadow: var(--shadow);
+  }
+
+  .hero-copy {
+    padding: 28px 30px;
+  }
+
+  .eyebrow {
+    color: var(--teal);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  h1, h2, h3 {
+    margin: 0;
+    font-family: "Palatino Linotype", "Book Antiqua", serif;
+    letter-spacing: 0;
+  }
+
+  h1 {
+    margin-top: 10px;
+    font-size: clamp(36px, 5vw, 64px);
+    line-height: 0.98;
+    max-width: 10ch;
+  }
+
+  .hero-copy p {
+    max-width: 52ch;
+    color: var(--muted);
+    line-height: 1.55;
+    font-size: 17px;
+    margin-top: 16px;
+  }
+
+  .summary-grid {
+    margin-top: 22px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .metric {
+    background: rgba(255,255,255,0.55);
+    border: 1px solid rgba(255,255,255,0.75);
+    border-radius: 18px;
+    padding: 14px;
+  }
+
+  .metric strong {
+    display: block;
+    font-size: 28px;
+    color: var(--indigo);
+  }
+
+  .metric span {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.35;
+  }
+
+  .controls {
+    padding: 22px;
+    display: grid;
+    gap: 16px;
+  }
+
+  .button-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  button {
+    border: 0;
+    border-radius: 999px;
+    padding: 11px 18px;
+    font: inherit;
+    font-weight: 800;
+    cursor: pointer;
+    transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+    box-shadow: 0 10px 18px rgba(38, 36, 24, 0.08);
+  }
+
+  button:hover { transform: translateY(-1px); }
+  button.primary { background: var(--teal); color: white; }
+  button.secondary { background: white; color: var(--ink); border: 1px solid var(--line); }
+  button.warn { background: var(--amber); color: white; }
+
+  .status-line {
+    padding: 14px 16px;
+    border-radius: 18px;
+    background: rgba(255,255,255,0.55);
+    border: 1px solid rgba(255,255,255,0.75);
+    color: var(--muted);
+    line-height: 1.45;
+    min-height: 72px;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 1.25fr 0.75fr;
+    gap: 18px;
+  }
+
+  .network-stage {
+    padding: 24px;
+  }
+
+  .stage-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .stage-header p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .dag-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+
+  .round-card {
+    background: rgba(255,255,255,0.52);
+    border: 1px solid rgba(255,255,255,0.7);
+    border-radius: 20px;
+    padding: 16px;
+  }
+
+  .round-title {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-bottom: 12px;
+  }
+
+  .block-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .block-pill {
+    border-radius: 14px;
+    padding: 10px 12px;
+    min-width: 82px;
+    background: var(--cream);
+    border: 1px solid rgba(51, 92, 129, 0.16);
+    display: grid;
+    gap: 4px;
+  }
+
+  .block-pill strong { font-size: 16px; }
+  .block-pill span { font-size: 12px; color: var(--muted); }
+  .block-pill.active { outline: 3px solid rgba(15, 139, 141, 0.2); transform: scale(1.02); }
+  .block-pill.leader { background: rgba(15, 139, 141, 0.12); }
+  .block-pill.witness { background: rgba(209, 125, 0, 0.11); }
+  .block-pill.super { background: rgba(77, 124, 15, 0.12); }
+
+  .node-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .node-card {
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.75);
+    background: rgba(255,255,255,0.58);
+    padding: 16px;
+    display: grid;
+    gap: 12px;
+  }
+
+  .node-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    gap: 8px;
+  }
+
+  .node-top h3 {
+    font-size: 23px;
+  }
+
+  .badge {
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 800;
+    background: rgba(51, 92, 129, 0.1);
+    color: var(--indigo);
+  }
+
+  .badge.partitioned {
+    background: rgba(184, 71, 62, 0.14);
+    color: var(--brick);
+  }
+
+  .node-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .mini {
+    padding: 10px;
+    border-radius: 14px;
+    background: rgba(255,255,255,0.55);
+    border: 1px solid rgba(255,255,255,0.78);
+  }
+
+  .mini strong {
+    display: block;
+    font-size: 20px;
+  }
+
+  .mini span {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.3;
+  }
+
+  .chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .chip {
+    border-radius: 999px;
+    padding: 7px 10px;
+    font-size: 12px;
+    font-weight: 800;
+    background: rgba(255,255,255,0.74);
+    border: 1px solid rgba(51, 92, 129, 0.12);
+  }
+
+  .chip.buffered {
+    background: rgba(209, 125, 0, 0.12);
+    border-color: rgba(209, 125, 0, 0.22);
+    color: #8d5600;
+  }
+
+  .chip.known {
+    background: rgba(15, 139, 141, 0.09);
+    border-color: rgba(15, 139, 141, 0.16);
+    color: #0b6d6e;
+  }
+
+  .tau {
+    min-height: 56px;
+    padding: 12px;
+    border-radius: 16px;
+    background: rgba(77, 124, 15, 0.08);
+    border: 1px solid rgba(77, 124, 15, 0.18);
+    color: #31560a;
+    font-weight: 800;
+    line-height: 1.4;
+  }
+
+  .sidebar {
+    padding: 22px;
+    display: grid;
+    gap: 16px;
+    align-content: start;
+  }
+
+  .timeline {
+    max-height: 740px;
+    overflow: auto;
+    display: grid;
+    gap: 10px;
+    padding-right: 6px;
+  }
+
+  .event {
+    border-radius: 18px;
+    padding: 12px 14px;
+    background: rgba(255,255,255,0.54);
+    border: 1px solid rgba(255,255,255,0.78);
+  }
+
+  .event.active {
+    background: rgba(15, 139, 141, 0.12);
+    border-color: rgba(15, 139, 141, 0.25);
+  }
+
+  .event.done {
+    opacity: 0.72;
+  }
+
+  .event strong {
+    display: block;
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+
+  .event span {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    display: inline-block;
+  }
+
+  .footer-note {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  @media (max-width: 1120px) {
+    .hero, .layout { grid-template-columns: 1fr; }
+    .summary-grid, .node-grid { grid-template-columns: 1fr 1fr; }
+  }
+
+  @media (max-width: 760px) {
+    body { padding: 12px; }
+    .summary-grid, .node-grid, .dag-grid { grid-template-columns: 1fr; }
+    .hero-copy, .controls, .network-stage, .sidebar { padding: 18px; }
+  }
+</style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <article class="panel hero-copy">
+        <div class="eyebrow">Cordial Miners demo</div>
+        <h1>Four-node convergence visualizer</h1>
+        <p>
+          This replay follows the same honest-wave scenario as the convergence proof:
+          one node receives blocks in order, one receives them mixed, one is partitioned
+          and later healed, and one sees a different but still valid sequence. The goal
+          is to watch all four observers converge on the same final leader and the same
+          local tau output.
+        </p>
+        <div class="summary-grid">
+          <div class="metric">
+            <strong>4</strong>
+            <span>simulated observers watching the same wave from different local views</span>
+          </div>
+          <div class="metric">
+            <strong>3</strong>
+            <span>rounds in the eventual synchrony wave used for leader finality</span>
+          </div>
+          <div class="metric">
+            <strong>1</strong>
+            <span>shared final leader once all missing history is delivered</span>
+          </div>
+        </div>
+      </article>
+
+      <aside class="panel controls">
+        <div class="eyebrow">Controls</div>
+        <div class="button-row">
+          <button class="primary" id="stepBtn">Step</button>
+          <button class="secondary" id="playBtn">Auto play</button>
+          <button class="secondary" id="pauseBtn">Pause</button>
+          <button class="warn" id="resetBtn">Reset</button>
+        </div>
+        <div class="status-line" id="statusLine">
+          Press <strong>Step</strong> to begin the replay.
+        </div>
+        <div class="legend">
+          <span><i class="swatch" style="background: rgba(15,139,141,.55)"></i>leader block</span>
+          <span><i class="swatch" style="background: rgba(209,125,0,.55)"></i>round-1 witnesses</span>
+          <span><i class="swatch" style="background: rgba(77,124,15,.55)"></i>round-2 witnesses</span>
+          <span><i class="swatch" style="background: rgba(184,71,62,.55)"></i>partitioned node</span>
+        </div>
+        <div class="footer-note">
+          This visualizer uses the same scenario shape as the Rust convergence test, but it
+          renders the protocol state in a way that is easier to explain live.
+        </div>
+      </aside>
+    </section>
+
+    <section class="layout">
+      <section class="panel network-stage">
+        <div class="stage-header">
+          <div>
+            <div class="eyebrow">Wave view</div>
+            <h2>Protocol blocks in the single convergence wave</h2>
+          </div>
+          <p id="progressLabel">Step 0 / 24</p>
+        </div>
+
+        <div class="dag-grid" id="dagGrid"></div>
+
+        <div class="stage-header" style="margin-top: 14px;">
+          <div>
+            <div class="eyebrow">Observer state</div>
+            <h2>Each node's local view</h2>
+          </div>
+          <p>Known blocks, buffer state, final leader, and local tau output</p>
+        </div>
+
+        <div class="node-grid" id="nodeGrid"></div>
+      </section>
+
+      <aside class="panel sidebar">
+        <div>
+          <div class="eyebrow">Timeline</div>
+          <h2>Replay events</h2>
+        </div>
+        <div class="timeline" id="timeline"></div>
+      </aside>
+    </section>
+  </main>
+
+<script src="./generated/four-node-trace.js"></script>
+<script>
+const nodeLabels = {
+  A: "Observer A",
+  B: "Observer B",
+  C: "Observer C",
+  D: "Observer D"
+};
+
+const nodeColors = {
+  A: "#0f8b8d",
+  B: "#335c81",
+  C: "#b8473e",
+  D: "#4d7c0f"
+};
+const trace = window.__FOUR_NODE_TRACE__;
+let index = 0;
+let autoplay = null;
+
+if (!trace) {
+  document.getElementById("statusLine").innerHTML =
+    "Trace file missing. Run <strong>cargo run -p cordial-miners-core --bin export_four_node_trace</strong> first.";
+}
+
+function roleClass(role) {
+  if (role === "leader") return "leader";
+  if (role === "witness") return "witness";
+  return "super";
+}
+
+function step() {
+  if (!trace) return;
+  if (index >= trace.snapshots.length - 1) {
+    document.getElementById("statusLine").innerHTML =
+      "Replay complete. All observers that received the full wave converged.";
+    render();
+    return;
+  }
+  index += 1;
+  render();
+}
+
+function startAutoplay() {
+  if (!trace || autoplay) return;
+  autoplay = setInterval(() => {
+    if (index >= trace.snapshots.length - 1) {
+      stopAutoplay();
+      return;
+    }
+    step();
+  }, 900);
+}
+
+function stopAutoplay() {
+  if (autoplay) {
+    clearInterval(autoplay);
+    autoplay = null;
+  }
+}
+
+function reset() {
+  stopAutoplay();
+  index = 0;
+  render();
+}
+
+function renderDag() {
+  const grid = document.getElementById("dagGrid");
+  if (!trace) {
+    grid.innerHTML = "";
+    return;
+  }
+  const snapshot = trace.snapshots[index];
+  const rounds = [0, 1, 2];
+  grid.innerHTML = rounds.map(round => {
+    const roundBlocks = trace.blocks.filter(block => block.round === round);
+    return `
+      <div class="round-card">
+        <div class="round-title">Round ${round}</div>
+        <div class="block-list">
+          ${roundBlocks.map(block => `
+            <div class="block-pill ${roleClass(block.role)} ${snapshot.active_block === block.id ? "active" : ""}">
+              <strong>${block.label}</strong>
+              <span>${block.creator}</span>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function chips(ids, className) {
+  if (!ids.length) return `<span class="chip ${className}">none</span>`;
+  return ids.map(id => `<span class="chip ${className}">${id}</span>`).join("");
+}
+
+function renderNodes() {
+  const nodeGrid = document.getElementById("nodeGrid");
+  if (!trace) {
+    nodeGrid.innerHTML = "";
+    return;
+  }
+  const snapshot = trace.snapshots[index];
+
+  nodeGrid.innerHTML = Object.entries(snapshot.nodes).map(([key, nodeState]) => {
+    const known = [...nodeState.known].sort();
+    const buffered = [...nodeState.buffered].sort();
+    const finalLeader = nodeState.final_leader || "not yet final";
+    const tau = nodeState.tau.length ? nodeState.tau.join(" -> ") : "empty";
+
+    return `
+      <article class="node-card">
+        <div class="node-top">
+          <div>
+            <h3 style="color:${nodeColors[key]}">${nodeLabels[key]}</h3>
+            <div class="eyebrow" style="margin-top:4px;">local blocklace view</div>
+          </div>
+          <span class="badge ${nodeState.partitioned ? "partitioned" : ""}">
+            ${nodeState.partitioned ? "Partitioned" : "Connected"}
+          </span>
+        </div>
+
+        <div class="node-metrics">
+          <div class="mini">
+            <strong>${known.length}</strong>
+            <span>known blocks</span>
+          </div>
+          <div class="mini">
+            <strong>${buffered.length}</strong>
+            <span>buffered blocks</span>
+          </div>
+          <div class="mini">
+            <strong>${nodeState.finalLeader ? "yes" : "no"}</strong>
+            <span>final leader</span>
+          </div>
+        </div>
+
+        <div>
+          <div class="eyebrow">Known</div>
+          <div class="chip-row">${chips(known, "known")}</div>
+        </div>
+
+        <div>
+          <div class="eyebrow">Buffered</div>
+          <div class="chip-row">${chips(buffered, "buffered")}</div>
+        </div>
+
+        <div>
+          <div class="eyebrow">Final leader</div>
+          <div class="tau">${finalLeader}</div>
+        </div>
+
+        <div>
+          <div class="eyebrow">Tau output</div>
+          <div class="tau">${tau}</div>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function renderTimeline() {
+  const timeline = document.getElementById("timeline");
+  if (!trace) {
+    timeline.innerHTML = "";
+    return;
+  }
+
+  timeline.innerHTML = trace.events.map((event, idx) => {
+    const classes = [
+      "event",
+      idx + 1 === index ? "active" : "",
+      idx + 1 < index ? "done" : ""
+    ].filter(Boolean).join(" ");
+
+    return `
+      <div class="${classes}">
+        <strong>${event.title}</strong>
+        <span>${event.detail}</span>
+      </div>
+    `;
+  }).join("");
+}
+
+function render() {
+  if (!trace) return;
+  const snapshot = trace.snapshots[index];
+  renderDag();
+  renderNodes();
+  renderTimeline();
+
+  document.getElementById("statusLine").innerHTML = snapshot.latest_message;
+  document.getElementById("progressLabel").textContent = `Step ${index} / ${trace.snapshots.length - 1}`;
+}
+
+document.getElementById("stepBtn").addEventListener("click", step);
+document.getElementById("playBtn").addEventListener("click", startAutoplay);
+document.getElementById("pauseBtn").addEventListener("click", stopAutoplay);
+document.getElementById("resetBtn").addEventListener("click", reset);
+
+render();
+</script>
+</body>
+</html>
