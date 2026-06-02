@@ -56,6 +56,13 @@ pub struct TraceDocument {
     pub snapshots: Vec<TraceSnapshot>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TraceConfig {
+    wavelength: u64,
+    n: usize,
+    f: usize,
+}
+
 fn node(id: u8) -> NodeId {
     NodeId(vec![id])
 }
@@ -156,8 +163,8 @@ fn buffered_labels(node: &SimNode) -> Vec<String> {
     let mut labels: Vec<_> = node
         .pending
         .buffered_blocks
-        .iter()
-        .map(|(_, block)| label_for_tag(block.identity.signature[0]))
+        .values()
+        .map(|block| label_for_tag(block.identity.signature[0]))
         .collect();
     labels.sort();
     labels
@@ -184,9 +191,7 @@ fn snapshot_for_network(
     step: usize,
     latest_message: String,
     active_block: Option<String>,
-    wavelength: u64,
-    n: usize,
-    f: usize,
+    config: TraceConfig,
 ) -> TraceSnapshot {
     let mut nodes = BTreeMap::new();
 
@@ -198,8 +203,8 @@ fn snapshot_for_network(
                 known: known_labels(node),
                 buffered: buffered_labels(node),
                 partitioned: partitioned.contains(&key),
-                final_leader: final_leader_label(node, wavelength, n, f),
-                tau: tau_labels(node, wavelength, n, f),
+                final_leader: final_leader_label(node, config.wavelength, config.n, config.f),
+                tau: tau_labels(node, config.wavelength, config.n, config.f),
             },
         );
     }
@@ -231,6 +236,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
     let wavelength = 3u64;
     let n = 4usize;
     let f = 1usize;
+    let config = TraceConfig { wavelength, n, f };
 
     let leader = create_block(1, 1, HashSet::new());
     let r1_v2 = create_block(2, 2, HashSet::from([leader.identity.clone()]));
@@ -287,16 +293,15 @@ pub fn four_node_convergence_trace() -> TraceDocument {
         0,
         "Replay loaded. Observer C will start in a partitioned state.".to_string(),
         None,
-        wavelength,
-        n,
-        f,
+        config,
     ));
 
     partitioned.insert("C".to_string());
     events.push(TraceEvent {
         kind: "partition".to_string(),
         title: "Observer C partitioned".to_string(),
-        detail: "Observer C is temporarily cut off and can only see a partial view of the wave.".to_string(),
+        detail: "Observer C is temporarily cut off and can only see a partial view of the wave."
+            .to_string(),
         node: Some("C".to_string()),
         block: None,
         outcome: None,
@@ -307,16 +312,23 @@ pub fn four_node_convergence_trace() -> TraceDocument {
         1,
         "Observer C is partitioned and will lag behind the rest.".to_string(),
         None,
-        wavelength,
-        n,
-        f,
+        config,
     ));
 
     let delivery_plan: Vec<(&str, Vec<&Block>)> = vec![
-        ("A", vec![&leader, &r1_v2, &r1_v3, &r1_v4, &r2_v2, &r2_v3, &r2_v4]),
-        ("B", vec![&r2_v3, &r1_v2, &r2_v2, &leader, &r1_v4, &r2_v4, &r1_v3]),
+        (
+            "A",
+            vec![&leader, &r1_v2, &r1_v3, &r1_v4, &r2_v2, &r2_v3, &r2_v4],
+        ),
+        (
+            "B",
+            vec![&r2_v3, &r1_v2, &r2_v2, &leader, &r1_v4, &r2_v4, &r1_v3],
+        ),
         ("C", vec![&leader, &r1_v2]),
-        ("D", vec![&leader, &r1_v4, &r2_v4, &r1_v3, &r2_v3, &r1_v2, &r2_v2]),
+        (
+            "D",
+            vec![&leader, &r1_v4, &r2_v4, &r1_v3, &r2_v3, &r1_v2, &r2_v2],
+        ),
     ];
 
     let recipient_ids: HashMap<&str, NodeId> = HashMap::from([
@@ -337,7 +349,10 @@ pub fn four_node_convergence_trace() -> TraceDocument {
             let block_label = label_for_tag(block.identity.signature[0]);
             let (detail, outcome_text) = match outcome {
                 DeliveryOutcome::Inserted => (
-                    format!("{} accepted {} into its local blocklace.", node_name, block_label),
+                    format!(
+                        "{} accepted {} into its local blocklace.",
+                        node_name, block_label
+                    ),
                     "inserted".to_string(),
                 ),
                 DeliveryOutcome::Buffered => (
@@ -373,9 +388,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
                 snapshots.len(),
                 detail,
                 Some(block_label),
-                wavelength,
-                n,
-                f,
+                config,
             ));
         }
     }
@@ -387,9 +400,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
         snapshots.len(),
         "Buffered deliveries were retried after the first delivery pass.".to_string(),
         None,
-        wavelength,
-        n,
-        f,
+        config,
     ));
 
     partitioned.remove("C");
@@ -407,9 +418,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
         snapshots.len(),
         "Observer C healed and can now catch up on the missing wave evidence.".to_string(),
         None,
-        wavelength,
-        n,
-        f,
+        config,
     ));
 
     for block in [&r2_v4, &r1_v4, &r2_v2, &r2_v3, &r1_v3] {
@@ -434,7 +443,11 @@ pub fn four_node_convergence_trace() -> TraceDocument {
                 "buffered".to_string(),
             ),
             DeliveryOutcome::Rejected(errors) => (
-                format!("C rejected {} with {} validation errors.", block_label, errors.len()),
+                format!(
+                    "C rejected {} with {} validation errors.",
+                    block_label,
+                    errors.len()
+                ),
                 "rejected".to_string(),
             ),
         };
@@ -454,9 +467,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
             snapshots.len(),
             detail,
             Some(block_label),
-            wavelength,
-            n,
-            f,
+            config,
         ));
     }
 
@@ -468,9 +479,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
         "All buffers were retried again. The observers now share the same final leader and tau output."
             .to_string(),
         None,
-        wavelength,
-        n,
-        f,
+        config,
     ));
 
     TraceDocument {
