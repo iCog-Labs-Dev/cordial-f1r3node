@@ -56,6 +56,13 @@ pub struct TraceDocument {
     pub snapshots: Vec<TraceSnapshot>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TraceConfig {
+    wavelength: u64,
+    n: usize,
+    f: usize,
+}
+
 fn node(id: u8) -> NodeId {
     NodeId(vec![id])
 }
@@ -155,9 +162,7 @@ fn known_labels(node: &SimNode) -> Vec<String> {
 fn buffered_labels(node: &SimNode) -> Vec<String> {
     let mut labels: Vec<_> = node
         .pending
-        .buffered_blocks
-        .iter()
-        .map(|(_, block)| label_for_tag(block.identity.signature[0]))
+        .buffered_blocks.values().map(|block| label_for_tag(block.identity.signature[0]))
         .collect();
     labels.sort();
     labels
@@ -184,9 +189,7 @@ fn snapshot_for_network(
     step: usize,
     latest_message: String,
     active_block: Option<String>,
-    wavelength: u64,
-    n: usize,
-    f: usize,
+    config: TraceConfig,
 ) -> TraceSnapshot {
     let mut nodes = BTreeMap::new();
 
@@ -198,8 +201,8 @@ fn snapshot_for_network(
                 known: known_labels(node),
                 buffered: buffered_labels(node),
                 partitioned: partitioned.contains(&key),
-                final_leader: final_leader_label(node, wavelength, n, f),
-                tau: tau_labels(node, wavelength, n, f),
+                final_leader: final_leader_label(node, config.wavelength, config.n, config.f),
+                tau: tau_labels(node, config.wavelength, config.n, config.f),
             },
         );
     }
@@ -231,6 +234,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
     let wavelength = 3u64;
     let n = 4usize;
     let f = 1usize;
+    let config = TraceConfig { wavelength, n, f };
 
     let leader = create_block(1, 1, HashSet::new());
     let r1_v2 = create_block(2, 2, HashSet::from([leader.identity.clone()]));
@@ -287,9 +291,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
         0,
         "Replay loaded. Observer C will start in a partitioned state.".to_string(),
         None,
-        wavelength,
-        n,
-        f,
+        config,
     ));
 
     partitioned.insert("C".to_string());
@@ -308,9 +310,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
         1,
         "Observer C is partitioned and will lag behind the rest.".to_string(),
         None,
-        wavelength,
-        n,
-        f,
+        config,
     ));
 
     let delivery_plan: Vec<(&str, Vec<&Block>)> = vec![
@@ -386,9 +386,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
                 snapshots.len(),
                 detail,
                 Some(block_label),
-                wavelength,
-                n,
-                f,
+                config,
             ));
         }
     }
@@ -400,9 +398,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
         snapshots.len(),
         "Buffered deliveries were retried after the first delivery pass.".to_string(),
         None,
-        wavelength,
-        n,
-        f,
+        config,
     ));
 
     partitioned.remove("C");
@@ -420,9 +416,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
         snapshots.len(),
         "Observer C healed and can now catch up on the missing wave evidence.".to_string(),
         None,
-        wavelength,
-        n,
-        f,
+        config,
     ));
 
     for block in [&r2_v4, &r1_v4, &r2_v2, &r2_v3, &r1_v3] {
@@ -471,9 +465,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
             snapshots.len(),
             detail,
             Some(block_label),
-            wavelength,
-            n,
-            f,
+            config,
         ));
     }
 
@@ -485,9 +477,7 @@ pub fn four_node_convergence_trace() -> TraceDocument {
         "All buffers were retried again. The observers now share the same final leader and tau output."
             .to_string(),
         None,
-        wavelength,
-        n,
-        f,
+        config,
     ));
 
     TraceDocument {
