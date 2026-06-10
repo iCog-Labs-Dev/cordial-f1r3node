@@ -27,7 +27,12 @@
 //!
 //! Those come in follow-up increments.
 
+use std::collections::HashMap;
+
 use cordial_miners_core::Block;
+use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::crypto::CryptoVerifier;
+use cordial_miners_core::types::{BlockContent, NodeId};
 use cordial_miners_core::types::BlockIdentity;
 
 use crate::block_translation::BlockMessage;
@@ -70,11 +75,166 @@ impl std::fmt::Display for LiveIngressError {
 
 impl std::error::Error for LiveIngressError {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MirrorDisposition {
+    Applied,
+    Buffered,
+    Duplicate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirrorUpdate {
+    pub disposition: MirrorDisposition,
+    pub released_from_buffer: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AlreadyValidatedVerifier;
+
+impl CryptoVerifier for AlreadyValidatedVerifier {
+    type Error = &'static str;
+
+    fn verify_block(
+        &self,
+        _content: &BlockContent,
+        _signature: &[u8],
+        _creator: &NodeId,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+pub struct LiveBlocklaceMirror<V = AlreadyValidatedVerifier> {
+    blocklace: Blocklace,
+    pending: HashMap<BlockIdentity, Block>,
+    verifier: V,
+}
+
+impl<V> LiveBlocklaceMirror<V>
+where
+    V: CryptoVerifier,
+{
+    pub fn new(verifier: V) -> Self {
+        Self {
+            blocklace: Blocklace::new(),
+            pending: HashMap::new(),
+            verifier,
+        }
+    }
+
+    pub fn blocklace(&self) -> &Blocklace {
+        &self.blocklace
+    }
+
+    pub fn pending(&self) -> &HashMap<BlockIdentity, Block> {
+        &self.pending
+    }
+
+    pub fn ingest(&mut self, block: Block) -> Result<MirrorUpdate, String> {
+        let block = self.canonicalize_block(block);
+
+        if self.blocklace.get(&block.identity).is_some() {
+            return Ok(MirrorUpdate {
+                disposition: MirrorDisposition::Duplicate,
+                released_from_buffer: 0,
+            });
+        }
+
+        if self.pending.contains_key(&block.identity) {
+            return Ok(MirrorUpdate {
+                disposition: MirrorDisposition::Duplicate,
+                released_from_buffer: 0,
+            });
+        }
+
+        if !self.predecessors_available(&block) {
+            self.pending.insert(block.identity.clone(), block);
+            return Ok(MirrorUpdate {
+                disposition: MirrorDisposition::Buffered,
+                released_from_buffer: 0,
+            });
+        }
+
+        self.blocklace.insert(block, &self.verifier)?;
+        let released_from_buffer = self.release_pending()?;
+
+        Ok(MirrorUpdate {
+            disposition: MirrorDisposition::Applied,
+            released_from_buffer,
+        })
+    }
+
+    fn predecessors_available(&self, block: &Block) -> bool {
+        block.content
+            .predecessors
+            .iter()
+            .all(|pred_id| self.resolve_known_identity(pred_id).is_some())
+    }
+
+    fn release_pending(&mut self) -> Result<usize, String> {
+        let mut released = 0usize;
+
+        loop {
+            let ready_ids: Vec<BlockIdentity> = self
+                .pending
+                .iter()
+                .filter(|(_, block)| self.predecessors_available(block))
+                .map(|(id, _)| id.clone())
+                .collect();
+
+            if ready_ids.is_empty() {
+                break;
+            }
+
+            for id in ready_ids {
+                let block = self
+                    .pending
+                    .remove(&id)
+                    .expect("ready pending block should still exist");
+                let block = self.canonicalize_block(block);
+                self.blocklace.insert(block, &self.verifier)?;
+                released += 1;
+            }
+        }
+
+        Ok(released)
+    }
+
+    fn canonicalize_block(&self, mut block: Block) -> Block {
+        block.content.predecessors = block
+            .content
+            .predecessors
+            .iter()
+            .map(|pred_id| {
+                self.resolve_known_identity(pred_id)
+                    .unwrap_or_else(|| pred_id.clone())
+            })
+            .collect();
+        block
+    }
+
+    fn resolve_known_identity(&self, pred_id: &BlockIdentity) -> Option<BlockIdentity> {
+        self.blocklace
+            .dom()
+            .into_iter()
+            .find(|known| {
+                known.content_hash == pred_id.content_hash && known.creator == pred_id.creator
+            })
+            .cloned()
+    }
+}
+
+impl Default for LiveBlocklaceMirror<AlreadyValidatedVerifier> {
+    fn default() -> Self {
+        Self::new(AlreadyValidatedVerifier)
+    }
+}
+
 pub struct LiveIngress<A> {
     phase: LiveIngressPhase,
     adapter: A,
     mapper: GrpcBlockMapper,
+    mirror: LiveBlocklaceMirror,
 }
 
 impl<A> LiveIngress<A> {
@@ -84,6 +244,7 @@ impl<A> LiveIngress<A> {
             phase: LiveIngressPhase::Defined,
             adapter,
             mapper: GrpcBlockMapper::new(),
+            mirror: LiveBlocklaceMirror::default(),
         }
     }
 
@@ -116,6 +277,16 @@ impl<A> LiveIngress<A> {
     pub fn into_inner(self) -> A {
         self.adapter
     }
+
+    /// Return the current local blocklace mirror.
+    pub fn blocklace(&self) -> &Blocklace {
+        self.mirror.blocklace()
+    }
+
+    /// Return blocks that are waiting on missing predecessors.
+    pub fn pending_blocks(&self) -> &HashMap<BlockIdentity, Block> {
+        self.mirror.pending()
+    }
 }
 
 impl<A> LiveIngress<A>
@@ -137,6 +308,10 @@ where
         self.adapter
             .on_block(block.clone())
             .map_err(LiveIngressError::Adapter)?;
+
+        self.mirror
+            .ingest(block.clone())
+            .map_err(|err| LiveIngressError::Adapter(anyhow::anyhow!(err)))?;
 
         self.phase = LiveIngressPhase::Connected;
 
