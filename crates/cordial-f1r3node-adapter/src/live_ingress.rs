@@ -27,6 +27,12 @@
 //!
 //! Those come in follow-up increments.
 
+use cordial_miners_core::Block;
+use cordial_miners_core::types::BlockIdentity;
+
+use crate::block_translation::BlockMessage;
+use crate::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
+
 /// High-level runtime phase for the live ingress adapter.
 ///
 /// Keeping this explicit helps later commits avoid mixing "discovery only"
@@ -48,9 +54,27 @@ pub enum LiveIngressPhase {
 /// commits will use to store mirrored state, update snapshots, or expose
 /// ordered output. This first increment keeps the shape intentionally small.
 #[derive(Debug)]
+pub enum LiveIngressError {
+    Mapping(anyhow::Error),
+    Adapter(anyhow::Error),
+}
+
+impl std::fmt::Display for LiveIngressError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Mapping(err) => write!(f, "failed to map live BlockMessage: {err}"),
+            Self::Adapter(err) => write!(f, "adapter rejected live block: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for LiveIngressError {}
+
+#[derive(Debug)]
 pub struct LiveIngress<A> {
     phase: LiveIngressPhase,
     adapter: A,
+    mapper: GrpcBlockMapper,
 }
 
 impl<A> LiveIngress<A> {
@@ -59,6 +83,7 @@ impl<A> LiveIngress<A> {
         Self {
             phase: LiveIngressPhase::Defined,
             adapter,
+            mapper: GrpcBlockMapper::new(),
         }
     }
 
@@ -90,5 +115,31 @@ impl<A> LiveIngress<A> {
     /// Consume the wrapper and return the inner adapter/runtime component.
     pub fn into_inner(self) -> A {
         self.adapter
+    }
+}
+
+impl<A> LiveIngress<A>
+where
+    A: BlocklaceAdapter<BlockIdentity>,
+{
+    /// Accept a live protobuf block message and route it through the existing
+    /// gRPC ingestion pipeline before handing the translated block to the
+    /// adapter callback.
+    pub fn ingest_block_message(
+        &mut self,
+        block_msg: &BlockMessage,
+    ) -> Result<Block, LiveIngressError> {
+        let block = self
+            .mapper
+            .from_protobuf(block_msg)
+            .map_err(LiveIngressError::Mapping)?;
+
+        self.adapter
+            .on_block(block.clone())
+            .map_err(LiveIngressError::Adapter)?;
+
+        self.phase = LiveIngressPhase::Connected;
+
+        Ok(block)
     }
 }
