@@ -116,7 +116,10 @@ fn test_public_key(signing_key: &[u8]) -> Vec<u8> {
 
     let sk = SecpSigningKey::from_slice(signing_key)
         .expect("failed to create secp256k1 signing key from seed");
-    sk.verifying_key().to_encoded_point(true).as_bytes().to_vec()
+    sk.verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .to_vec()
 }
 
 fn build_test_block_message(
