@@ -33,6 +33,102 @@ Existing Cordial-side foundation:
 
 This is important because it means gRPC interception is not a new idea from scratch. We already have the beginning of the translation path from protobuf `BlockMessage` values into internal consensus blocks.
 
+## What Is Already Implemented On Our Side
+
+Most of the **library-level integration work** is already present in
+`crates/cordial-f1r3node-adapter`. The remaining gap is mostly about
+**live wiring into a running f1r3node**, not about re-implementing the adapter concepts.
+
+### Implemented adapter modules
+
+- `block_translation.rs`
+  - translates between internal Cordial blocks and f1r3node-style `BlockMessage`
+- `grpc_ingest.rs`
+  - protobuf-first ingestion, structural validation, and adapter boundary
+- `casper_adapter.rs`
+  - local mirror of Casper / MultiParentCasper-facing integration
+- `snapshot.rs`
+  - snapshot construction and finalized-block projection support
+- `crypto_bridge.rs`
+  - hash and signature alignment for the integration boundary
+- `shard_conf.rs`
+  - shard and configuration bridge
+- `proposer.rs`
+  - proposer-side integration support
+- `repository.rs`
+  - repository and persistence-side adapter support
+- `runtime_bridge.rs`
+  - runtime-facing bridge logic
+- `rspace_runtime.rs`
+  - RSpace-backed runtime integration support
+- `slashing.rs`
+  - slashing-related integration logic
+
+### Implemented test coverage
+
+The adapter crate already has dedicated tests covering most of these areas:
+
+- `test_grpc_ingest.rs`
+- `test_block_translation.rs`
+- `test_casper_adapter.rs`
+- `test_snapshot.rs`
+- `test_proposer.rs`
+- `test_repository.rs`
+- `test_crypto_bridge.rs`
+- `test_shard_conf.rs`
+- `test_slashing.rs`
+- `conformance.rs`
+
+### What this means
+
+From our side, the following are **already available at the adapter/library level**:
+
+- block/message translation
+- protobuf ingestion validation
+- Casper-facing adapter abstractions
+- snapshot-building support
+- crypto alignment
+- runtime bridge scaffolding
+- proposer and repository bridge support
+- slashing-related integration logic
+
+So it would be inaccurate to say “integration has not started.” A large portion of the integration layer already exists as reusable code.
+
+## What Is Still Needed For Live Interception
+
+What is still missing is the **runtime attachment to real f1r3node traffic**.
+
+### Still needed
+
+1. **Real gRPC service trace**
+   - identify the exact f1r3node gRPC services, methods, and Rust handlers that carry the traffic we want
+
+2. **Live gRPC hook**
+   - attach the running node’s message flow to our existing `grpc_ingest` path
+
+3. **Stateful live mirror**
+   - maintain a long-lived local blocklace fed by real intercepted traffic
+   - handle out-of-order blocks, dependency buffering, and replay behavior in live mode
+
+4. **Continuous snapshot/finality/ordering execution**
+   - run our existing consensus logic incrementally as live blocks arrive
+
+5. **Verification harness**
+   - compare the gRPC-fed Cordial view with f1r3node’s HTTP-visible state
+
+6. **Later deploy-side interception**
+   - trace and possibly hook deploy ingress before or around native proposal
+
+### Short version
+
+The adapter crate is **largely implemented as a library**.  
+The missing work is **live interception plumbing**.
+
+That distinction is important:
+
+- **already implemented**: adapter logic
+- **still needed**: runtime hookup to real node traffic
+
 ## What We Confirmed In The HTTP Code Path
 
 The HTTP layer is intentionally thin.
