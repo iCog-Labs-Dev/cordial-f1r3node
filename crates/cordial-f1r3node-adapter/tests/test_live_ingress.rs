@@ -153,14 +153,8 @@ fn live_ingress_exposes_snapshot_and_finality_over_mirrored_state() {
     let mut ingress =
         LiveIngress::with_consensus_view(RecordingAdapter::default(), bonds, shard_conf, "root");
 
-    let leader = build_test_block_message_with_state(
-        &creator_1,
-        &[],
-        &signing_key_1,
-        "secp256k1",
-        0,
-        1,
-    );
+    let leader =
+        build_test_block_message_with_state(&creator_1, &[], &signing_key_1, "secp256k1", 0, 1);
 
     let round1_v2 = build_test_block_message_with_state(
         &creator_2,
@@ -239,7 +233,12 @@ fn live_ingress_exposes_snapshot_and_finality_over_mirrored_state() {
     assert_eq!(snapshot.last_finalized_block, leader.block_hash);
     assert_eq!(last_finalized, Some(leader.block_hash.clone()));
     assert!(snapshot.dag.dag_set.contains(&leader.block_hash));
-    assert!(snapshot.dag.finalized_blocks_set.contains(&leader.block_hash));
+    assert!(
+        snapshot
+            .dag
+            .finalized_blocks_set
+            .contains(&leader.block_hash)
+    );
     assert!(!ordered.is_empty());
     assert_eq!(ordered, snapshot.ordered_finalized_blocks);
     assert!(ordered.contains(&leader.block_hash));
