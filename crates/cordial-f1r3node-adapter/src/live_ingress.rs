@@ -64,6 +64,7 @@ pub enum LiveIngressPhase {
 pub enum LiveIngressError {
     Mapping(anyhow::Error),
     Adapter(anyhow::Error),
+    Mirror(String),
 }
 
 impl std::fmt::Display for LiveIngressError {
@@ -71,6 +72,7 @@ impl std::fmt::Display for LiveIngressError {
         match self {
             Self::Mapping(err) => write!(f, "failed to map live BlockMessage: {err}"),
             Self::Adapter(err) => write!(f, "adapter rejected live block: {err}"),
+            Self::Mirror(err) => write!(f, "failed to mirror live block: {err}"),
         }
     }
 }
@@ -217,13 +219,31 @@ where
     }
 
     fn resolve_known_identity(&self, pred_id: &BlockIdentity) -> Option<BlockIdentity> {
-        self.blocklace
+        let exact = self
+            .blocklace
             .dom()
             .into_iter()
             .find(|known| {
                 known.content_hash == pred_id.content_hash && known.creator == pred_id.creator
             })
-            .cloned()
+            .cloned();
+
+        if exact.is_some() {
+            return exact;
+        }
+
+        let mut same_hash = self
+            .blocklace
+            .dom()
+            .into_iter()
+            .filter(|known| known.content_hash == pred_id.content_hash)
+            .cloned();
+        let first = same_hash.next()?;
+        if same_hash.next().is_none() {
+            Some(first)
+        } else {
+            None
+        }
     }
 }
 
@@ -365,6 +385,23 @@ impl<A> LiveIngress<A> {
     /// Return the current weighted tau output as block hashes.
     pub fn ordered_finalized_blocks(&self) -> Result<Vec<Vec<u8>>, SnapshotError> {
         Ok(self.snapshot()?.ordered_finalized_blocks)
+    }
+
+    /// Ingest a trusted block that was reconstructed from a live node-facing
+    /// API rather than validated through the raw `BlockMessage` mapper.
+    pub fn ingest_trusted_block(&mut self, block: Block) -> Result<MirrorUpdate, LiveIngressError>
+    where
+        A: BlocklaceAdapter<BlockIdentity>,
+    {
+        self.adapter
+            .on_block(block.clone())
+            .map_err(LiveIngressError::Adapter)?;
+        let update = self
+            .mirror
+            .ingest(block)
+            .map_err(LiveIngressError::Mirror)?;
+        self.phase = LiveIngressPhase::Connected;
+        Ok(update)
     }
 }
 
