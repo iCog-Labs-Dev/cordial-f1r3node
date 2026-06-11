@@ -47,6 +47,8 @@ fn live_ingress_routes_valid_block_messages_through_grpc_ingest() {
     );
     assert_eq!(ingress.adapter().callback_count, 1);
     assert_eq!(ingress.adapter().received_blocks.len(), 1);
+    assert_eq!(ingress.blocklace().dom().len(), 1);
+    assert!(ingress.pending_blocks().is_empty());
 }
 
 #[test]
@@ -70,6 +72,57 @@ fn live_ingress_surfaces_adapter_rejections_after_mapping() {
     assert_eq!(ingress.phase(), LiveIngressPhase::Defined);
     assert_eq!(ingress.adapter().callback_count, 1);
     assert!(ingress.adapter().received_blocks.is_empty());
+    assert_eq!(ingress.blocklace().dom().len(), 0);
+    assert!(ingress.pending_blocks().is_empty());
+}
+
+#[test]
+fn live_ingress_buffers_out_of_order_blocks_until_predecessors_arrive() {
+    let parent_signing_key = test_signing_key(11);
+    let parent_creator = test_public_key(&parent_signing_key);
+    let parent = build_test_block_message(&parent_creator, &[], &parent_signing_key, "secp256k1");
+
+    let child_signing_key = test_signing_key(12);
+    let child_creator = test_public_key(&child_signing_key);
+    let child = build_test_block_message(
+        &child_creator,
+        &[(parent.block_hash.clone(), parent.sender.clone())],
+        &child_signing_key,
+        "secp256k1",
+    );
+
+    let mut ingress = LiveIngress::new(RecordingAdapter::default());
+
+    ingress
+        .ingest_block_message(&child)
+        .expect("child block should be accepted into pending state");
+    assert_eq!(ingress.blocklace().dom().len(), 0);
+    assert_eq!(ingress.pending_blocks().len(), 1);
+
+    ingress
+        .ingest_block_message(&parent)
+        .expect("parent block should release buffered child");
+    assert_eq!(ingress.blocklace().dom().len(), 2);
+    assert!(ingress.pending_blocks().is_empty());
+}
+
+#[test]
+fn live_ingress_ignores_duplicate_blocks_in_mirror_state() {
+    let signing_key = test_signing_key(13);
+    let creator = test_public_key(&signing_key);
+    let block_msg = build_test_block_message(&creator, &[], &signing_key, "secp256k1");
+
+    let mut ingress = LiveIngress::new(RecordingAdapter::default());
+
+    ingress
+        .ingest_block_message(&block_msg)
+        .expect("first block ingestion should succeed");
+    ingress
+        .ingest_block_message(&block_msg)
+        .expect("duplicate block ingestion should not error");
+
+    assert_eq!(ingress.blocklace().dom().len(), 1);
+    assert!(ingress.pending_blocks().is_empty());
 }
 
 #[derive(Default)]
@@ -124,16 +177,15 @@ fn test_public_key(signing_key: &[u8]) -> Vec<u8> {
 
 fn build_test_block_message(
     creator: &[u8],
-    parent_hashes: &[Vec<u8>],
+    parents: &[(Vec<u8>, Vec<u8>)],
     signing_key: &[u8],
     sig_algorithm: &str,
 ) -> BlockMessage {
-    let justifications: Vec<Justification> = parent_hashes
+    let justifications: Vec<Justification> = parents
         .iter()
-        .enumerate()
-        .filter(|(_, h)| h.len() == 32)
-        .map(|(i, hash)| Justification {
-            validator: vec![i as u8; 33],
+        .filter(|(hash, _)| hash.len() == 32)
+        .map(|(hash, validator)| Justification {
+            validator: validator.clone(),
             latest_block_hash: hash.clone(),
         })
         .collect();
@@ -173,7 +225,7 @@ fn build_test_block_message(
     BlockMessage {
         block_hash: content_hash.to_vec(),
         header: Header {
-            parents_hash_list: parent_hashes.to_vec(),
+            parents_hash_list: parents.iter().map(|(hash, _)| hash.clone()).collect(),
             timestamp: 0,
             version: 1,
             extra_bytes: vec![],
