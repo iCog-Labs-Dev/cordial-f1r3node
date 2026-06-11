@@ -15,6 +15,9 @@ and easy to extend as new implementation notes are added.
 2. [02-live-blockmessage-ingestion.md](./02-live-blockmessage-ingestion.md)
    - Connects `live_ingress` to the existing `grpc_ingest` pipeline
    - Documents the first live `BlockMessage` adapter-side acceptance path
+3. [03-live-blocklace-mirror.md](./03-live-blocklace-mirror.md)
+   - Adds a stateful local blocklace mirror behind `live_ingress`
+   - Documents buffering and release of out-of-order block traffic
 
 ## Scope Of This Track
 
@@ -29,7 +32,6 @@ The integration notes in this folder focus on:
 
 Future notes in this folder are expected to cover:
 
-- stateful blocklace mirroring from intercepted traffic
 - snapshot, finality, and tau ordering on live mirrored state
 - HTTP-based comparison harnesses
 - deploy ingress tracing and later interception candidates
