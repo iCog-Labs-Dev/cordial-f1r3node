@@ -686,6 +686,8 @@ dependencies = [
  "serde",
  "sha2",
  "tokio",
+ "tonic",
+ "tracing",
 ]
 
 [[package]]
