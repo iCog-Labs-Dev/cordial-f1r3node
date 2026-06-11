@@ -32,8 +32,8 @@ use std::collections::HashMap;
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::crypto::CryptoVerifier;
-use cordial_miners_core::types::{BlockContent, NodeId};
 use cordial_miners_core::types::BlockIdentity;
+use cordial_miners_core::types::{BlockContent, NodeId};
 
 use crate::block_translation::BlockMessage;
 use crate::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
@@ -165,7 +165,8 @@ where
     }
 
     fn predecessors_available(&self, block: &Block) -> bool {
-        block.content
+        block
+            .content
             .predecessors
             .iter()
             .all(|pred_id| self.resolve_known_identity(pred_id).is_some())
