@@ -6,11 +6,13 @@ use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 use models::casper::v1::{
     block_info_response, deploy_service_client::DeployServiceClient, last_finalized_block_response,
 };
-use models::casper::{BlocksQuery, LightBlockInfo, LastFinalizedBlockQuery};
+use models::casper::{BlocksQuery, LastFinalizedBlockQuery, LightBlockInfo};
 use models::rust::string_ops::StringOps;
 use tonic::transport::{Channel, Endpoint};
 
-use crate::block_translation::{BlockMessage, Bond as AdapterBond, F1r3flyState, Header, Justification};
+use crate::block_translation::{
+    BlockMessage, Bond as AdapterBond, F1r3flyState, Header, Justification,
+};
 use crate::grpc_ingest::BlocklaceAdapter;
 use crate::live_ingress::{LiveIngress, LiveIngressError, MirrorDisposition};
 
@@ -100,10 +102,12 @@ impl LiveGrpcBlockClient {
 
         match response.message {
             Some(last_finalized_block_response::Message::BlockInfo(block_info)) => {
-                let light = block_info
-                    .block_info
-                    .ok_or(LiveGrpcError::MissingPayload("last_finalized_block.block_info"))?;
-                Ok(Some(decode_hex_32("block_hash", &light.block_hash)?.to_vec()))
+                let light = block_info.block_info.ok_or(LiveGrpcError::MissingPayload(
+                    "last_finalized_block.block_info",
+                ))?;
+                Ok(Some(
+                    decode_hex_32("block_hash", &light.block_hash)?.to_vec(),
+                ))
             }
             Some(last_finalized_block_response::Message::Error(_)) => Ok(None),
             None => Err(LiveGrpcError::MissingPayload(
@@ -253,7 +257,8 @@ pub fn light_block_info_to_block_message(
             })
             .collect::<Result<Vec<_>, LiveGrpcError>>()?,
         sender: decode_hex("sender", &info.sender)?,
-        seq_num: i32::try_from(info.seq_num).map_err(|_| LiveGrpcError::NumericOverflow("seq_num"))?,
+        seq_num: i32::try_from(info.seq_num)
+            .map_err(|_| LiveGrpcError::NumericOverflow("seq_num"))?,
         sig: decode_hex("sig", &info.sig)?,
         sig_algorithm: info.sig_algorithm.clone(),
         shard_id: info.shard_id.clone(),

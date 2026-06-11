@@ -61,8 +61,9 @@ fn trusted_block_from_light_block_info_preserves_identity_and_state() {
     assert_eq!(predecessor.content_hash, parent_hash);
     assert_eq!(predecessor.creator.0, parent_creator);
 
-    let payload = cordial_miners_core::execution::CordialBlockPayload::from_bytes(&block.content.payload)
-        .expect("payload should decode");
+    let payload =
+        cordial_miners_core::execution::CordialBlockPayload::from_bytes(&block.content.payload)
+            .expect("payload should decode");
     assert_eq!(payload.state.block_number, 11);
     assert_eq!(payload.state.bonds.len(), 1);
     assert_eq!(payload.state.bonds[0].stake, 100);
