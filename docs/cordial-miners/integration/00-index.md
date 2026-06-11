@@ -21,6 +21,9 @@ and easy to extend as new implementation notes are added.
 4. [04-live-snapshot-finality-ordering.md](./04-live-snapshot-finality-ordering.md)
    - Projects the mirrored live blocklace into snapshot, finality, and tau output
    - Documents the first consensus-facing read path over intercepted block traffic
+5. [05-live-grpc-block-source.md](./05-live-grpc-block-source.md)
+   - Attaches the adapter to a running `f1r3node` over the node's public gRPC block APIs
+   - Documents trusted live block mirroring from node-facing gRPC responses
 
 ## Scope Of This Track
 
