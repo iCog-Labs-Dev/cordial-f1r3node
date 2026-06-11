@@ -18,6 +18,9 @@ and easy to extend as new implementation notes are added.
 3. [03-live-blocklace-mirror.md](./03-live-blocklace-mirror.md)
    - Adds a stateful local blocklace mirror behind `live_ingress`
    - Documents buffering and release of out-of-order block traffic
+4. [04-live-snapshot-finality-ordering.md](./04-live-snapshot-finality-ordering.md)
+   - Projects the mirrored live blocklace into snapshot, finality, and tau output
+   - Documents the first consensus-facing read path over intercepted block traffic
 
 ## Scope Of This Track
 

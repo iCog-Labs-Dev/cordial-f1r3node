@@ -1,10 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use cordial_f1r3node_adapter::block_translation::{
     BlockMessage, Body, F1r3flyState, Header, Justification,
 };
 use cordial_f1r3node_adapter::grpc_ingest::BlocklaceAdapter;
 use cordial_f1r3node_adapter::live_ingress::{LiveIngress, LiveIngressError, LiveIngressPhase};
+use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 use cordial_miners_core::Block;
 use cordial_miners_core::crypto::{hash_content, sign};
 use cordial_miners_core::execution::{BlockState, CordialBlockPayload};
@@ -125,6 +126,128 @@ fn live_ingress_ignores_duplicate_blocks_in_mirror_state() {
     assert!(ingress.pending_blocks().is_empty());
 }
 
+#[test]
+fn live_ingress_exposes_snapshot_and_finality_over_mirrored_state() {
+    let shard_conf = CasperShardConf {
+        shard_name: "root".to_string(),
+        max_number_of_parents: 16,
+        fault_tolerance_threshold: 0.333,
+        deploy_lifespan: 50,
+        min_phlo_price: 1,
+        ..CasperShardConf::default()
+    };
+
+    let signing_key_1 = test_signing_key(21);
+    let creator_1 = test_public_key(&signing_key_1);
+    let signing_key_2 = test_signing_key(22);
+    let creator_2 = test_public_key(&signing_key_2);
+    let signing_key_3 = test_signing_key(23);
+    let creator_3 = test_public_key(&signing_key_3);
+    let signing_key_4 = test_signing_key(24);
+    let creator_4 = test_public_key(&signing_key_4);
+
+    let mut bonds = HashMap::new();
+    bonds.insert(NodeId(creator_1.clone()), 100);
+    bonds.insert(NodeId(creator_2.clone()), 100);
+    bonds.insert(NodeId(creator_3.clone()), 100);
+    bonds.insert(NodeId(creator_4.clone()), 100);
+
+    let mut ingress =
+        LiveIngress::with_consensus_view(RecordingAdapter::default(), bonds, shard_conf, "root");
+
+    let leader =
+        build_test_block_message_with_state(&creator_1, &[], &signing_key_1, "secp256k1", 0, 1);
+
+    let round1_v2 = build_test_block_message_with_state(
+        &creator_2,
+        &[(leader.block_hash.clone(), leader.sender.clone())],
+        &signing_key_2,
+        "secp256k1",
+        1,
+        2,
+    );
+    let round1_v3 = build_test_block_message_with_state(
+        &creator_3,
+        &[(leader.block_hash.clone(), leader.sender.clone())],
+        &signing_key_3,
+        "secp256k1",
+        1,
+        3,
+    );
+    let round1_v4 = build_test_block_message_with_state(
+        &creator_4,
+        &[(leader.block_hash.clone(), leader.sender.clone())],
+        &signing_key_4,
+        "secp256k1",
+        1,
+        4,
+    );
+
+    let round1_support = [
+        (round1_v2.block_hash.clone(), round1_v2.sender.clone()),
+        (round1_v3.block_hash.clone(), round1_v3.sender.clone()),
+        (round1_v4.block_hash.clone(), round1_v4.sender.clone()),
+    ];
+
+    let round2_v2 = build_test_block_message_with_state(
+        &creator_2,
+        &round1_support,
+        &signing_key_2,
+        "secp256k1",
+        2,
+        5,
+    );
+    let round2_v3 = build_test_block_message_with_state(
+        &creator_3,
+        &round1_support,
+        &signing_key_3,
+        "secp256k1",
+        2,
+        6,
+    );
+    let round2_v4 = build_test_block_message_with_state(
+        &creator_4,
+        &round1_support,
+        &signing_key_4,
+        "secp256k1",
+        2,
+        7,
+    );
+
+    for block_msg in [
+        &round2_v3, &round1_v2, &round2_v2, &leader, &round1_v4, &round2_v4, &round1_v3,
+    ] {
+        ingress
+            .ingest_block_message(block_msg)
+            .expect("live block wave should mirror successfully");
+    }
+
+    let snapshot = ingress
+        .snapshot()
+        .expect("mirrored wave should build a live snapshot");
+    let last_finalized = ingress
+        .last_finalized_block_hash()
+        .expect("finality lookup should succeed");
+    let ordered = ingress
+        .ordered_finalized_blocks()
+        .expect("weighted tau lookup should succeed");
+
+    assert_eq!(snapshot.last_finalized_block, leader.block_hash);
+    assert_eq!(last_finalized, Some(leader.block_hash.clone()));
+    assert!(snapshot.dag.dag_set.contains(&leader.block_hash));
+    assert!(
+        snapshot
+            .dag
+            .finalized_blocks_set
+            .contains(&leader.block_hash)
+    );
+    assert!(!ordered.is_empty());
+    assert_eq!(ordered, snapshot.ordered_finalized_blocks);
+    assert!(ordered.contains(&leader.block_hash));
+    assert_eq!(snapshot.on_chain_state.shard_conf.shard_name, "root");
+    assert_eq!(snapshot.on_chain_state.active_validators.len(), 4);
+}
+
 #[derive(Default)]
 struct RecordingAdapter {
     received_blocks: Vec<Block>,
@@ -181,6 +304,17 @@ fn build_test_block_message(
     signing_key: &[u8],
     sig_algorithm: &str,
 ) -> BlockMessage {
+    build_test_block_message_with_state(creator, parents, signing_key, sig_algorithm, 0, 1)
+}
+
+fn build_test_block_message_with_state(
+    creator: &[u8],
+    parents: &[(Vec<u8>, Vec<u8>)],
+    signing_key: &[u8],
+    sig_algorithm: &str,
+    block_number: u64,
+    state_tag: u8,
+) -> BlockMessage {
     let justifications: Vec<Justification> = parents
         .iter()
         .filter(|(hash, _)| hash.len() == 32)
@@ -192,10 +326,10 @@ fn build_test_block_message(
 
     let payload = CordialBlockPayload {
         state: BlockState {
-            pre_state_hash: vec![0u8; 32],
-            post_state_hash: vec![1u8; 32],
+            pre_state_hash: vec![state_tag; 32],
+            post_state_hash: vec![state_tag.wrapping_add(1); 32],
             bonds: vec![],
-            block_number: 0,
+            block_number,
         },
         deploys: vec![],
         rejected_deploys: vec![],
@@ -232,10 +366,10 @@ fn build_test_block_message(
         },
         body: Body {
             state: F1r3flyState {
-                pre_state_hash: vec![0u8; 32],
-                post_state_hash: vec![1u8; 32],
+                pre_state_hash: vec![state_tag; 32],
+                post_state_hash: vec![state_tag.wrapping_add(1); 32],
                 bonds: vec![],
-                block_number: 0,
+                block_number: i64::try_from(block_number).expect("test block number should fit"),
             },
             deploys: vec![],
             rejected_deploys: vec![],
