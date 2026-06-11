@@ -128,12 +128,14 @@ fn live_ingress_ignores_duplicate_blocks_in_mirror_state() {
 
 #[test]
 fn live_ingress_exposes_snapshot_and_finality_over_mirrored_state() {
-    let mut shard_conf = CasperShardConf::default();
-    shard_conf.shard_name = "root".to_string();
-    shard_conf.max_number_of_parents = 16;
-    shard_conf.fault_tolerance_threshold = 0.333;
-    shard_conf.deploy_lifespan = 50;
-    shard_conf.min_phlo_price = 1;
+    let shard_conf = CasperShardConf {
+        shard_name: "root".to_string(),
+        max_number_of_parents: 16,
+        fault_tolerance_threshold: 0.333,
+        deploy_lifespan: 50,
+        min_phlo_price: 1,
+        ..CasperShardConf::default()
+    };
 
     let signing_key_1 = test_signing_key(21);
     let creator_1 = test_public_key(&signing_key_1);
