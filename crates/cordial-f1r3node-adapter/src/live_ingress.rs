@@ -37,6 +37,8 @@ use cordial_miners_core::types::{BlockContent, NodeId};
 
 use crate::block_translation::BlockMessage;
 use crate::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
+use crate::shard_conf::CasperShardConf;
+use crate::snapshot::{CasperSnapshot, SnapshotError, build_snapshot};
 
 /// High-level runtime phase for the live ingress adapter.
 ///
@@ -236,6 +238,9 @@ pub struct LiveIngress<A> {
     adapter: A,
     mapper: GrpcBlockMapper,
     mirror: LiveBlocklaceMirror,
+    bonds: HashMap<NodeId, u64>,
+    shard_conf: CasperShardConf,
+    shard_id: String,
 }
 
 impl<A> LiveIngress<A> {
@@ -246,6 +251,27 @@ impl<A> LiveIngress<A> {
             adapter,
             mapper: GrpcBlockMapper::new(),
             mirror: LiveBlocklaceMirror::default(),
+            bonds: HashMap::new(),
+            shard_conf: CasperShardConf::default(),
+            shard_id: String::from("root"),
+        }
+    }
+
+    /// Create a live-ingress wrapper with explicit consensus-view settings.
+    pub fn with_consensus_view(
+        adapter: A,
+        bonds: HashMap<NodeId, u64>,
+        shard_conf: CasperShardConf,
+        shard_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            phase: LiveIngressPhase::Defined,
+            adapter,
+            mapper: GrpcBlockMapper::new(),
+            mirror: LiveBlocklaceMirror::default(),
+            bonds,
+            shard_conf,
+            shard_id: shard_id.into(),
         }
     }
 
@@ -287,6 +313,58 @@ impl<A> LiveIngress<A> {
     /// Return blocks that are waiting on missing predecessors.
     pub fn pending_blocks(&self) -> &HashMap<BlockIdentity, Block> {
         self.mirror.pending()
+    }
+
+    /// Replace the bonded validator set used for finality and ordering views.
+    pub fn set_bonds(&mut self, bonds: HashMap<NodeId, u64>) {
+        self.bonds = bonds;
+    }
+
+    pub fn bonds(&self) -> &HashMap<NodeId, u64> {
+        &self.bonds
+    }
+
+    /// Replace the shard config projected into live snapshots.
+    pub fn set_shard_conf(&mut self, shard_conf: CasperShardConf) {
+        self.shard_conf = shard_conf;
+    }
+
+    pub fn shard_conf(&self) -> &CasperShardConf {
+        &self.shard_conf
+    }
+
+    /// Replace the shard identifier exposed through snapshot views.
+    pub fn set_shard_id(&mut self, shard_id: impl Into<String>) {
+        self.shard_id = shard_id.into();
+    }
+
+    pub fn shard_id(&self) -> &str {
+        &self.shard_id
+    }
+
+    /// Build a snapshot over the current mirrored blocklace state.
+    pub fn snapshot(&self) -> Result<CasperSnapshot, SnapshotError> {
+        build_snapshot(
+            self.blocklace(),
+            &self.bonds,
+            self.shard_conf.to_snapshot_conf(),
+            &self.shard_id,
+        )
+    }
+
+    /// Return the latest finalized block hash if the mirrored state has one.
+    pub fn last_finalized_block_hash(&self) -> Result<Option<Vec<u8>>, SnapshotError> {
+        let snapshot = self.snapshot()?;
+        if snapshot.last_finalized_block.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(snapshot.last_finalized_block))
+        }
+    }
+
+    /// Return the current weighted tau output as block hashes.
+    pub fn ordered_finalized_blocks(&self) -> Result<Vec<Vec<u8>>, SnapshotError> {
+        Ok(self.snapshot()?.ordered_finalized_blocks)
     }
 }
 
