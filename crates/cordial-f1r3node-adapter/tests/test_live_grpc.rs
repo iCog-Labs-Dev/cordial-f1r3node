@@ -16,35 +16,34 @@ fn trusted_block_from_light_block_info_preserves_identity_and_state() {
     let sender = vec![2u8; 33];
     let parent_creator = vec![3u8; 33];
 
-    let info = LightBlockInfo {
-        block_hash: hex(&block_hash),
-        sender: hex(&sender),
-        seq_num: 4,
-        sig: hex(&[5u8; 64]),
-        sig_algorithm: "secp256k1".to_string(),
-        shard_id: "root".to_string(),
-        extra_bytes: Bytes::new(),
-        version: 1,
-        timestamp: 123,
-        header_extra_bytes: Bytes::new(),
-        parents_hash_list: vec![hex(&parent_hash)],
-        block_number: 11,
-        pre_state_hash: hex(&[1u8; 32]),
-        post_state_hash: hex(&[2u8; 32]),
-        body_extra_bytes: Bytes::new(),
-        bonds: vec![BondInfo {
-            validator: hex(&sender),
-            stake: 100,
-        }],
-        block_size: "0".to_string(),
-        deploy_count: 0,
-        fault_tolerance: 0.0,
-        justifications: vec![JustificationInfo {
-            validator: hex(&parent_creator),
-            latest_block_hash: hex(&parent_hash),
-        }],
-        rejected_deploys: vec![],
-    };
+    let mut info = LightBlockInfo::default();
+    info.block_hash = hex(&block_hash);
+    info.sender = hex(&sender);
+    info.seq_num = 4;
+    info.sig = hex(&[5u8; 64]);
+    info.sig_algorithm = "secp256k1".to_string();
+    info.shard_id = "root".to_string();
+    info.extra_bytes = Bytes::new();
+    info.version = 1;
+    info.timestamp = 123;
+    info.header_extra_bytes = Bytes::new();
+    info.parents_hash_list = vec![hex(&parent_hash)];
+    info.block_number = 11;
+    info.pre_state_hash = hex(&[1u8; 32]);
+    info.post_state_hash = hex(&[2u8; 32]);
+    info.body_extra_bytes = Bytes::new();
+    info.bonds = vec![BondInfo {
+        validator: hex(&sender),
+        stake: 100,
+    }];
+    info.block_size = "0".to_string();
+    info.deploy_count = 0;
+    info.fault_tolerance = 0.0;
+    info.justifications = vec![JustificationInfo {
+        validator: hex(&parent_creator),
+        latest_block_hash: hex(&parent_hash),
+    }];
+    info.rejected_deploys = vec![];
 
     let block = trusted_block_from_light_block_info(&info).expect("trusted block conversion");
 
@@ -75,34 +74,33 @@ fn light_block_info_to_block_message_decodes_live_grpc_view() {
     let parent_hash = [1u8; 32];
     let sender = vec![2u8; 33];
 
-    let info = LightBlockInfo {
-        block_hash: hex(&block_hash),
-        sender: hex(&sender),
-        seq_num: 7,
-        sig: hex(&[4u8; 64]),
-        sig_algorithm: "secp256k1".to_string(),
-        shard_id: "root".to_string(),
-        extra_bytes: Bytes::from_static(b"x"),
-        version: 1,
-        timestamp: 77,
-        header_extra_bytes: Bytes::from_static(b"h"),
-        parents_hash_list: vec![hex(&parent_hash)],
-        block_number: 5,
-        pre_state_hash: hex(&[3u8; 32]),
-        post_state_hash: hex(&[6u8; 32]),
-        body_extra_bytes: Bytes::from_static(b"b"),
-        bonds: vec![],
-        block_size: "0".to_string(),
-        deploy_count: 0,
-        fault_tolerance: 0.0,
-        justifications: vec![JustificationInfo {
-            validator: hex(&sender),
-            latest_block_hash: hex(&parent_hash),
-        }],
-        rejected_deploys: vec![RejectedDeployInfo {
-            sig: "deadbeef".to_string(),
-        }],
-    };
+    let mut info = LightBlockInfo::default();
+    info.block_hash = hex(&block_hash);
+    info.sender = hex(&sender);
+    info.seq_num = 7;
+    info.sig = hex(&[4u8; 64]);
+    info.sig_algorithm = "secp256k1".to_string();
+    info.shard_id = "root".to_string();
+    info.extra_bytes = Bytes::from_static(b"x");
+    info.version = 1;
+    info.timestamp = 77;
+    info.header_extra_bytes = Bytes::from_static(b"h");
+    info.parents_hash_list = vec![hex(&parent_hash)];
+    info.block_number = 5;
+    info.pre_state_hash = hex(&[3u8; 32]);
+    info.post_state_hash = hex(&[6u8; 32]);
+    info.body_extra_bytes = Bytes::from_static(b"b");
+    info.bonds = vec![];
+    info.block_size = "0".to_string();
+    info.deploy_count = 0;
+    info.fault_tolerance = 0.0;
+    info.justifications = vec![JustificationInfo {
+        validator: hex(&sender),
+        latest_block_hash: hex(&parent_hash),
+    }];
+    info.rejected_deploys = vec![RejectedDeployInfo {
+        sig: "deadbeef".to_string(),
+    }];
 
     let msg = light_block_info_to_block_message(&info).expect("block message conversion");
 
