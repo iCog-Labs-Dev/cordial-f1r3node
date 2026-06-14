@@ -24,6 +24,9 @@ and easy to extend as new implementation notes are added.
 5. [05-live-grpc-block-source.md](./05-live-grpc-block-source.md)
    - Attaches the adapter to a running `f1r3node` over the node's public gRPC block APIs
    - Documents trusted live block mirroring from node-facing gRPC responses
+6. [06-http-observer-comparison.md](./06-http-observer-comparison.md)
+   - Adds an HTTP observer over `/api/blocks` and `/api/last-finalized-block`
+   - Documents mirror-vs-node comparison and mismatch reporting
 
 ## Scope Of This Track
 
@@ -38,6 +41,4 @@ The integration notes in this folder focus on:
 
 Future notes in this folder are expected to cover:
 
-- snapshot, finality, and tau ordering on live mirrored state
-- HTTP-based comparison harnesses
 - deploy ingress tracing and later interception candidates
