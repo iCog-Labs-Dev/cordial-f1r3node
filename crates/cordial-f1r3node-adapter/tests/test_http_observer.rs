@@ -68,12 +68,10 @@ fn compare_mirror_against_http_reports_missing_blocks_and_lfb_mismatch() {
 
     let http_blocks = vec![HttpLightBlockInfo {
         block_hash: hex(&leader.block_hash),
-        ..HttpLightBlockInfo::default()
     }];
     let http_lfb = HttpBlockInfo {
         block_info: HttpLightBlockInfo {
             block_hash: "deadbeef".to_string(),
-            ..HttpLightBlockInfo::default()
         },
         deploys: vec![],
     };
