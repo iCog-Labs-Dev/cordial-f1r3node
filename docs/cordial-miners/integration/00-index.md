@@ -27,6 +27,9 @@ and easy to extend as new implementation notes are added.
 6. [06-http-observer-comparison.md](./06-http-observer-comparison.md)
    - Adds an HTTP observer over `/api/blocks` and `/api/last-finalized-block`
    - Documents mirror-vs-node comparison and mismatch reporting
+7. [07-deploy-ingress-trace.md](./07-deploy-ingress-trace.md)
+   - Traces deploy flow from external API ingress into proposal scheduling
+   - Identifies the first safe pre-proposal Cordial interception seam
 
 ## Scope Of This Track
 
@@ -41,4 +44,4 @@ The integration notes in this folder focus on:
 
 Future notes in this folder are expected to cover:
 
-- deploy ingress tracing and later interception candidates
+- actual deploy-side interception work at the documented pre-proposal seam

@@ -4,9 +4,12 @@ use cordial_miners_core::block::Block;
 use cordial_miners_core::execution::{BlockState, Bond, CordialBlockPayload};
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 use models::casper::v1::{
-    block_info_response, deploy_service_client::DeployServiceClient, last_finalized_block_response,
+    block_info_response, block_response, deploy_service_client::DeployServiceClient,
+    last_finalized_block_response,
 };
-use models::casper::{BlocksQuery, LastFinalizedBlockQuery, LightBlockInfo};
+use models::casper::{
+    BlockQuery, BlocksQuery, BlocksQueryByHeight, LastFinalizedBlockQuery, LightBlockInfo,
+};
 use models::rust::string_ops::StringOps;
 use tonic::transport::{Channel, Endpoint};
 
@@ -92,6 +95,70 @@ impl LiveGrpcBlockClient {
         Ok(blocks)
     }
 
+    pub async fn light_blocks_by_heights(
+        &mut self,
+        start_block_number: i64,
+        end_block_number: i64,
+    ) -> Result<Vec<LightBlockInfo>, LiveGrpcError> {
+        let mut stream = self
+            .client
+            .get_blocks_by_heights(BlocksQueryByHeight {
+                start_block_number,
+                end_block_number,
+            })
+            .await
+            .map_err(LiveGrpcError::Status)?
+            .into_inner();
+
+        let mut blocks = Vec::new();
+        while let Some(item) = stream.message().await.map_err(LiveGrpcError::Status)? {
+            match item.message {
+                Some(block_info_response::Message::BlockInfo(light)) => blocks.push(light),
+                Some(block_info_response::Message::Error(status)) => {
+                    return Err(LiveGrpcError::MissingPayload(Box::leak(
+                        format!(
+                            "get_blocks_by_heights returned service error: {:?}",
+                            status
+                        )
+                        .into_boxed_str(),
+                    )));
+                }
+                None => return Err(LiveGrpcError::MissingPayload("get_blocks_by_heights.message")),
+            }
+        }
+
+        blocks.sort_by(|a, b| {
+            a.block_number
+                .cmp(&b.block_number)
+                .then_with(|| a.block_hash.cmp(&b.block_hash))
+        });
+        Ok(blocks)
+    }
+
+    pub async fn light_block_by_hash(
+        &mut self,
+        hash: impl Into<String>,
+    ) -> Result<LightBlockInfo, LiveGrpcError> {
+        let response = self
+            .client
+            .get_block(BlockQuery { hash: hash.into() })
+            .await
+            .map_err(LiveGrpcError::Status)?
+            .into_inner();
+
+        match response.message {
+            Some(block_response::Message::BlockInfo(block_info)) => block_info
+                .block_info
+                .ok_or(LiveGrpcError::MissingPayload("get_block.block_info")),
+            Some(block_response::Message::Error(status)) => {
+                Err(LiveGrpcError::MissingPayload(Box::leak(
+                    format!("get_block returned service error: {:?}", status).into_boxed_str(),
+                )))
+            }
+            None => Err(LiveGrpcError::MissingPayload("get_block.message")),
+        }
+    }
+
     pub async fn last_finalized_block_hash(&mut self) -> Result<Option<Vec<u8>>, LiveGrpcError> {
         let response = self
             .client
@@ -142,6 +209,13 @@ impl LiveGrpcBlockClient {
 }
 
 pub fn trusted_block_from_light_block_info(info: &LightBlockInfo) -> Result<Block, LiveGrpcError> {
+    trusted_block_from_light_block_info_with_options(info, true)
+}
+
+pub fn trusted_block_from_light_block_info_with_options(
+    info: &LightBlockInfo,
+    include_justifications: bool,
+) -> Result<Block, LiveGrpcError> {
     let mut justification_creators: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
     for justification in &info.justifications {
         let hash = decode_hex("latest_block_hash", &justification.latest_block_hash)?;
@@ -163,12 +237,14 @@ pub fn trusted_block_from_light_block_info(info: &LightBlockInfo) -> Result<Bloc
         });
     }
 
-    for justification in &info.justifications {
-        predecessors.insert(BlockIdentity {
-            content_hash: decode_hex_32("latest_block_hash", &justification.latest_block_hash)?,
-            creator: NodeId(decode_hex("validator", &justification.validator)?),
-            signature: vec![],
-        });
+    if include_justifications {
+        for justification in &info.justifications {
+            predecessors.insert(BlockIdentity {
+                content_hash: decode_hex_32("latest_block_hash", &justification.latest_block_hash)?,
+                creator: NodeId(decode_hex("validator", &justification.validator)?),
+                signature: vec![],
+            });
+        }
     }
 
     let payload = CordialBlockPayload {
