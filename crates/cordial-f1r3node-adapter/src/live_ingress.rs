@@ -38,7 +38,10 @@ use cordial_miners_core::types::{BlockContent, NodeId};
 use crate::block_translation::BlockMessage;
 use crate::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
 use crate::shard_conf::CasperShardConf;
-use crate::snapshot::{CasperSnapshot, SnapshotError, build_snapshot};
+use crate::snapshot::{
+    CasperSnapshot, SnapshotError, build_snapshot, latest_finalized_block_id,
+    ordered_finalized_block_hashes,
+};
 
 /// High-level runtime phase for the live ingress adapter.
 ///
@@ -374,17 +377,13 @@ impl<A> LiveIngress<A> {
 
     /// Return the latest finalized block hash if the mirrored state has one.
     pub fn last_finalized_block_hash(&self) -> Result<Option<Vec<u8>>, SnapshotError> {
-        let snapshot = self.snapshot()?;
-        if snapshot.last_finalized_block.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(snapshot.last_finalized_block))
-        }
+        Ok(latest_finalized_block_id(self.blocklace(), &self.bonds)
+            .map(|id| id.content_hash.to_vec()))
     }
 
     /// Return the current weighted tau output as block hashes.
     pub fn ordered_finalized_blocks(&self) -> Result<Vec<Vec<u8>>, SnapshotError> {
-        Ok(self.snapshot()?.ordered_finalized_blocks)
+        Ok(ordered_finalized_block_hashes(self.blocklace(), &self.bonds))
     }
 
     /// Ingest a trusted block that was reconstructed from a live node-facing
