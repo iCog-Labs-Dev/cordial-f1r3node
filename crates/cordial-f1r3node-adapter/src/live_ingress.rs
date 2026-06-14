@@ -383,7 +383,10 @@ impl<A> LiveIngress<A> {
 
     /// Return the current weighted tau output as block hashes.
     pub fn ordered_finalized_blocks(&self) -> Result<Vec<Vec<u8>>, SnapshotError> {
-        Ok(ordered_finalized_block_hashes(self.blocklace(), &self.bonds))
+        Ok(ordered_finalized_block_hashes(
+            self.blocklace(),
+            &self.bonds,
+        ))
     }
 
     /// Ingest a trusted block that was reconstructed from a live node-facing

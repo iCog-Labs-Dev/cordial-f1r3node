@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-use crate::consensus::approval::{approves, weighted_approving_creators};
+use crate::consensus::approval::{ApprovalMemo, approves, weighted_approving_creators_with_memo};
 use crate::consensus::round::{blocks_at_depth, depth};
 use crate::types::{BlockIdentity, NodeId};
 
@@ -39,6 +39,7 @@ pub struct HiddenEquivocation {
 
 #[derive(Default)]
 struct WeightedRatificationMemo {
+    approval_memo: ApprovalMemo,
     weighted_ratifies_cache: HashMap<(BlockIdentity, BlockIdentity), bool>,
 }
 
@@ -286,8 +287,13 @@ fn weighted_ratifies_with_memo(
             .filter_map(|id| blocklace.get(id))
             .collect();
 
-        let approving_creators =
-            weighted_approving_creators(blocklace, &observed_blocks, &target.identity, bonds);
+        let approving_creators = weighted_approving_creators_with_memo(
+            blocklace,
+            &observed_blocks,
+            &target.identity,
+            bonds,
+            &mut memo.approval_memo,
+        );
 
         is_weighted_supermajority(&approving_creators, bonds)
     };
