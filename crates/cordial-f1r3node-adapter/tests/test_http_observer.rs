@@ -5,7 +5,7 @@ use cordial_f1r3node_adapter::block_translation::{
 };
 use cordial_f1r3node_adapter::grpc_ingest::BlocklaceAdapter;
 use cordial_f1r3node_adapter::http_observer::{
-    HttpBlockInfo, HttpJustificationInfo, HttpLightBlockInfo, compare_mirror_against_http,
+    HttpBlockInfo, HttpLightBlockInfo, compare_mirror_against_http,
 };
 use cordial_f1r3node_adapter::live_ingress::LiveIngress;
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
@@ -30,38 +30,6 @@ fn compare_mirror_against_http_reports_matching_view() {
         .iter()
         .map(|block| HttpLightBlockInfo {
             block_hash: hex(&block.block_hash),
-            sender: hex(&block.sender),
-            seq_num: i64::from(block.seq_num),
-            sig: hex(&block.sig),
-            sig_algorithm: block.sig_algorithm.clone(),
-            shard_id: block.shard_id.clone(),
-            extra_bytes: block.extra_bytes.clone(),
-            version: block.header.version,
-            timestamp: block.header.timestamp,
-            header_extra_bytes: block.header.extra_bytes.clone(),
-            parents_hash_list: block
-                .header
-                .parents_hash_list
-                .iter()
-                .map(|h| hex(h))
-                .collect(),
-            block_number: block.body.state.block_number,
-            pre_state_hash: hex(&block.body.state.pre_state_hash),
-            post_state_hash: hex(&block.body.state.post_state_hash),
-            body_extra_bytes: block.body.extra_bytes.clone(),
-            bonds: vec![],
-            block_size: "0".to_string(),
-            deploy_count: 0,
-            fault_tolerance: 0.0,
-            justifications: block
-                .justifications
-                .iter()
-                .map(|j| HttpJustificationInfo {
-                    validator: hex(&j.validator),
-                    latest_block_hash: hex(&j.latest_block_hash),
-                })
-                .collect(),
-            rejected_deploys: vec![],
         })
         .collect();
 

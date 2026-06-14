@@ -17,62 +17,10 @@ pub enum HttpObserverError {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct HttpBondInfo {
-    pub validator: String,
-    pub stake: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct HttpJustificationInfo {
-    pub validator: String,
-    #[serde(rename = "latestBlockHash")]
-    pub latest_block_hash: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct HttpRejectedDeployInfo {
-    pub sig: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct HttpLightBlockInfo {
     #[serde(rename = "blockHash")]
     pub block_hash: String,
-    pub sender: String,
-    #[serde(rename = "seqNum")]
-    pub seq_num: i64,
-    pub sig: String,
-    #[serde(rename = "sigAlgorithm")]
-    pub sig_algorithm: String,
-    #[serde(rename = "shardId")]
-    pub shard_id: String,
-    #[serde(rename = "extraBytes")]
-    pub extra_bytes: Vec<u8>,
-    pub version: i64,
-    pub timestamp: i64,
-    #[serde(rename = "headerExtraBytes")]
-    pub header_extra_bytes: Vec<u8>,
-    #[serde(rename = "parentsHashList")]
-    pub parents_hash_list: Vec<String>,
-    #[serde(rename = "blockNumber")]
-    pub block_number: i64,
-    #[serde(rename = "preStateHash")]
-    pub pre_state_hash: String,
-    #[serde(rename = "postStateHash")]
-    pub post_state_hash: String,
-    #[serde(rename = "bodyExtraBytes")]
-    pub body_extra_bytes: Vec<u8>,
-    pub bonds: Vec<HttpBondInfo>,
-    #[serde(rename = "blockSize")]
-    pub block_size: String,
-    #[serde(rename = "deployCount")]
-    pub deploy_count: i32,
-    #[serde(rename = "faultTolerance")]
-    pub fault_tolerance: f32,
-    pub justifications: Vec<HttpJustificationInfo>,
-    #[serde(rename = "rejectedDeploys")]
-    pub rejected_deploys: Vec<HttpRejectedDeployInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
