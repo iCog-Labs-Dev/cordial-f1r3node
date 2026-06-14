@@ -22,7 +22,9 @@ use models::rust::string_ops::StringOps;
 
 #[derive(Parser, Debug)]
 #[command(name = "live-mirror-check")]
-#[command(about = "Mirror live f1r3node blocks into Cordial state and compare against HTTP-visible node state")]
+#[command(
+    about = "Mirror live f1r3node blocks into Cordial state and compare against HTTP-visible node state"
+)]
 struct Args {
     #[arg(long, default_value = "http://127.0.0.1:40401")]
     grpc_url: String,
@@ -179,14 +181,13 @@ async fn main() -> Result<()> {
         None => None,
     };
 
-    let initial_grpc_lfb_meta = match initial_grpc_last_finalized.as_ref() {
-        Some(hash) => Some(
-            grpc.light_block_by_hash(hash.clone())
-                .await
-                .with_context(|| format!("failed to fetch initial gRPC LFB metadata for {hash}"))?,
-        ),
-        None => None,
-    };
+    let initial_grpc_lfb_meta =
+        match initial_grpc_last_finalized.as_ref() {
+            Some(hash) => Some(grpc.light_block_by_hash(hash.clone()).await.with_context(
+                || format!("failed to fetch initial gRPC LFB metadata for {hash}"),
+            )?),
+            None => None,
+        };
 
     let ordered_count = if args.skip_ordering {
         println!("[phase] skipping ordered finalized blocks");
@@ -210,7 +211,10 @@ async fn main() -> Result<()> {
                 .compare_live_ingress(&ingress)
                 .await
                 .with_context(|| {
-                    format!("failed to compare mirror against HTTP endpoint {}", args.http_url)
+                    format!(
+                        "failed to compare mirror against HTTP endpoint {}",
+                        args.http_url
+                    )
                 })?,
         )
     };
@@ -285,14 +289,20 @@ async fn main() -> Result<()> {
         }
     );
 
-    if let Some(comparison) = comparison.as_ref().filter(|c| !c.missing_from_mirror.is_empty()) {
+    if let Some(comparison) = comparison
+        .as_ref()
+        .filter(|c| !c.missing_from_mirror.is_empty())
+    {
         println!("Missing from mirror:");
         for hash in &comparison.missing_from_mirror {
             println!("  - {}", hash);
         }
     }
 
-    if let Some(comparison) = comparison.as_ref().filter(|c| !c.missing_from_http.is_empty()) {
+    if let Some(comparison) = comparison
+        .as_ref()
+        .filter(|c| !c.missing_from_http.is_empty())
+    {
         println!("Missing from HTTP:");
         for hash in &comparison.missing_from_http {
             println!("  - {}", hash);
@@ -342,9 +352,9 @@ fn describe_mirror_block(
         .iter()
         .find(|id| id.content_hash.as_slice() == hash.as_slice())?
         .to_owned();
-    let round = depth(ingress.blocklace(), &id)?;
+    let round = depth(ingress.blocklace(), id)?;
     let wave = wave_of_round(round, 3)?;
-    let content = ingress.blocklace().content(&id)?;
+    let content = ingress.blocklace().content(id)?;
     let payload = CordialBlockPayload::from_bytes(&content.payload).ok()?;
 
     Some(MirrorBlockMeta {
@@ -389,11 +399,12 @@ fn print_finality_neighborhood(
         })
         .map(|id| hex_string(id.content_hash.to_vec()))
         .unwrap_or_else(|| "<none>".to_string());
-        let final_block = weighted_final_leader_for_wave(ingress.blocklace(), wave, 3, ingress.bonds(), |w| {
-            validators.get((w as usize) % validators.len()).cloned()
-        })
-        .map(|id| hex_string(id.content_hash.to_vec()))
-        .unwrap_or_else(|| "<none>".to_string());
+        let final_block =
+            weighted_final_leader_for_wave(ingress.blocklace(), wave, 3, ingress.bonds(), |w| {
+                validators.get((w as usize) % validators.len()).cloned()
+            })
+            .map(|id| hex_string(id.content_hash.to_vec()))
+            .unwrap_or_else(|| "<none>".to_string());
 
         println!(
             "  wave {}: selected_leader={} leader_block={} weighted_final={}",
@@ -464,10 +475,10 @@ fn mirrored_blocks_in_height_range(
         let Ok(payload) = CordialBlockPayload::from_bytes(&content.payload) else {
             continue;
         };
-        if (min_height..=max_height).contains(&payload.state.block_number) {
-            if let Some(block) = ingress.blocklace().get(id) {
-                blocks.push(block);
-            }
+        if (min_height..=max_height).contains(&payload.state.block_number)
+            && let Some(block) = ingress.blocklace().get(id)
+        {
+            blocks.push(block);
         }
     }
     blocks.sort_by_key(|block| {
@@ -502,7 +513,9 @@ async fn bootstrap_by_heights(
         let blocks = grpc
             .light_blocks_by_heights(start, end)
             .await
-            .with_context(|| format!("failed to fetch blocks in height range {}..={}", start, end))?;
+            .with_context(|| {
+                format!("failed to fetch blocks in height range {}..={}", start, end)
+            })?;
 
         println!(
             "[height-bootstrap] range {}..={} returned {} blocks",
@@ -516,11 +529,11 @@ async fn bootstrap_by_heights(
                 .with_context(|| format!("failed to decode live block {}", info.block_hash))?;
             *decoded_messages += 1;
 
-            let block = trusted_block_from_light_block_info_with_options(
-                info,
-                !parents_only_bootstrap,
-            )
-            .with_context(|| format!("failed to reconstruct trusted block {}", info.block_hash))?;
+            let block =
+                trusted_block_from_light_block_info_with_options(info, !parents_only_bootstrap)
+                    .with_context(|| {
+                        format!("failed to reconstruct trusted block {}", info.block_hash)
+                    })?;
             ingress
                 .ingest_trusted_block(block)
                 .with_context(|| format!("failed to mirror live block {}", info.block_hash))?;
@@ -599,18 +612,18 @@ async fn backfill_missing_predecessors(
                 .await
                 .with_context(|| format!("failed to backfill missing predecessor {hash}"))?;
 
-            let block = trusted_block_from_light_block_info_with_options(
-                &info,
-                !parents_only_bootstrap,
-            )
-                .with_context(|| format!("failed to reconstruct backfilled block {}", info.block_hash))?;
-            ingress
-                .ingest_trusted_block(block)
-                .with_context(|| format!("failed to ingest backfilled block {}", info.block_hash))?;
+            let block =
+                trusted_block_from_light_block_info_with_options(&info, !parents_only_bootstrap)
+                    .with_context(|| {
+                        format!("failed to reconstruct backfilled block {}", info.block_hash)
+                    })?;
+            ingress.ingest_trusted_block(block).with_context(|| {
+                format!("failed to ingest backfilled block {}", info.block_hash)
+            })?;
             backfilled += 1;
             fetched_this_round += 1;
 
-            if fetched_this_round <= 5 || fetched_this_round % 25 == 0 {
+            if fetched_this_round <= 5 || fetched_this_round.is_multiple_of(25) {
                 println!(
                     "[backfill] fetched {} this round ({} total), latest={}, block_number={}, parents={}, justifications={}",
                     fetched_this_round,

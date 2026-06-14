@@ -30,6 +30,9 @@ and easy to extend as new implementation notes are added.
 7. [07-deploy-ingress-trace.md](./07-deploy-ingress-trace.md)
    - Traces deploy flow from external API ingress into proposal scheduling
    - Identifies the first safe pre-proposal Cordial interception seam
+8. [08-live-mirror-check-harness.md](./08-live-mirror-check-harness.md)
+   - Documents the live mirror diagnostic binary and its runtime modes
+   - Explains parameters, output phases, and baseline-vs-drift interpretation
 
 ## Scope Of This Track
 

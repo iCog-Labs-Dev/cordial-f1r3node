@@ -116,14 +116,15 @@ impl LiveGrpcBlockClient {
                 Some(block_info_response::Message::BlockInfo(light)) => blocks.push(light),
                 Some(block_info_response::Message::Error(status)) => {
                     return Err(LiveGrpcError::MissingPayload(Box::leak(
-                        format!(
-                            "get_blocks_by_heights returned service error: {:?}",
-                            status
-                        )
-                        .into_boxed_str(),
+                        format!("get_blocks_by_heights returned service error: {:?}", status)
+                            .into_boxed_str(),
                     )));
                 }
-                None => return Err(LiveGrpcError::MissingPayload("get_blocks_by_heights.message")),
+                None => {
+                    return Err(LiveGrpcError::MissingPayload(
+                        "get_blocks_by_heights.message",
+                    ));
+                }
             }
         }
 
