@@ -10,6 +10,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 #[test]
+#[allow(clippy::field_reassign_with_default)]
 fn trusted_block_from_light_block_info_preserves_identity_and_state() {
     let parent_hash = [7u8; 32];
     let block_hash = [9u8; 32];
@@ -69,6 +70,7 @@ fn trusted_block_from_light_block_info_preserves_identity_and_state() {
 }
 
 #[test]
+#[allow(clippy::field_reassign_with_default)]
 fn light_block_info_to_block_message_decodes_live_grpc_view() {
     let block_hash = [8u8; 32];
     let parent_hash = [1u8; 32];
