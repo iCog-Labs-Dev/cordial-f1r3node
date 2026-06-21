@@ -279,7 +279,11 @@ async fn main() -> Result<()> {
         );
     }
 
-    print_finality_neighborhood(&ingress, mirror_lfb_meta.as_ref(), grpc_lfb_meta.as_ref());
+    if args.skip_ordering && args.skip_http_compare {
+        println!("Finality neighborhood: skipped");
+    } else {
+        print_finality_neighborhood(&ingress, mirror_lfb_meta.as_ref(), grpc_lfb_meta.as_ref());
+    }
     println!(
         "Comparison:        {}",
         match comparison.as_ref() {
