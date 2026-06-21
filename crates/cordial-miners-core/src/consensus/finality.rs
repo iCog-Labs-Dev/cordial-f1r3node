@@ -150,7 +150,7 @@ where
 
     for wave in (0..=latest_wave).rev() {
         let Some(leader) =
-            unique_leader_block_from_index(&rounds, wave, wavelength, &leader_selection)
+            unique_leader_block_from_index(&rounds, wave, wavelength, leader_selection)
         else {
             continue;
         };
@@ -283,7 +283,7 @@ where
 
     for wave in (0..=latest_wave).rev() {
         let Some(leader) =
-            unique_leader_block_from_index(&rounds, wave, wavelength, &leader_selection)
+            unique_leader_block_from_index(&rounds, wave, wavelength, leader_selection)
         else {
             continue;
         };

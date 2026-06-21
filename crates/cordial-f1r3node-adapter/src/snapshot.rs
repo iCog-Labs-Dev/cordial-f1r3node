@@ -370,12 +370,11 @@ pub(crate) fn latest_finalized_block_id(
         return None;
     }
 
-    if leaders.len() == 1 {
-        if let Some(id) =
+    if leaders.len() == 1
+        && let Some(id) =
             latest_single_validator_finalized_block_id(blocklace, &leaders[0], ES_WAVELENGTH)
-        {
-            return Some(id);
-        }
+    {
+        return Some(id);
     }
 
     latest_weighted_final_leader(blocklace, ES_WAVELENGTH, bonds, |wave| {
