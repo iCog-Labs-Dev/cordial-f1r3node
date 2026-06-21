@@ -61,7 +61,8 @@ use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    collect_validator_tips, fork_choice, latest_weighted_final_leader, weighted_tau,
+    collect_validator_tips, compute_all_depths, fork_choice, last_round_of_wave,
+    latest_weighted_final_leader, wave_of_round, weighted_tau,
 };
 use cordial_miners_core::execution::{CordialBlockPayload, compute_deploys_in_scope};
 use cordial_miners_core::types::{BlockIdentity, NodeId};
@@ -369,6 +370,14 @@ pub(crate) fn latest_finalized_block_id(
         return None;
     }
 
+    if leaders.len() == 1 {
+        if let Some(id) =
+            latest_single_validator_finalized_block_id(blocklace, &leaders[0], ES_WAVELENGTH)
+        {
+            return Some(id);
+        }
+    }
+
     latest_weighted_final_leader(blocklace, ES_WAVELENGTH, bonds, |wave| {
         let idx = usize::try_from(wave).ok()? % leaders.len();
         Some(leaders[idx].clone())
@@ -402,4 +411,56 @@ fn ordered_validators(bonds: &HashMap<NodeId, u64>) -> Vec<NodeId> {
     let mut validators: Vec<NodeId> = bonds.keys().cloned().collect();
     validators.sort();
     validators
+}
+
+fn latest_single_validator_finalized_block_id(
+    blocklace: &Blocklace,
+    validator: &NodeId,
+    wavelength: u64,
+) -> Option<BlockIdentity> {
+    if wavelength == 0 {
+        return None;
+    }
+
+    let depths = compute_all_depths(blocklace);
+    let max_round = depths.values().copied().max()?;
+    let latest_wave = wave_of_round(max_round, wavelength)?;
+
+    for wave in (0..=latest_wave).rev() {
+        let last_round = last_round_of_wave(wave, wavelength)?;
+        if last_round > max_round {
+            continue;
+        }
+
+        let first_round = wave.checked_mul(wavelength)?;
+        let mut leader: Option<BlockIdentity> = None;
+        let mut complete_wave = true;
+
+        for round in first_round..=last_round {
+            let mut round_blocks = depths
+                .iter()
+                .filter(|(id, depth)| **depth == round && id.creator == *validator)
+                .map(|(id, _)| id.clone());
+
+            let Some(round_block) = round_blocks.next() else {
+                complete_wave = false;
+                break;
+            };
+
+            if round_blocks.next().is_some() {
+                complete_wave = false;
+                break;
+            }
+
+            if round == first_round {
+                leader = Some(round_block);
+            }
+        }
+
+        if complete_wave {
+            return leader;
+        }
+    }
+
+    None
 }
