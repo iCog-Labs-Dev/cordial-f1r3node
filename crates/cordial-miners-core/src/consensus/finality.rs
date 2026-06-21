@@ -4,9 +4,11 @@ use std::collections::HashSet;
 use crate::block::Block;
 use crate::blocklace::Blocklace;
 use crate::consensus::cordiality::{super_ratifies, weighted_super_ratifies};
-use crate::consensus::round::{blocks_at_depth, depth};
+use crate::consensus::round::{blocks_at_depth, compute_all_depths, depth};
 use crate::consensus::wave::{last_round_of_wave, leader_blocks_of_wave, wave_of_round};
 use crate::types::{BlockIdentity, NodeId};
+
+type RoundIndex = HashMap<u64, Vec<Block>>;
 
 /// Return the unique leader block for a wave when exactly one exists.
 ///
@@ -141,18 +143,28 @@ where
         return None;
     }
 
-    let max_round = blocklace
-        .dom()
-        .iter()
-        .filter_map(|id| depth(blocklace, id))
-        .max()?;
+    let depths = compute_all_depths(blocklace);
+    let max_round = depths.values().copied().max()?;
+    let rounds = build_round_index(blocklace, &depths);
     let latest_wave = wave_of_round(max_round, wavelength)?;
 
     for wave in (0..=latest_wave).rev() {
-        if let Some(leader) =
-            final_leader_for_wave(blocklace, wave, wavelength, n, f, leader_selection)
-        {
-            return Some(leader);
+        let Some(leader) =
+            unique_leader_block_from_index(&rounds, wave, wavelength, &leader_selection)
+        else {
+            continue;
+        };
+
+        let Some(candidate_round) = depths.get(&leader.identity).copied() else {
+            continue;
+        };
+        let Some(last_round) = last_round_of_wave(wave, wavelength) else {
+            continue;
+        };
+
+        let witness_blocks = witness_blocks_from_index(&rounds, candidate_round, last_round);
+        if super_ratifies(blocklace, &witness_blocks, &leader, n, f) {
+            return Some(leader.identity);
         }
     }
 
@@ -264,21 +276,83 @@ where
         return None;
     }
 
-    let max_round = blocklace
-        .dom()
-        .iter()
-        .filter_map(|id| depth(blocklace, id))
-        .max()?;
-
+    let depths = compute_all_depths(blocklace);
+    let max_round = depths.values().copied().max()?;
+    let rounds = build_round_index(blocklace, &depths);
     let latest_wave = wave_of_round(max_round, wavelength)?;
 
     for wave in (0..=latest_wave).rev() {
-        if let Some(leader) =
-            weighted_final_leader_for_wave(blocklace, wave, wavelength, bonds, leader_selection)
-        {
-            return Some(leader);
+        let Some(leader) =
+            unique_leader_block_from_index(&rounds, wave, wavelength, &leader_selection)
+        else {
+            continue;
+        };
+
+        let Some(candidate_round) = depths.get(&leader.identity).copied() else {
+            continue;
+        };
+        let Some(last_round) = last_round_of_wave(wave, wavelength) else {
+            continue;
+        };
+
+        let witness_blocks = witness_blocks_from_index(&rounds, candidate_round, last_round);
+        if weighted_super_ratifies(blocklace, &witness_blocks, &leader, bonds) {
+            return Some(leader.identity);
         }
     }
 
     None
+}
+
+fn build_round_index(blocklace: &Blocklace, depths: &HashMap<BlockIdentity, u64>) -> RoundIndex {
+    let mut rounds = HashMap::new();
+
+    for (id, round) in depths {
+        if let Some(block) = blocklace.get(id) {
+            rounds.entry(*round).or_insert_with(Vec::new).push(block);
+        }
+    }
+
+    rounds
+}
+
+fn unique_leader_block_from_index<F>(
+    rounds: &RoundIndex,
+    wave: u64,
+    wavelength: u64,
+    leader_selection: F,
+) -> Option<Block>
+where
+    F: Fn(u64) -> Option<NodeId>,
+{
+    let leader = leader_selection(wave)?;
+    let leader_round = wave.checked_mul(wavelength)?;
+    let mut leaders = rounds
+        .get(&leader_round)?
+        .iter()
+        .filter(|block| block.identity.creator == leader)
+        .cloned();
+
+    let first = leaders.next()?;
+    if leaders.next().is_some() {
+        return None;
+    }
+
+    Some(first)
+}
+
+fn witness_blocks_from_index(
+    rounds: &RoundIndex,
+    start_round: u64,
+    end_round: u64,
+) -> HashSet<Block> {
+    let mut witness_blocks = HashSet::new();
+
+    for round in start_round..=end_round {
+        if let Some(blocks) = rounds.get(&round) {
+            witness_blocks.extend(blocks.iter().cloned());
+        }
+    }
+
+    witness_blocks
 }
