@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-use crate::consensus::approval::approves;
+use crate::consensus::approval::{ApprovalMemo, approves_with_memo};
 use crate::consensus::cordiality::{ratifies, weighted_ratifies};
 use crate::consensus::finality::{
     final_leader_for_wave, latest_final_leader, latest_weighted_final_leader,
@@ -98,11 +98,12 @@ pub fn approved_blocks_for_leader(blocklace: &Blocklace, leader: &BlockIdentity)
         return HashSet::new();
     }
 
+    let mut memo = ApprovalMemo::default();
     blocklace
         .dom()
         .into_iter()
         .filter_map(|id| blocklace.get(id))
-        .filter(|block| approves(blocklace, leader, &block.identity))
+        .filter(|block| approves_with_memo(blocklace, leader, &block.identity, &mut memo))
         .collect()
 }
 
