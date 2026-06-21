@@ -6,11 +6,18 @@
 //! See Definition 18 of "Cordial Miners: Voluntary Participation in Blockchains"
 //! (arXiv:2205.09174) for the formal specification.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
 use crate::types::{BlockIdentity, NodeId};
+
+#[derive(Default)]
+pub(crate) struct ApprovalMemo {
+    observe_cache: HashMap<BlockIdentity, BTreeSet<BlockIdentity>>,
+    approves_cache: HashMap<(BlockIdentity, BlockIdentity), bool>,
+    creator_blocks_cache: HashMap<NodeId, Vec<Block>>,
+}
 
 /// A block `approver` approves a `target` block if:
 /// 1. The approver observes the target (i.e., target is in the approver's predecessor closure)
@@ -20,13 +27,42 @@ use crate::types::{BlockIdentity, NodeId};
 /// A block approves a target it observes only when no equivocating sibling of that target
 /// is also in the observed set.
 pub fn approves(blocklace: &Blocklace, approver: &BlockIdentity, target: &BlockIdentity) -> bool {
+    let mut memo = ApprovalMemo::default();
+    approves_with_memo(blocklace, approver, target, &mut memo)
+}
+
+pub(crate) fn approves_with_memo(
+    blocklace: &Blocklace,
+    approver: &BlockIdentity,
+    target: &BlockIdentity,
+    memo: &mut ApprovalMemo,
+) -> bool {
+    let cache_key = (approver.clone(), target.clone());
+    if let Some(result) = memo.approves_cache.get(&cache_key) {
+        return *result;
+    }
+
+    let result = approves_uncached(blocklace, approver, target, memo);
+    memo.approves_cache.insert(cache_key, result);
+    result
+}
+
+fn approves_uncached(
+    blocklace: &Blocklace,
+    approver: &BlockIdentity,
+    target: &BlockIdentity,
+    memo: &mut ApprovalMemo,
+) -> bool {
     if blocklace.get(approver).is_none() {
         return false;
     }
 
     // Observation in the blocklace is inclusive: a block observes itself and
     // everything in its predecessor closure.
-    let observed = blocklace.observe(approver);
+    let observed = memo
+        .observe_cache
+        .entry(approver.clone())
+        .or_insert_with(|| blocklace.observe(approver));
 
     // Check if target is in the observed set
     if !observed.contains(target) {
@@ -43,7 +79,12 @@ pub fn approves(blocklace: &Blocklace, approver: &BlockIdentity, target: &BlockI
     // incomparable with the target. This follows the paper's "does not observe
     // any equivocating block of the target" relation more closely than a
     // same-round-only filter.
-    for other_block in blocklace.blocks_by(&target_block.identity.creator) {
+    let creator_blocks = memo
+        .creator_blocks_cache
+        .entry(target_block.identity.creator.clone())
+        .or_insert_with(|| blocklace.blocks_by(&target_block.identity.creator));
+
+    for other_block in creator_blocks.iter() {
         if other_block.identity == *target {
             continue;
         }
@@ -89,9 +130,20 @@ pub fn weighted_approving_creators(
     target: &BlockIdentity,
     bonds: &HashMap<NodeId, u64>,
 ) -> HashSet<NodeId> {
+    let mut memo = ApprovalMemo::default();
+    weighted_approving_creators_with_memo(blocklace, blocks, target, bonds, &mut memo)
+}
+
+pub(crate) fn weighted_approving_creators_with_memo(
+    blocklace: &Blocklace,
+    blocks: &HashSet<Block>,
+    target: &BlockIdentity,
+    bonds: &HashMap<NodeId, u64>,
+    memo: &mut ApprovalMemo,
+) -> HashSet<NodeId> {
     blocks
         .iter()
-        .filter(|block| approves(blocklace, &block.identity, target))
+        .filter(|block| approves_with_memo(blocklace, &block.identity, target, memo))
         .filter_map(|block| {
             let creator = &block.identity.creator;
             match bonds.get(creator).copied() {
