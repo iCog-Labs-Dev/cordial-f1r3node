@@ -61,8 +61,8 @@ use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    collect_validator_tips, compute_all_depths, fork_choice, last_round_of_wave,
-    latest_weighted_final_leader, wave_of_round, weighted_tau,
+    OrderingCache, collect_validator_tips, compute_all_depths, fork_choice, last_round_of_wave,
+    latest_weighted_final_leader, wave_of_round, weighted_tau_with_cache,
 };
 use cordial_miners_core::execution::{CordialBlockPayload, compute_deploys_in_scope};
 use cordial_miners_core::types::{BlockIdentity, NodeId};
@@ -387,22 +387,32 @@ pub(crate) fn ordered_finalized_block_hashes(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,
 ) -> Vec<Vec<u8>> {
+    ordered_finalized_block_hashes_with_cache(blocklace, bonds, &mut OrderingCache::default())
+}
+
+pub(crate) fn ordered_finalized_block_hashes_with_cache(
+    blocklace: &Blocklace,
+    bonds: &HashMap<NodeId, u64>,
+    cache: &mut OrderingCache,
+) -> Vec<Vec<u8>> {
     let leaders = ordered_validators(bonds);
 
     if leaders.is_empty() {
         return Vec::new();
     }
 
-    weighted_tau(blocklace, ES_WAVELENGTH, bonds, |wave| {
-        let idx = usize::try_from(wave).ok()? % leaders.len();
-        Some(leaders[idx].clone())
-    })
-    .map(|ordered| {
-        ordered
-            .into_iter()
-            .map(|id| id.content_hash.to_vec())
-            .collect()
-    })
+    weighted_tau_with_cache(
+        blocklace,
+        ES_WAVELENGTH,
+        bonds,
+        0,
+        |wave| {
+            let idx = usize::try_from(wave).ok()? % leaders.len();
+            Some(leaders[idx].clone())
+        },
+        cache,
+    )
+    .map(|ordered| ordered.into_iter().map(|id| id.content_hash.to_vec()).collect())
     .unwrap_or_default()
 }
 
