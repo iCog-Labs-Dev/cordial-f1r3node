@@ -31,6 +31,7 @@ use std::collections::HashMap;
 
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::consensus::OrderingCache;
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::types::BlockIdentity;
 use cordial_miners_core::types::{BlockContent, NodeId};
@@ -40,7 +41,7 @@ use crate::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
 use crate::shard_conf::CasperShardConf;
 use crate::snapshot::{
     CasperSnapshot, SnapshotError, build_snapshot, latest_finalized_block_id,
-    ordered_finalized_block_hashes,
+    ordered_finalized_block_hashes_with_cache,
 };
 
 /// High-level runtime phase for the live ingress adapter.
@@ -261,6 +262,7 @@ pub struct LiveIngress<A> {
     adapter: A,
     mapper: GrpcBlockMapper,
     mirror: LiveBlocklaceMirror,
+    ordering_cache: OrderingCache,
     bonds: HashMap<NodeId, u64>,
     shard_conf: CasperShardConf,
     shard_id: String,
@@ -274,6 +276,7 @@ impl<A> LiveIngress<A> {
             adapter,
             mapper: GrpcBlockMapper::new(),
             mirror: LiveBlocklaceMirror::default(),
+            ordering_cache: OrderingCache::default(),
             bonds: HashMap::new(),
             shard_conf: CasperShardConf::default(),
             shard_id: String::from("root"),
@@ -292,6 +295,7 @@ impl<A> LiveIngress<A> {
             adapter,
             mapper: GrpcBlockMapper::new(),
             mirror: LiveBlocklaceMirror::default(),
+            ordering_cache: OrderingCache::default(),
             bonds,
             shard_conf,
             shard_id: shard_id.into(),
@@ -382,10 +386,12 @@ impl<A> LiveIngress<A> {
     }
 
     /// Return the current weighted tau output as block hashes.
-    pub fn ordered_finalized_blocks(&self) -> Result<Vec<Vec<u8>>, SnapshotError> {
-        Ok(ordered_finalized_block_hashes(
-            self.blocklace(),
-            &self.bonds,
+    pub fn ordered_finalized_blocks(&mut self) -> Result<Vec<Vec<u8>>, SnapshotError> {
+        let blocklace = self.mirror.blocklace();
+        let bonds = &self.bonds;
+        let cache = &mut self.ordering_cache;
+        Ok(ordered_finalized_block_hashes_with_cache(
+            blocklace, bonds, cache,
         ))
     }
 
