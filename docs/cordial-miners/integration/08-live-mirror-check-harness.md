@@ -65,6 +65,47 @@ cargo run -p cordial-f1r3node-adapter --bin live_mirror_check -- \
   --skip-http-compare
 ```
 
+Full ordering verification run with a small ordered preview:
+
+```bash
+cargo run -p cordial-f1r3node-adapter --bin live_mirror_check -- \
+  --grpc-url http://127.0.0.1:40401 \
+  --http-url http://127.0.0.1:40403 \
+  --depth 64 \
+  --height-bootstrap \
+  --height-batch-size 64 \
+  --skip-http-compare \
+  --ordering-preview 3
+```
+
+Save the current ordered output to a file:
+
+```bash
+cargo run -p cordial-f1r3node-adapter --bin live_mirror_check -- \
+  --grpc-url http://127.0.0.1:40401 \
+  --http-url http://127.0.0.1:40403 \
+  --depth 64 \
+  --height-bootstrap \
+  --height-batch-size 64 \
+  --skip-http-compare \
+  --ordering-preview 3 \
+  --write-ordered-file /tmp/ordered-baseline.json
+```
+
+Compare a later run against a previously saved ordering:
+
+```bash
+cargo run -p cordial-f1r3node-adapter --bin live_mirror_check -- \
+  --grpc-url http://127.0.0.1:40401 \
+  --http-url http://127.0.0.1:40403 \
+  --depth 64 \
+  --height-bootstrap \
+  --height-batch-size 64 \
+  --skip-http-compare \
+  --ordering-preview 3 \
+  --compare-ordered-file /tmp/ordered-baseline.json
+```
+
 ## Parameters
 
 ### Connection parameters
@@ -123,6 +164,27 @@ mirror still has unresolved predecessors after bootstrap.
   - skips HTTP observer comparison
   - useful for isolating mirror/finality behavior from HTTP fetch cost
 
+- `--ordering-preview`
+  - number of ordered hashes to print from the head and tail of the result
+  - useful for quick visual inspection without dumping the full sequence
+  - default: `5`
+
+- `--ordering-fragment-only`
+  - computes only the latest finalized leader's ordered fragment instead of
+    the full ordered finalized history
+  - intended as a lighter diagnostic mode
+  - note: on long histories this can still be expensive if the finalized
+    fragment itself is large
+
+- `--write-ordered-file`
+  - writes the current ordered hash list to a JSON file
+  - useful for taking a baseline ordering snapshot
+
+- `--compare-ordered-file`
+  - compares the current ordered hash list against a previously saved JSON file
+  - reports whether the lists match exactly, whether one is a prefix of the
+    other, or whether they diverged
+
 ## Output Phases
 
 The harness prints explicit phase markers:
@@ -166,6 +228,33 @@ Important fields in the final report:
 - `gRPC LFB Meta`
   - creator and block number for the node's later finalized block
 
+- `Ordered blocks`
+  - number of hashes in the current ordered finalized output
+
+- `Ordered head` / `Ordered tail`
+  - small preview of the start and end of the ordered sequence
+
+- `LFB in ordered`
+  - confirms whether the mirror's last finalized block is included in the
+    ordered sequence
+
+- `Ordered compare`
+  - result of file-based ordering comparison
+  - values:
+    - `MATCH`
+    - `MISMATCH`
+
+- `Ordered prefix`
+  - relationship between the previous saved ordering and the current one
+  - values:
+    - `equal`
+    - `previous-is-prefix`
+    - `current-is-prefix`
+    - `diverged`
+
+- `First mismatch`
+  - first differing hash pair when the compared ordered outputs do not match
+
 ## Interpreting Drift
 
 During live runs, the node may continue producing blocks while the harness is
@@ -198,6 +287,8 @@ This harness is intended for:
 - comparing mirror state to node-visible APIs at a known point in time
 - debugging performance boundaries between bootstrap, finality, ordering, and
   HTTP comparison
+- checking whether ordered output is stable or append-only across repeated runs
+- creating saved ordering baselines for later comparison
 
 It is not intended to be the final production runtime path. It is a diagnostic
 and validation executable for the integration track.
@@ -214,3 +305,11 @@ At this stage, the harness demonstrates that:
 
 This makes the harness a successful validation tool for the live block
 mirroring milestone.
+
+It also now provides a practical way to validate ordered output over the live
+mirror by:
+
+- computing and previewing the ordered finalized sequence
+- saving a baseline ordered hash list
+- comparing future runs against that baseline to check equality, prefix
+  growth, or divergence
