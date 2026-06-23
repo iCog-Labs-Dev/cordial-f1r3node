@@ -1,4 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::fs;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -65,6 +67,12 @@ struct Args {
 
     #[arg(long, default_value_t = false)]
     ordering_fragment_only: bool,
+
+    #[arg(long)]
+    write_ordered_file: Option<PathBuf>,
+
+    #[arg(long)]
+    compare_ordered_file: Option<PathBuf>,
 }
 
 struct PassthroughAdapter;
@@ -251,6 +259,20 @@ async fn main() -> Result<()> {
     println!("Skip HTTP compare: {}", args.skip_http_compare);
     println!("Ordering preview:  {}", args.ordering_preview);
     println!("Fragment only:     {}", args.ordering_fragment_only);
+    println!(
+        "Write ordered:     {}",
+        args.write_ordered_file
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<none>".to_string())
+    );
+    println!(
+        "Compare ordered:   {}",
+        args.compare_ordered_file
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<none>".to_string())
+    );
     println!("Mirrored blocks:   {}", ingress.blocklace().dom().len());
     println!("Pending blocks:    {}", ingress.pending_blocks().len());
     println!("Decoded messages:  {}", decoded_messages);
@@ -272,6 +294,20 @@ async fn main() -> Result<()> {
                     "no"
                 }
             );
+        }
+
+        let ordered_hex: Vec<String> = ordered.iter().cloned().map(hex_string).collect();
+        if let Some(path) = args.write_ordered_file.as_ref() {
+            write_ordered_hashes(path, &ordered_hex)?;
+            println!("Ordered file:      {}", path.display());
+        }
+        if let Some(path) = args.compare_ordered_file.as_ref() {
+            let comparison = compare_ordered_hashes(path, &ordered_hex)?;
+            println!("Ordered compare:   {}", comparison.status);
+            println!("Ordered prefix:    {}", comparison.prefix_relation);
+            if let Some(first_mismatch) = comparison.first_mismatch {
+                println!("First mismatch:    {}", first_mismatch);
+            }
         }
     }
     println!(
@@ -389,6 +425,61 @@ fn print_ordering_preview(ordered: &[Vec<u8>], preview: usize) {
             println!("  - {}", hex_string(hash.clone()));
         }
     }
+}
+
+struct OrderedComparison {
+    status: &'static str,
+    prefix_relation: &'static str,
+    first_mismatch: Option<String>,
+}
+
+fn write_ordered_hashes(path: &PathBuf, ordered: &[String]) -> Result<()> {
+    let body = serde_json::to_string_pretty(ordered)
+        .context("failed to serialize ordered hashes to JSON")?;
+    fs::write(path, body).with_context(|| format!("failed to write {}", path.display()))
+}
+
+fn compare_ordered_hashes(path: &PathBuf, current: &[String]) -> Result<OrderedComparison> {
+    let body =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let previous: Vec<String> = serde_json::from_str(&body)
+        .with_context(|| format!("failed to parse ordered hashes from {}", path.display()))?;
+
+    if previous == current {
+        return Ok(OrderedComparison {
+            status: "MATCH",
+            prefix_relation: "equal",
+            first_mismatch: None,
+        });
+    }
+
+    let common_prefix_len = previous
+        .iter()
+        .zip(current.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let prefix_relation = if previous.len() == common_prefix_len {
+        "previous-is-prefix"
+    } else if current.len() == common_prefix_len {
+        "current-is-prefix"
+    } else {
+        "diverged"
+    };
+
+    let first_mismatch = Some(match (previous.get(common_prefix_len), current.get(common_prefix_len))
+    {
+        (Some(prev), Some(curr)) => format!("prev={} current={}", prev, curr),
+        (Some(prev), None) => format!("prev={} current=<end>", prev),
+        (None, Some(curr)) => format!("prev=<end> current={}", curr),
+        (None, None) => String::from("<none>"),
+    });
+
+    Ok(OrderedComparison {
+        status: "MISMATCH",
+        prefix_relation,
+        first_mismatch,
+    })
 }
 
 fn latest_ordering_fragment(
