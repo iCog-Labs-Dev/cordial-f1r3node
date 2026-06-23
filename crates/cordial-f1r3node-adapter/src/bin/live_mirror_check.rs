@@ -12,8 +12,9 @@ use cordial_f1r3node_adapter::live_ingress::LiveIngress;
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 use cordial_miners_core::Block;
 use cordial_miners_core::consensus::{
-    depth, is_weighted_final_leader, leader_block_for_wave, wave_of_round,
+    approved_blocks_for_leader, depth, is_weighted_final_leader, leader_block_for_wave, wave_of_round,
     weighted_final_leader_for_wave,
+    xsort,
 };
 use cordial_miners_core::execution::CordialBlockPayload;
 use cordial_miners_core::types::{BlockIdentity, NodeId};
@@ -58,6 +59,12 @@ struct Args {
 
     #[arg(long, default_value_t = false)]
     skip_http_compare: bool,
+
+    #[arg(long, default_value_t = 5)]
+    ordering_preview: usize,
+
+    #[arg(long, default_value_t = false)]
+    ordering_fragment_only: bool,
 }
 
 struct PassthroughAdapter;
@@ -189,16 +196,27 @@ async fn main() -> Result<()> {
             None => None,
         };
 
-    let ordered_count = if args.skip_ordering {
+    let ordered_blocks = if args.skip_ordering {
         println!("[phase] skipping ordered finalized blocks");
-        0
+        None
     } else {
-        println!("[phase] computing ordered finalized blocks");
-        ingress
+        println!(
+            "[phase] computing {}",
+            if args.ordering_fragment_only {
+                "latest finalized ordering fragment"
+            } else {
+                "ordered finalized blocks"
+            }
+        );
+        Some(if args.ordering_fragment_only {
+            latest_ordering_fragment(&ingress, mirror_last_finalized.as_deref())?
+        } else {
+            ingress
             .ordered_finalized_blocks()
             .map_err(|err| anyhow::anyhow!("failed to compute ordered finalized blocks: {err:?}"))?
-            .len()
+        })
     };
+    let ordered_count = ordered_blocks.as_ref().map_or(0, Vec::len);
 
     let comparison = if args.skip_http_compare {
         println!("[phase] skipping HTTP comparison");
@@ -231,6 +249,8 @@ async fn main() -> Result<()> {
     println!("Height batch:      {}", args.height_batch_size);
     println!("Skip ordering:     {}", args.skip_ordering);
     println!("Skip HTTP compare: {}", args.skip_http_compare);
+    println!("Ordering preview:  {}", args.ordering_preview);
+    println!("Fragment only:     {}", args.ordering_fragment_only);
     println!("Mirrored blocks:   {}", ingress.blocklace().dom().len());
     println!("Pending blocks:    {}", ingress.pending_blocks().len());
     println!("Decoded messages:  {}", decoded_messages);
@@ -241,6 +261,19 @@ async fn main() -> Result<()> {
         unresolved_predecessor_hashes(&ingress).len()
     );
     println!("Ordered blocks:    {}", ordered_count);
+    if let Some(ordered) = ordered_blocks.as_ref() {
+        print_ordering_preview(ordered, args.ordering_preview);
+        if let Some(mirror_lfb) = mirror_last_finalized.as_ref() {
+            println!(
+                "LFB in ordered:    {}",
+                if ordered.iter().any(|hash| &hex_string(hash.clone()) == mirror_lfb) {
+                    "yes"
+                } else {
+                    "no"
+                }
+            );
+        }
+    }
     println!(
         "Initial gRPC LFB:  {}",
         initial_grpc_last_finalized.as_deref().unwrap_or("<none>")
@@ -335,6 +368,55 @@ fn derive_uniform_bonds(blocks: &[models::casper::LightBlockInfo]) -> HashMap<No
 
 fn hex_string(bytes: Vec<u8>) -> String {
     PrettyPrinter::build_string_no_limit(&bytes)
+}
+
+fn print_ordering_preview(ordered: &[Vec<u8>], preview: usize) {
+    let preview = preview.min(ordered.len());
+    println!("Ordered preview:   {}", preview);
+
+    if preview == 0 {
+        return;
+    }
+
+    println!("Ordered head:");
+    for hash in ordered.iter().take(preview) {
+        println!("  - {}", hex_string(hash.clone()));
+    }
+
+    if ordered.len() > preview {
+        println!("Ordered tail:");
+        for hash in ordered.iter().skip(ordered.len().saturating_sub(preview)) {
+            println!("  - {}", hex_string(hash.clone()));
+        }
+    }
+}
+
+fn latest_ordering_fragment(
+    ingress: &LiveIngress<PassthroughAdapter>,
+    mirror_last_finalized: Option<&str>,
+) -> Result<Vec<Vec<u8>>> {
+    let Some(mirror_last_finalized) = mirror_last_finalized else {
+        return Ok(Vec::new());
+    };
+
+    let hash = StringOps::decode_hex(mirror_last_finalized.to_string())
+        .ok_or_else(|| anyhow::anyhow!("failed to decode mirror finalized hash"))?;
+    let leader = ingress
+        .blocklace()
+        .dom()
+        .iter()
+        .find(|id| id.content_hash.as_slice() == hash.as_slice())
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("failed to resolve mirror finalized leader in blocklace"))?;
+
+    let approved = approved_blocks_for_leader(ingress.blocklace(), &leader);
+    let ordered = xsort(&approved)
+        .map_err(|err| anyhow::anyhow!("failed to order finalized fragment: {err:?}"))?;
+
+    Ok(ordered
+        .into_iter()
+        .map(|id| id.content_hash.to_vec())
+        .collect())
 }
 
 #[derive(Debug, Clone)]
