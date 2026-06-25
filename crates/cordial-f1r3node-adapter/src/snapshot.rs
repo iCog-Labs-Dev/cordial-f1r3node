@@ -62,8 +62,7 @@ use std::collections::{HashMap, HashSet};
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
     OrderingCache, collect_validator_tips, compute_all_depths, fork_choice, last_round_of_wave,
-    latest_weighted_final_leader, wave_of_round, weighted_tau_with_cache,
-    xsort,
+    latest_weighted_final_leader, wave_of_round, weighted_tau_with_cache, xsort,
 };
 use cordial_miners_core::execution::{CordialBlockPayload, compute_deploys_in_scope};
 use cordial_miners_core::types::{BlockIdentity, NodeId};
@@ -421,7 +420,12 @@ pub(crate) fn ordered_finalized_block_hashes_with_cache(
         },
         cache,
     )
-    .map(|ordered| ordered.into_iter().map(|id| id.content_hash.to_vec()).collect())
+    .map(|ordered| {
+        ordered
+            .into_iter()
+            .map(|id| id.content_hash.to_vec())
+            .collect()
+    })
     .unwrap_or_default()
 }
 

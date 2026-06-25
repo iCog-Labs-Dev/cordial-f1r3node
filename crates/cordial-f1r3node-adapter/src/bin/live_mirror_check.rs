@@ -14,9 +14,8 @@ use cordial_f1r3node_adapter::live_ingress::LiveIngress;
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 use cordial_miners_core::Block;
 use cordial_miners_core::consensus::{
-    approved_blocks_for_leader, depth, is_weighted_final_leader, leader_block_for_wave, wave_of_round,
-    weighted_final_leader_for_wave,
-    xsort,
+    approved_blocks_for_leader, depth, is_weighted_final_leader, leader_block_for_wave,
+    wave_of_round, weighted_final_leader_for_wave, xsort,
 };
 use cordial_miners_core::execution::CordialBlockPayload;
 use cordial_miners_core::types::{BlockIdentity, NodeId};
@@ -219,9 +218,9 @@ async fn main() -> Result<()> {
         Some(if args.ordering_fragment_only {
             latest_ordering_fragment(&ingress, mirror_last_finalized.as_deref())?
         } else {
-            ingress
-            .ordered_finalized_blocks()
-            .map_err(|err| anyhow::anyhow!("failed to compute ordered finalized blocks: {err:?}"))?
+            ingress.ordered_finalized_blocks().map_err(|err| {
+                anyhow::anyhow!("failed to compute ordered finalized blocks: {err:?}")
+            })?
         })
     };
     let ordered_count = ordered_blocks.as_ref().map_or(0, Vec::len);
@@ -288,7 +287,10 @@ async fn main() -> Result<()> {
         if let Some(mirror_lfb) = mirror_last_finalized.as_ref() {
             println!(
                 "LFB in ordered:    {}",
-                if ordered.iter().any(|hash| &hex_string(hash.clone()) == mirror_lfb) {
+                if ordered
+                    .iter()
+                    .any(|hash| &hex_string(hash.clone()) == mirror_lfb)
+                {
                     "yes"
                 } else {
                     "no"
@@ -467,13 +469,17 @@ fn compare_ordered_hashes(path: &PathBuf, current: &[String]) -> Result<OrderedC
         "diverged"
     };
 
-    let first_mismatch = Some(match (previous.get(common_prefix_len), current.get(common_prefix_len))
-    {
-        (Some(prev), Some(curr)) => format!("prev={} current={}", prev, curr),
-        (Some(prev), None) => format!("prev={} current=<end>", prev),
-        (None, Some(curr)) => format!("prev=<end> current={}", curr),
-        (None, None) => String::from("<none>"),
-    });
+    let first_mismatch = Some(
+        match (
+            previous.get(common_prefix_len),
+            current.get(common_prefix_len),
+        ) {
+            (Some(prev), Some(curr)) => format!("prev={} current={}", prev, curr),
+            (Some(prev), None) => format!("prev={} current=<end>", prev),
+            (None, Some(curr)) => format!("prev=<end> current={}", curr),
+            (None, None) => String::from("<none>"),
+        },
+    );
 
     Ok(OrderedComparison {
         status: "MISMATCH",
@@ -500,7 +506,7 @@ fn latest_ordering_fragment(
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("failed to resolve mirror finalized leader in blocklace"))?;
 
-    let approved = approved_blocks_for_leader(ingress.blocklace(), &leader);
+    let approved = approved_blocks_for_leader(ingress.blocklace(), leader);
     let ordered = xsort(&approved)
         .map_err(|err| anyhow::anyhow!("failed to order finalized fragment: {err:?}"))?;
 
