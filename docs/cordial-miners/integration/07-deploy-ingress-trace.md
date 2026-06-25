@@ -91,6 +91,67 @@ This seam is the safest starting point because:
 - we avoid coupling the first Cordial deploy integration to the deeper Casper
   queue and retry machinery
 
+## Current Components We Can Reuse
+
+This repository already contains most of the building blocks needed for the
+first deploy-side increment. The main work left is wiring them at the right
+pre-proposal seam.
+
+Reusable pieces include:
+
+- `crates/cordial-f1r3node-adapter/src/casper_adapter.rs`
+  - already exposes `deploy(...)` and owns the adapter-side `DeployPool`
+  - already models the deploy admission boundary in Cordial-native types
+- `crates/cordial-miners-core/src/execution/deploy_pool.rs`
+  - already provides pending deploy storage, deduplication, phlo-price checks,
+    expiry pruning, and block-time selection logic
+- `crates/cordial-f1r3node-adapter/src/proposer.rs`
+  - already consumes `DeployPool` during proposal and block construction
+  - gives us the downstream path deploys eventually need to reach
+- `crates/cordial-f1r3node-adapter/src/block_translation.rs`
+  - already translates signed deploys and processed deploys between Cordial and
+    f1r3node-facing representations
+- `crates/cordial-f1r3node-adapter/src/live_ingress.rs`
+  - already establishes the pattern for runtime-facing observation state in the
+    adapter
+  - this is a useful design reference even though it currently focuses on
+    block-side live ingress
+
+## Recommended Boundary For The First Increment
+
+The first deploy-side increment should stay observational and non-breaking.
+
+That means:
+
+- decode the deploy into `Signed<DeployData>` exactly as the current ingress
+  path already does
+- copy or project the deploy into an adapter-facing observation type
+- send that observed deploy into Cordial-side runtime state
+- continue calling `BlockAPI::deploy(...)` unchanged
+
+This keeps the existing node behavior intact while giving the adapter an early
+view of deploy traffic before Casper admission and before proposal starts.
+
+## Suggested Adapter Shape
+
+The next implementation issue should likely introduce:
+
+- a deploy-facing runtime module in `crates/cordial-f1r3node-adapter/src/`
+  - for example `live_deploy_ingress.rs` or an extension of `live_ingress.rs`
+- a small deploy observation type carrying:
+  - ingress source (`http` or `grpc`)
+  - shard id
+  - deploy signature / deploy id
+  - signer / deployer identity
+  - phlo price
+  - phlo limit
+  - timestamps / validity window
+- a lightweight adapter-side queue, buffer, or registry for pending observed
+  deploys
+
+The key point is that this first layer should observe and stage deploys, not
+yet alter proposer scheduling or Casper admission.
+
 ## Why Not Intercept Deeper First
 
 A deeper seam inside the proposer path would be more invasive.
@@ -112,12 +173,23 @@ That issue should focus on:
 - defining a deploy-facing adapter input type
 - capturing deploy metadata at both HTTP and gRPC ingress
 - routing the typed deploy view into adapter-side observation code
+- reusing the existing deploy-pool / proposer-side components where possible
 - keeping Casper admission behavior unchanged for the first increment
+
+## Planning Outcome
+
+From the current assessment, the recommended implementation sequence is:
+
+1. add deploy-side observation at the pre-`BlockAPI::deploy(...)` seam
+2. store or mirror pending deploy metadata in adapter runtime state
+3. connect observed deploys to later proposer / block-inclusion visibility
+4. only then consider deeper proposer-aware interception or replacement logic
 
 ## Acceptance Outcome
 
 This tracing step satisfies the current acceptance goals:
 
 - the ingress-to-proposal call path is now documented
+- reusable adapter/core components have been identified
 - one candidate pre-proposal Cordial interception seam is identified
 - the result is concrete enough to open the next implementation issue
