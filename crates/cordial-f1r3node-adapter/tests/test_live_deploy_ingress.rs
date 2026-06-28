@@ -85,6 +85,7 @@ fn observing_same_deploy_from_http_and_grpc_merges_sources() {
     assert!(observed.sources.contains(&DeployIngressSource::Http));
     assert!(observed.sources.contains(&DeployIngressSource::Grpc));
     assert_eq!(ingress.staged_deploys().len(), 1);
+    assert_eq!(ingress.observed_signatures().len(), 1);
 }
 
 #[tokio::test]
@@ -107,6 +108,52 @@ async fn observe_and_admit_keeps_adapter_behavior_unchanged() {
     assert!(matches!(result.admission, Either::Right(_)));
     assert!(ingress.contains_signature(&deploy.sig));
     assert!(adapter.has_pending_deploys_in_storage().await.unwrap());
+}
+
+#[tokio::test]
+async fn grpc_admission_entrypoint_routes_through_observer_and_adapter() {
+    let adapter = CordialCasperAdapter::new_with_verifier(
+        bonds(&[(1, 100)]),
+        default_shard_conf(),
+        "root",
+        DeployPoolConfig::default(),
+        None,
+        MockVerifier,
+    );
+    let mut ingress = LiveDeployIngress::new();
+    let deploy = sample_deploy(11);
+
+    let result = ingress.admit_grpc_deploy(deploy.clone(), &adapter).unwrap();
+
+    assert!(matches!(result.admission, Either::Right(_)));
+    assert!(result
+        .observed
+        .sources
+        .contains(&DeployIngressSource::Grpc));
+    assert!(ingress.contains_signature(&deploy.sig));
+}
+
+#[tokio::test]
+async fn http_admission_entrypoint_routes_through_observer_and_adapter() {
+    let adapter = CordialCasperAdapter::new_with_verifier(
+        bonds(&[(1, 100)]),
+        default_shard_conf(),
+        "root",
+        DeployPoolConfig::default(),
+        None,
+        MockVerifier,
+    );
+    let mut ingress = LiveDeployIngress::new();
+    let deploy = sample_deploy(12);
+
+    let result = ingress.admit_http_deploy(deploy.clone(), &adapter).unwrap();
+
+    assert!(matches!(result.admission, Either::Right(_)));
+    assert!(result
+        .observed
+        .sources
+        .contains(&DeployIngressSource::Http));
+    assert!(ingress.contains_signature(&deploy.sig));
 }
 
 #[tokio::test]
