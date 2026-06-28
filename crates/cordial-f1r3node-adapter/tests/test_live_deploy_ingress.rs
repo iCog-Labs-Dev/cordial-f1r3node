@@ -5,7 +5,7 @@ use cordial_f1r3node_adapter::casper_adapter::{
     CordialCasperAdapter, CordialMultiParentCasper, DeployError,
 };
 use cordial_f1r3node_adapter::live_deploy_ingress::{
-    DeployIngressSource, HttpDeployRequest, HttpDeployConversionError, LiveDeployIngress,
+    DeployIngressSource, HttpDeployConversionError, HttpDeployRequest, LiveDeployIngress,
     grpc_proto_to_signed_deploy, http_request_to_signed_deploy,
 };
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
@@ -193,10 +193,7 @@ async fn grpc_admission_entrypoint_routes_through_observer_and_adapter() {
     let result = ingress.admit_grpc_deploy(deploy.clone(), &adapter).unwrap();
 
     assert!(matches!(result.admission, Either::Right(_)));
-    assert!(result
-        .observed
-        .sources
-        .contains(&DeployIngressSource::Grpc));
+    assert!(result.observed.sources.contains(&DeployIngressSource::Grpc));
     assert!(ingress.contains_signature(&deploy.sig));
 }
 
@@ -213,13 +210,12 @@ async fn grpc_proto_admission_entrypoint_decodes_and_routes_through_adapter() {
     let mut ingress = LiveDeployIngress::new();
     let proto = sample_grpc_proto(14);
 
-    let result = ingress.admit_grpc_proto_deploy(proto.clone(), &adapter).unwrap();
+    let result = ingress
+        .admit_grpc_proto_deploy(proto.clone(), &adapter)
+        .unwrap();
 
     assert!(matches!(result.admission, Either::Right(_)));
-    assert!(result
-        .observed
-        .sources
-        .contains(&DeployIngressSource::Grpc));
+    assert!(result.observed.sources.contains(&DeployIngressSource::Grpc));
     assert_eq!(ingress.observed_signatures().len(), 1);
 }
 
@@ -239,10 +235,7 @@ async fn http_admission_entrypoint_routes_through_observer_and_adapter() {
     let result = ingress.admit_http_deploy(deploy.clone(), &adapter).unwrap();
 
     assert!(matches!(result.admission, Either::Right(_)));
-    assert!(result
-        .observed
-        .sources
-        .contains(&DeployIngressSource::Http));
+    assert!(result.observed.sources.contains(&DeployIngressSource::Http));
     assert!(ingress.contains_signature(&deploy.sig));
 }
 
@@ -264,10 +257,7 @@ async fn http_request_admission_entrypoint_decodes_and_routes_through_adapter() 
         .unwrap();
 
     assert!(matches!(result.admission, Either::Right(_)));
-    assert!(result
-        .observed
-        .sources
-        .contains(&DeployIngressSource::Http));
+    assert!(result.observed.sources.contains(&DeployIngressSource::Http));
     assert_eq!(ingress.observed_signatures().len(), 1);
 }
 

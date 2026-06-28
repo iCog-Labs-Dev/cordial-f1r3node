@@ -1,8 +1,8 @@
 use std::collections::{BTreeSet, HashMap};
 
 use either::Either;
-use serde::{Deserialize, Serialize};
 use models::casper::DeployDataProto;
+use serde::{Deserialize, Serialize};
 
 use crate::block_translation::{DeployData, SignedDeployData};
 use crate::casper_adapter::{CasperError, CordialCasper, DeployError, DeployId};
@@ -109,10 +109,7 @@ impl LiveDeployIngress {
         self.observe_deploy(DeployIngressSource::Grpc, deploy)
     }
 
-    pub fn observe_grpc_proto_deploy(
-        &mut self,
-        proto: &DeployDataProto,
-    ) -> ObservedDeploy {
+    pub fn observe_grpc_proto_deploy(&mut self, proto: &DeployDataProto) -> ObservedDeploy {
         let deploy = grpc_proto_to_signed_deploy(proto);
         self.observe_grpc_deploy(&deploy)
     }
