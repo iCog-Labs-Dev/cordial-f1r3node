@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use either::Either;
 use serde::{Deserialize, Serialize};
+use models::casper::DeployDataProto;
 
 use crate::block_translation::{DeployData, SignedDeployData};
 use crate::casper_adapter::{CasperError, CordialCasper, DeployError, DeployId};
@@ -108,6 +109,14 @@ impl LiveDeployIngress {
         self.observe_deploy(DeployIngressSource::Grpc, deploy)
     }
 
+    pub fn observe_grpc_proto_deploy(
+        &mut self,
+        proto: &DeployDataProto,
+    ) -> ObservedDeploy {
+        let deploy = grpc_proto_to_signed_deploy(proto);
+        self.observe_grpc_deploy(&deploy)
+    }
+
     pub fn observe_http_deploy(&mut self, deploy: &SignedDeployData) -> ObservedDeploy {
         self.observe_deploy(DeployIngressSource::Http, deploy)
     }
@@ -167,6 +176,19 @@ impl LiveDeployIngress {
         V: CryptoVerifier + Send + Sync,
     {
         self.observe_and_admit(DeployIngressSource::Grpc, deploy, adapter)
+    }
+
+    pub fn admit_grpc_proto_deploy<V>(
+        &mut self,
+        proto: DeployDataProto,
+        adapter: &impl CordialCasper<V>,
+    ) -> Result<DeployObservationResult, GrpcDeployIngressError>
+    where
+        V: CryptoVerifier + Send + Sync,
+    {
+        let deploy = grpc_proto_to_signed_deploy(&proto);
+        let result = self.admit_grpc_deploy(deploy, adapter)?;
+        Ok(result)
     }
 
     pub fn admit_http_deploy<V>(
@@ -247,6 +269,48 @@ impl From<HttpDeployConversionError> for HttpDeployIngressError {
 impl From<CasperError> for HttpDeployIngressError {
     fn from(value: CasperError) -> Self {
         Self::Admission(value)
+    }
+}
+
+#[derive(Debug)]
+pub enum GrpcDeployIngressError {
+    Admission(CasperError),
+}
+
+impl std::fmt::Display for GrpcDeployIngressError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Admission(err) => write!(f, "{err:?}"),
+        }
+    }
+}
+
+impl std::error::Error for GrpcDeployIngressError {}
+
+impl From<CasperError> for GrpcDeployIngressError {
+    fn from(value: CasperError) -> Self {
+        Self::Admission(value)
+    }
+}
+
+pub fn grpc_proto_to_signed_deploy(proto: &DeployDataProto) -> SignedDeployData {
+    SignedDeployData {
+        data: DeployData {
+            term: proto.term.clone(),
+            time_stamp: proto.timestamp,
+            phlo_price: proto.phlo_price,
+            phlo_limit: proto.phlo_limit,
+            valid_after_block_number: proto.valid_after_block_number,
+            shard_id: proto.shard_id.clone(),
+            expiration_timestamp: if proto.expiration_timestamp == 0 {
+                None
+            } else {
+                Some(proto.expiration_timestamp)
+            },
+        },
+        pk: proto.deployer.to_vec(),
+        sig: proto.sig.to_vec(),
+        sig_algorithm: proto.sig_algorithm.clone(),
     }
 }
 
