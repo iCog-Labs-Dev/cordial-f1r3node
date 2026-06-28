@@ -33,6 +33,9 @@ and easy to extend as new implementation notes are added.
 8. [08-live-mirror-check-harness.md](./08-live-mirror-check-harness.md)
    - Documents the live mirror diagnostic binary and its runtime modes
    - Explains parameters, output phases, and baseline-vs-drift interpretation
+9. [09-live-deploy-observer.md](./09-live-deploy-observer.md)
+   - Adds the first deploy-side pre-proposal observer seam
+   - Documents staged deploy metadata and unchanged adapter admission behavior
 
 ## Scope Of This Track
 
@@ -48,3 +51,4 @@ The integration notes in this folder focus on:
 Future notes in this folder are expected to cover:
 
 - actual deploy-side interception work at the documented pre-proposal seam
+- proposer-facing deploy correlation after observation
