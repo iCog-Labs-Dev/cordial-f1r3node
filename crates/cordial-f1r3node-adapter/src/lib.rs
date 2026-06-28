@@ -24,6 +24,7 @@ pub mod casper_adapter;
 pub mod crypto_bridge;
 pub mod grpc_ingest;
 pub mod http_observer;
+pub mod live_deploy_ingress;
 pub mod live_grpc;
 pub mod live_ingress;
 pub mod proposer;
