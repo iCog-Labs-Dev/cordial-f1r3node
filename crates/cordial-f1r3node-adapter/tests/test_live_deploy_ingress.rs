@@ -4,12 +4,16 @@ use cordial_f1r3node_adapter::block_translation::{DeployData, SignedDeployData};
 use cordial_f1r3node_adapter::casper_adapter::{
     CordialCasperAdapter, CordialMultiParentCasper, DeployError,
 };
-use cordial_f1r3node_adapter::live_deploy_ingress::{DeployIngressSource, LiveDeployIngress};
+use cordial_f1r3node_adapter::live_deploy_ingress::{
+    DeployIngressSource, HttpDeployRequest, HttpDeployConversionError, LiveDeployIngress,
+    http_request_to_signed_deploy,
+};
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::execution::DeployPoolConfig;
 use cordial_miners_core::types::{BlockContent, NodeId};
 use either::Either;
+use hex::encode;
 
 struct MockVerifier;
 
@@ -55,6 +59,16 @@ fn sample_deploy(sig_byte: u8) -> SignedDeployData {
     }
 }
 
+fn sample_http_request(sig_byte: u8) -> HttpDeployRequest {
+    let deploy = sample_deploy(sig_byte);
+    HttpDeployRequest {
+        data: deploy.data,
+        deployer: encode(deploy.pk),
+        signature: encode(deploy.sig),
+        sig_algorithm: "ed25519".to_string(),
+    }
+}
+
 #[test]
 fn observe_grpc_deploy_records_metadata() {
     let mut ingress = LiveDeployIngress::new();
@@ -86,6 +100,30 @@ fn observing_same_deploy_from_http_and_grpc_merges_sources() {
     assert!(observed.sources.contains(&DeployIngressSource::Grpc));
     assert_eq!(ingress.staged_deploys().len(), 1);
     assert_eq!(ingress.observed_signatures().len(), 1);
+}
+
+#[test]
+fn http_request_converts_into_signed_deploy_data() {
+    let request = sample_http_request(4);
+
+    let deploy = http_request_to_signed_deploy(&request).unwrap();
+
+    assert_eq!(deploy.pk, vec![4; 32]);
+    assert_eq!(deploy.sig, vec![4; 64]);
+    assert_eq!(deploy.sig_algorithm, "ed25519");
+}
+
+#[test]
+fn invalid_http_request_hex_is_rejected() {
+    let mut request = sample_http_request(6);
+    request.signature = "not-hex".to_string();
+
+    let err = http_request_to_signed_deploy(&request).unwrap_err();
+
+    assert!(matches!(
+        err,
+        HttpDeployConversionError::InvalidSignatureHex(_)
+    ));
 }
 
 #[tokio::test]
@@ -154,6 +192,31 @@ async fn http_admission_entrypoint_routes_through_observer_and_adapter() {
         .sources
         .contains(&DeployIngressSource::Http));
     assert!(ingress.contains_signature(&deploy.sig));
+}
+
+#[tokio::test]
+async fn http_request_admission_entrypoint_decodes_and_routes_through_adapter() {
+    let adapter = CordialCasperAdapter::new_with_verifier(
+        bonds(&[(1, 100)]),
+        default_shard_conf(),
+        "root",
+        DeployPoolConfig::default(),
+        None,
+        MockVerifier,
+    );
+    let mut ingress = LiveDeployIngress::new();
+    let request = sample_http_request(13);
+
+    let result = ingress
+        .admit_http_request_deploy(request.clone(), &adapter)
+        .unwrap();
+
+    assert!(matches!(result.admission, Either::Right(_)));
+    assert!(result
+        .observed
+        .sources
+        .contains(&DeployIngressSource::Http));
+    assert_eq!(ingress.observed_signatures().len(), 1);
 }
 
 #[tokio::test]

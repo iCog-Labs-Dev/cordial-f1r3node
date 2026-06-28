@@ -1,8 +1,10 @@
 use std::collections::{BTreeSet, HashMap};
 
 use either::Either;
+use serde::{Deserialize, Serialize};
+use models::casper::DeployDataProto;
 
-use crate::block_translation::SignedDeployData;
+use crate::block_translation::{DeployData, SignedDeployData};
 use crate::casper_adapter::{CasperError, CordialCasper, DeployError, DeployId};
 use cordial_miners_core::crypto::CryptoVerifier;
 
@@ -58,6 +60,32 @@ pub struct DeployObservationResult {
     pub admission: Either<DeployError, DeployId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HttpDeployRequest {
+    pub data: DeployData,
+    pub deployer: String,
+    pub signature: String,
+    #[serde(rename = "sigAlgorithm")]
+    pub sig_algorithm: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HttpDeployConversionError {
+    InvalidDeployerHex(String),
+    InvalidSignatureHex(String),
+}
+
+impl std::fmt::Display for HttpDeployConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidDeployerHex(err) => write!(f, "invalid deployer hex: {err}"),
+            Self::InvalidSignatureHex(err) => write!(f, "invalid signature hex: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for HttpDeployConversionError {}
+
 pub struct LiveDeployIngress {
     staged: HashMap<Vec<u8>, ObservedDeploy>,
     observed_order: Vec<Vec<u8>>,
@@ -81,8 +109,24 @@ impl LiveDeployIngress {
         self.observe_deploy(DeployIngressSource::Grpc, deploy)
     }
 
+    pub fn observe_grpc_proto_deploy(
+        &mut self,
+        proto: &DeployDataProto,
+    ) -> ObservedDeploy {
+        let deploy = grpc_proto_to_signed_deploy(proto);
+        self.observe_grpc_deploy(&deploy)
+    }
+
     pub fn observe_http_deploy(&mut self, deploy: &SignedDeployData) -> ObservedDeploy {
         self.observe_deploy(DeployIngressSource::Http, deploy)
+    }
+
+    pub fn observe_http_request_deploy(
+        &mut self,
+        request: &HttpDeployRequest,
+    ) -> Result<ObservedDeploy, HttpDeployConversionError> {
+        let deploy = http_request_to_signed_deploy(request)?;
+        Ok(self.observe_http_deploy(&deploy))
     }
 
     pub fn observe_deploy(
@@ -134,6 +178,19 @@ impl LiveDeployIngress {
         self.observe_and_admit(DeployIngressSource::Grpc, deploy, adapter)
     }
 
+    pub fn admit_grpc_proto_deploy<V>(
+        &mut self,
+        proto: DeployDataProto,
+        adapter: &impl CordialCasper<V>,
+    ) -> Result<DeployObservationResult, GrpcDeployIngressError>
+    where
+        V: CryptoVerifier + Send + Sync,
+    {
+        let deploy = grpc_proto_to_signed_deploy(&proto);
+        let result = self.admit_grpc_deploy(deploy, adapter)?;
+        Ok(result)
+    }
+
     pub fn admit_http_deploy<V>(
         &mut self,
         deploy: SignedDeployData,
@@ -143,6 +200,19 @@ impl LiveDeployIngress {
         V: CryptoVerifier + Send + Sync,
     {
         self.observe_and_admit(DeployIngressSource::Http, deploy, adapter)
+    }
+
+    pub fn admit_http_request_deploy<V>(
+        &mut self,
+        request: HttpDeployRequest,
+        adapter: &impl CordialCasper<V>,
+    ) -> Result<DeployObservationResult, HttpDeployIngressError>
+    where
+        V: CryptoVerifier + Send + Sync,
+    {
+        let deploy = http_request_to_signed_deploy(&request)?;
+        let result = self.admit_http_deploy(deploy, adapter)?;
+        Ok(result)
     }
 
     pub fn len(&self) -> usize {
@@ -171,4 +241,91 @@ impl LiveDeployIngress {
     pub fn observed_signatures(&self) -> &[Vec<u8>] {
         &self.observed_order
     }
+}
+
+#[derive(Debug)]
+pub enum HttpDeployIngressError {
+    Conversion(HttpDeployConversionError),
+    Admission(CasperError),
+}
+
+impl std::fmt::Display for HttpDeployIngressError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Conversion(err) => write!(f, "{err}"),
+            Self::Admission(err) => write!(f, "{err:?}"),
+        }
+    }
+}
+
+impl std::error::Error for HttpDeployIngressError {}
+
+impl From<HttpDeployConversionError> for HttpDeployIngressError {
+    fn from(value: HttpDeployConversionError) -> Self {
+        Self::Conversion(value)
+    }
+}
+
+impl From<CasperError> for HttpDeployIngressError {
+    fn from(value: CasperError) -> Self {
+        Self::Admission(value)
+    }
+}
+
+#[derive(Debug)]
+pub enum GrpcDeployIngressError {
+    Admission(CasperError),
+}
+
+impl std::fmt::Display for GrpcDeployIngressError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Admission(err) => write!(f, "{err:?}"),
+        }
+    }
+}
+
+impl std::error::Error for GrpcDeployIngressError {}
+
+impl From<CasperError> for GrpcDeployIngressError {
+    fn from(value: CasperError) -> Self {
+        Self::Admission(value)
+    }
+}
+
+pub fn grpc_proto_to_signed_deploy(proto: &DeployDataProto) -> SignedDeployData {
+    SignedDeployData {
+        data: DeployData {
+            term: proto.term.clone(),
+            time_stamp: proto.timestamp,
+            phlo_price: proto.phlo_price,
+            phlo_limit: proto.phlo_limit,
+            valid_after_block_number: proto.valid_after_block_number,
+            shard_id: proto.shard_id.clone(),
+            expiration_timestamp: if proto.expiration_timestamp == 0 {
+                None
+            } else {
+                Some(proto.expiration_timestamp)
+            },
+        },
+        pk: proto.deployer.to_vec(),
+        sig: proto.sig.to_vec(),
+        sig_algorithm: proto.sig_algorithm.clone(),
+    }
+}
+
+pub fn http_request_to_signed_deploy(
+    request: &HttpDeployRequest,
+) -> Result<SignedDeployData, HttpDeployConversionError> {
+    let pk = hex::decode(&request.deployer)
+        .map_err(|err| HttpDeployConversionError::InvalidDeployerHex(err.to_string()))?;
+    let sig = hex::decode(&request.signature)
+        .map_err(|err| HttpDeployConversionError::InvalidSignatureHex(err.to_string()))?;
+
+    Ok(SignedDeployData {
+        data: request.data.clone(),
+        pk,
+        sig,
+        sig_algorithm: request.sig_algorithm.clone(),
+    })
 }
