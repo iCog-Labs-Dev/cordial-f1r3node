@@ -685,6 +685,8 @@ dependencies = [
  "cordial-miners-core",
  "ed25519-dalek",
  "either",
+ "heed 0.20.5",
+ "hex",
  "k256",
  "models",
  "prost",

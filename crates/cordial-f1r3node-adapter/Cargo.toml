@@ -17,6 +17,7 @@ prost.workspace = true
 tonic.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
+hex.workspace = true
 
 # Phase 3.4 — crypto alignment with f1r3node.
 blake2.workspace = true
