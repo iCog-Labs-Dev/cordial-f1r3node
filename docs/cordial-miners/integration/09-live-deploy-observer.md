@@ -17,6 +17,7 @@ Casper admission behavior unchanged.
 The new deploy observer module provides:
 
 - a typed deploy ingress source (`http` or `grpc`)
+- an adapter-local mirror of the HTTP deploy request shape
 - a staged deploy record with key metadata
 - adapter-side state for observed deploys
 - an observation-plus-admission helper that records deploy metadata and then
@@ -24,9 +25,14 @@ The new deploy observer module provides:
 - explicit ingress-facing entrypoints:
   - `admit_grpc_deploy(...)`
   - `admit_http_deploy(...)`
+  - `admit_http_request_deploy(...)`
 
 This means the deploy observer can sit in front of native Casper admission
 without changing what happens after admission.
+
+The HTTP path now mirrors the real `f1r3node` flow more closely:
+
+`DeployRequest-like input -> signed deploy reconstruction -> deploy observation -> adapter admission`
 
 ## Stored Metadata
 
@@ -73,6 +79,9 @@ The current tests cover:
 
 - gRPC deploy observation
 - HTTP + gRPC source merging for the same deploy
+- HTTP request conversion into signed deploy data
+- invalid HTTP request hex handling
 - observation followed by successful adapter admission
 - ingress-specific HTTP and gRPC admission entrypoints
+- HTTP request admission entrypoint
 - rejected deploys remaining visible in observer state for debugging
