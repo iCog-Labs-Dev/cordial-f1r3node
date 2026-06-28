@@ -36,6 +36,9 @@ and easy to extend as new implementation notes are added.
 9. [09-live-deploy-observer.md](./09-live-deploy-observer.md)
    - Adds the first deploy-side pre-proposal observer seam
    - Documents staged deploy metadata and unchanged adapter admission behavior
+10. [10-f1r3node-grpc-deploy-wiring.md](./10-f1r3node-grpc-deploy-wiring.md)
+   - Documents host-side gRPC deploy wiring into the Cordial observer seam
+   - Records the first live node hook before native BlockAPI admission
 
 ## Scope Of This Track
 
@@ -52,3 +55,4 @@ Future notes in this folder are expected to cover:
 
 - actual deploy-side interception work at the documented pre-proposal seam
 - proposer-facing deploy correlation after observation
+- live deploy verification against a running `f1r3node`
