@@ -123,6 +123,28 @@ impl LiveDeployIngress {
         })
     }
 
+    pub fn admit_grpc_deploy<V>(
+        &mut self,
+        deploy: SignedDeployData,
+        adapter: &impl CordialCasper<V>,
+    ) -> Result<DeployObservationResult, CasperError>
+    where
+        V: CryptoVerifier + Send + Sync,
+    {
+        self.observe_and_admit(DeployIngressSource::Grpc, deploy, adapter)
+    }
+
+    pub fn admit_http_deploy<V>(
+        &mut self,
+        deploy: SignedDeployData,
+        adapter: &impl CordialCasper<V>,
+    ) -> Result<DeployObservationResult, CasperError>
+    where
+        V: CryptoVerifier + Send + Sync,
+    {
+        self.observe_and_admit(DeployIngressSource::Http, deploy, adapter)
+    }
+
     pub fn len(&self) -> usize {
         self.staged.len()
     }
@@ -144,5 +166,9 @@ impl LiveDeployIngress {
             .iter()
             .filter_map(|sig| self.staged.get(sig))
             .collect()
+    }
+
+    pub fn observed_signatures(&self) -> &[Vec<u8>] {
+        &self.observed_order
     }
 }
