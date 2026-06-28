@@ -5,8 +5,8 @@ use cordial_f1r3node_adapter::casper_adapter::{
     CordialCasperAdapter, CordialMultiParentCasper, DeployError,
 };
 use cordial_f1r3node_adapter::live_deploy_ingress::{
-    DeployIngressSource, HttpDeployRequest, HttpDeployConversionError, LiveDeployIngress,
-    http_request_to_signed_deploy,
+    DeployIngressSource, HttpDeployConversionError, HttpDeployRequest, LiveDeployIngress,
+    grpc_proto_to_signed_deploy, http_request_to_signed_deploy,
 };
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 use cordial_miners_core::crypto::CryptoVerifier;
@@ -14,6 +14,7 @@ use cordial_miners_core::execution::DeployPoolConfig;
 use cordial_miners_core::types::{BlockContent, NodeId};
 use either::Either;
 use hex::encode;
+use models::casper::DeployDataProto;
 
 struct MockVerifier;
 
@@ -69,6 +70,22 @@ fn sample_http_request(sig_byte: u8) -> HttpDeployRequest {
     }
 }
 
+fn sample_grpc_proto(sig_byte: u8) -> DeployDataProto {
+    DeployDataProto {
+        deployer: vec![sig_byte; 32].into(),
+        term: format!("tx-{sig_byte}"),
+        timestamp: 1000 + sig_byte as i64,
+        sig: vec![sig_byte; 64].into(),
+        sig_algorithm: "ed25519".to_string(),
+        phlo_price: 1,
+        phlo_limit: 10_000,
+        valid_after_block_number: 0,
+        shard_id: "root".to_string(),
+        language: "rholang".to_string(),
+        expiration_timestamp: 0,
+    }
+}
+
 #[test]
 fn observe_grpc_deploy_records_metadata() {
     let mut ingress = LiveDeployIngress::new();
@@ -110,6 +127,18 @@ fn http_request_converts_into_signed_deploy_data() {
 
     assert_eq!(deploy.pk, vec![4; 32]);
     assert_eq!(deploy.sig, vec![4; 64]);
+    assert_eq!(deploy.sig_algorithm, "ed25519");
+}
+
+#[test]
+fn grpc_proto_converts_into_signed_deploy_data() {
+    let proto = sample_grpc_proto(8);
+
+    let deploy = grpc_proto_to_signed_deploy(&proto);
+
+    assert_eq!(deploy.pk, vec![8; 32]);
+    assert_eq!(deploy.sig, vec![8; 64]);
+    assert_eq!(deploy.data.term, "tx-8");
     assert_eq!(deploy.sig_algorithm, "ed25519");
 }
 
@@ -164,11 +193,30 @@ async fn grpc_admission_entrypoint_routes_through_observer_and_adapter() {
     let result = ingress.admit_grpc_deploy(deploy.clone(), &adapter).unwrap();
 
     assert!(matches!(result.admission, Either::Right(_)));
-    assert!(result
-        .observed
-        .sources
-        .contains(&DeployIngressSource::Grpc));
+    assert!(result.observed.sources.contains(&DeployIngressSource::Grpc));
     assert!(ingress.contains_signature(&deploy.sig));
+}
+
+#[tokio::test]
+async fn grpc_proto_admission_entrypoint_decodes_and_routes_through_adapter() {
+    let adapter = CordialCasperAdapter::new_with_verifier(
+        bonds(&[(1, 100)]),
+        default_shard_conf(),
+        "root",
+        DeployPoolConfig::default(),
+        None,
+        MockVerifier,
+    );
+    let mut ingress = LiveDeployIngress::new();
+    let proto = sample_grpc_proto(14);
+
+    let result = ingress
+        .admit_grpc_proto_deploy(proto.clone(), &adapter)
+        .unwrap();
+
+    assert!(matches!(result.admission, Either::Right(_)));
+    assert!(result.observed.sources.contains(&DeployIngressSource::Grpc));
+    assert_eq!(ingress.observed_signatures().len(), 1);
 }
 
 #[tokio::test]
@@ -187,10 +235,7 @@ async fn http_admission_entrypoint_routes_through_observer_and_adapter() {
     let result = ingress.admit_http_deploy(deploy.clone(), &adapter).unwrap();
 
     assert!(matches!(result.admission, Either::Right(_)));
-    assert!(result
-        .observed
-        .sources
-        .contains(&DeployIngressSource::Http));
+    assert!(result.observed.sources.contains(&DeployIngressSource::Http));
     assert!(ingress.contains_signature(&deploy.sig));
 }
 
@@ -212,10 +257,7 @@ async fn http_request_admission_entrypoint_decodes_and_routes_through_adapter() 
         .unwrap();
 
     assert!(matches!(result.admission, Either::Right(_)));
-    assert!(result
-        .observed
-        .sources
-        .contains(&DeployIngressSource::Http));
+    assert!(result.observed.sources.contains(&DeployIngressSource::Http));
     assert_eq!(ingress.observed_signatures().len(), 1);
 }
 
