@@ -39,6 +39,9 @@ and easy to extend as new implementation notes are added.
 10. [10-f1r3node-grpc-deploy-wiring.md](./10-f1r3node-grpc-deploy-wiring.md)
    - Documents host-side gRPC deploy wiring into the Cordial observer seam
    - Records the first live node hook before native BlockAPI admission
+11. [11-external-grpc-deploy-proxy.md](./11-external-grpc-deploy-proxy.md)
+   - Adds a no-node-changes external gRPC proxy for deploy observation
+   - Preserves `f1r3node` method names while observing and forwarding `doDeploy`
 
 ## Scope Of This Track
 
@@ -53,6 +56,6 @@ The integration notes in this folder focus on:
 
 Future notes in this folder are expected to cover:
 
-- actual deploy-side interception work at the documented pre-proposal seam
+- external deploy-side interception work at the documented pre-proposal seam
 - proposer-facing deploy correlation after observation
 - live deploy verification against a running `f1r3node`
