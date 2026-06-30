@@ -1,8 +1,7 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use anyhow::{Context, Result};
+use casper::rust::util::construct_deploy;
 use clap::Parser;
-use models::casper::DeployDataProto;
+use models::rust::casper::protocol::casper_message::DeployData as ModelDeployData;
 use models::casper::v1::{deploy_response, deploy_service_client::DeployServiceClient};
 use tonic::transport::Endpoint;
 
@@ -28,36 +27,8 @@ struct Args {
     #[arg(long, default_value = "rholang")]
     language: String,
 
-    #[arg(
-        long,
-        default_value = "020101010101010101010101010101010101010101010101010101010101010101"
-    )]
-    deployer_hex: String,
-
-    #[arg(
-        long,
-        default_value = "07070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707"
-    )]
-    signature_hex: String,
-
-    #[arg(long, default_value = "secp256k1")]
-    sig_algorithm: String,
-
-    #[arg(long)]
-    timestamp_ms: Option<i64>,
-
     #[arg(long, default_value_t = 0)]
     valid_after_block_number: i64,
-
-    #[arg(long, default_value_t = 0)]
-    expiration_timestamp: i64,
-}
-
-fn now_timestamp_ms() -> Result<i64> {
-    let elapsed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context("system clock is before unix epoch")?;
-    i64::try_from(elapsed.as_millis()).context("timestamp overflow while converting to i64")
 }
 
 #[tokio::main]
@@ -72,33 +43,25 @@ async fn main() -> Result<()> {
         .with_context(|| format!("failed to connect to {}", args.grpc_url))?;
     let mut client = DeployServiceClient::new(channel);
 
-    let deployer = hex::decode(&args.deployer_hex).context("failed to decode --deployer-hex")?;
-    let sig = hex::decode(&args.signature_hex).context("failed to decode --signature-hex")?;
-    let timestamp = match args.timestamp_ms {
-        Some(ts) => ts,
-        None => now_timestamp_ms()?,
-    };
-
-    let request = DeployDataProto {
-        deployer: deployer.into(),
-        term: args.term,
-        timestamp,
-        sig: sig.into(),
-        sig_algorithm: args.sig_algorithm,
-        phlo_price: args.phlo_price,
-        phlo_limit: args.phlo_limit,
-        valid_after_block_number: args.valid_after_block_number,
-        shard_id: args.shard_id,
-        language: args.language,
-        expiration_timestamp: args.expiration_timestamp,
-    };
+    let signed = construct_deploy::source_deploy_now_full(
+        args.term,
+        Some(args.phlo_limit),
+        Some(args.phlo_price),
+        None,
+        Some(args.valid_after_block_number),
+        Some(args.shard_id.clone()),
+    )
+    .context("failed to construct valid secp256k1-signed deploy")?;
+    let request = ModelDeployData::to_proto(signed);
 
     println!("Submitting live deploy");
     println!("=====================");
     println!("gRPC URL:    {}", args.grpc_url);
-    println!("timestamp:   {}", timestamp);
+    println!("timestamp:   {}", request.timestamp);
     println!("shard id:    {}", request.shard_id);
     println!("term:        {}", request.term);
+    println!("sig algo:    {}", request.sig_algorithm);
+    println!("language:    {}", args.language);
 
     let response = client
         .do_deploy(request)
