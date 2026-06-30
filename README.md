@@ -1,8 +1,16 @@
 # Cordial F1R3node
 
+[![CI](https://github.com/iCog-Labs-Dev/cordial-f1r3node/actions/workflows/rust.yml/badge.svg)](https://github.com/iCog-Labs-Dev/cordial-f1r3node/actions/workflows/rust.yml)
+![Branch](https://img.shields.io/badge/branches-master%20%7C%20dev-blue)
+![Workspace](https://img.shields.io/badge/workspace-3%20crates-8A2BE2)
+![Test defs](https://img.shields.io/badge/tests-512-brightgreen)
+![Toolchain](https://img.shields.io/badge/rust-nightly-orange)
+
 [Cordial Miners research paper](https://arxiv.org/abs/2205.09174)
 
 A Rust workspace for integrating **Cordial Miners** with the F1R3FLY node stack. The project is split into a pure consensus core crate and adapter crates for node/runtime integration.
+
+> Coverage badge is not shown yet because this repository does not currently publish coverage artifacts to a coverage service.
 
 ## What it does
 
