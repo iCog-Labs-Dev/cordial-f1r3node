@@ -11,11 +11,12 @@ use cordial_f1r3node_adapter::live_grpc::{
     trusted_block_from_light_block_info_with_options,
 };
 use cordial_f1r3node_adapter::live_ingress::LiveIngress;
+use cordial_f1r3node_adapter::ordered_output::OrderedFinalizedOutput;
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 use cordial_miners_core::Block;
 use cordial_miners_core::consensus::{
-    approved_blocks_for_leader, depth, is_weighted_final_leader, leader_block_for_wave,
-    wave_of_round, weighted_final_leader_for_wave, xsort,
+    depth, is_weighted_final_leader, leader_block_for_wave, wave_of_round,
+    weighted_final_leader_for_wave,
 };
 use cordial_miners_core::execution::CordialBlockPayload;
 use cordial_miners_core::types::{BlockIdentity, NodeId};
@@ -203,6 +204,7 @@ async fn main() -> Result<()> {
             None => None,
         };
 
+    let mut ordered_output: Option<OrderedFinalizedOutput> = None;
     let ordered_blocks = if args.skip_ordering {
         println!("[phase] skipping ordered finalized blocks");
         None
@@ -210,13 +212,21 @@ async fn main() -> Result<()> {
         println!(
             "[phase] computing {}",
             if args.ordering_fragment_only {
-                "latest finalized ordering fragment"
+                "latest finalized ordered output"
             } else {
                 "ordered finalized blocks"
             }
         );
         Some(if args.ordering_fragment_only {
-            latest_ordering_fragment(&ingress, mirror_last_finalized.as_deref())?
+            // Use the stable ordered_output export seam instead of
+            // recomputing ordering (approved_blocks_for_leader + xsort)
+            // directly against the mirrored blocklace.
+            let output = ingress.latest_finalized_ordered_output(3).map_err(|err| {
+                anyhow::anyhow!("failed to compute latest ordered output: {err:?}")
+            })?;
+            let hashes = output.block_hashes();
+            ordered_output = Some(output);
+            hashes
         } else {
             ingress.ordered_finalized_blocks().map_err(|err| {
                 anyhow::anyhow!("failed to compute ordered finalized blocks: {err:?}")
@@ -284,6 +294,9 @@ async fn main() -> Result<()> {
     println!("Ordered blocks:    {}", ordered_count);
     if let Some(ordered) = ordered_blocks.as_ref() {
         print_ordering_preview(ordered, args.ordering_preview);
+        if let Some(output) = ordered_output.as_ref() {
+            print_ordered_output_summary(output, &ingress, args.ordering_preview);
+        }
         if let Some(mirror_lfb) = mirror_last_finalized.as_ref() {
             println!(
                 "LFB in ordered:    {}",
@@ -488,32 +501,83 @@ fn compare_ordered_hashes(path: &PathBuf, current: &[String]) -> Result<OrderedC
     })
 }
 
-fn latest_ordering_fragment(
+/// Print the summary fields for an [`OrderedFinalizedOutput`] obtained from
+/// the stable `ordered_output` export seam. Mirrors the head/tail preview
+/// shape of `print_ordering_preview`, but surfaces the consensus metadata
+/// (anchor, wavelength, bond count, mirror size) the seam attaches to the
+/// fragment as a whole.
+///
+/// `BlockIdentity` (the per-block element of `OrderedFinalizedOutput`) only
+/// carries content hash, creator, and signature — round/wave are not part
+/// of the stable seam type. Since this debug tool has direct access to the
+/// mirrored blocklace, it recomputes round/wave/block_number per block for
+/// extra visibility, the same way `describe_mirror_block` does for the LFB.
+fn print_ordered_output_summary(
+    output: &OrderedFinalizedOutput,
     ingress: &LiveIngress<PassthroughAdapter>,
-    mirror_last_finalized: Option<&str>,
-) -> Result<Vec<Vec<u8>>> {
-    let Some(mirror_last_finalized) = mirror_last_finalized else {
-        return Ok(Vec::new());
-    };
+    preview: usize,
+) {
+    println!(
+        "Ordered output anchor:   {}",
+        output
+            .anchor_hash()
+            .map(hex_string)
+            .unwrap_or_else(|| "<none>".to_string())
+    );
+    println!("Wavelength:              {}", output.wavelength);
+    println!("Bond count:              {}", output.bond_count);
+    println!("Total mirrored blocks:   {}", output.total_mirrored_blocks);
 
-    let hash = StringOps::decode_hex(mirror_last_finalized.to_string())
-        .ok_or_else(|| anyhow::anyhow!("failed to decode mirror finalized hash"))?;
-    let leader = ingress
+    if output.is_empty() {
+        println!("Ordered output blocks:   <none>");
+        return;
+    }
+
+    let preview = preview.min(output.len());
+    println!("Ordered output blocks:   {}", output.len());
+    if preview == 0 {
+        return;
+    }
+
+    println!("Ordered output head:");
+    for block in output.blocks.iter().take(preview) {
+        print_ordered_block_summary(block, ingress);
+    }
+
+    if output.len() > preview {
+        println!("Ordered output tail:");
+        for block in output
+            .blocks
+            .iter()
+            .skip(output.len().saturating_sub(preview))
+        {
+            print_ordered_block_summary(block, ingress);
+        }
+    }
+}
+
+fn print_ordered_block_summary(block: &BlockIdentity, ingress: &LiveIngress<PassthroughAdapter>) {
+    let round = depth(ingress.blocklace(), block);
+    let wave = round.and_then(|r| wave_of_round(r, 3));
+    let block_number = ingress
         .blocklace()
-        .dom()
-        .iter()
-        .find(|id| id.content_hash.as_slice() == hash.as_slice())
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("failed to resolve mirror finalized leader in blocklace"))?;
+        .content(block)
+        .and_then(|content| CordialBlockPayload::from_bytes(&content.payload).ok())
+        .map(|payload| payload.state.block_number);
 
-    let approved = approved_blocks_for_leader(ingress.blocklace(), leader);
-    let ordered = xsort(&approved)
-        .map_err(|err| anyhow::anyhow!("failed to order finalized fragment: {err:?}"))?;
-
-    Ok(ordered
-        .into_iter()
-        .map(|id| id.content_hash.to_vec())
-        .collect())
+    println!(
+        "  - hash={} creator={} block_number={} round={} wave={}",
+        hex_string(block.content_hash.to_vec()),
+        hex_string(block.creator.0.clone()),
+        block_number
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "<unknown>".to_string()),
+        round
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| "<unknown>".to_string()),
+        wave.map(|w| w.to_string())
+            .unwrap_or_else(|| "<unknown>".to_string()),
+    );
 }
 
 #[derive(Debug, Clone)]

@@ -42,6 +42,9 @@ and easy to extend as new implementation notes are added.
 11. [11-external-grpc-deploy-proxy.md](./11-external-grpc-deploy-proxy.md)
    - Adds a no-node-changes external gRPC proxy for deploy observation
    - Preserves `f1r3node` method names while observing and forwarding `doDeploy`
+12. [12-ordered-output-reintegration.md](./12-ordered-output-reintegration.md)
+   - Defines the first clean seam for reconnecting Cordial output back to node-facing behavior
+   - Recommends exporting finalized ordered output before attempting proposer-side control
 
 ## Scope Of This Track
 
@@ -56,6 +59,6 @@ The integration notes in this folder focus on:
 
 Future notes in this folder are expected to cover:
 
-- external deploy-side interception work at the documented pre-proposal seam
-- proposer-facing deploy correlation after observation
-- live deploy verification against a running `f1r3node`
+- stable ordered-output export from live mirrored Cordial state
+- downstream node-facing consumption of finalized ordered fragments
+- proposer-facing integration only after the ordered-output seam is established
