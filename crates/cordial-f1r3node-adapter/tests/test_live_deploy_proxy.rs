@@ -2,6 +2,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use cordial_f1r3node_adapter::live_deploy_proxy::LiveDeployProxy;
+#[cfg(f1r3node_has_listen_for_data_at_name)]
+use models::casper::DataAtNameQuery;
+#[cfg(f1r3node_has_deploy_finalization_status)]
+use models::casper::DeployFinalizationStatusQuery;
+#[cfg(f1r3node_has_deploy_finalization_status)]
+use models::casper::v1::DeployFinalizationStatusResponse;
+#[cfg(f1r3node_has_listen_for_data_at_name)]
+use models::casper::v1::ListeningNameDataResponse;
 use models::casper::v1::{
     BlockInfoResponse, BlockResponse, BondStatusResponse, ContinuationAtNameResponse,
     DeployResponse, EventInfoResponse, ExploratoryDeployResponse, FindDeployResponse,
@@ -11,20 +19,12 @@ use models::casper::v1::{
     deploy_service_server::{DeployService, DeployServiceServer},
     status_response,
 };
-#[cfg(f1r3node_has_deploy_finalization_status)]
-use models::casper::v1::DeployFinalizationStatusResponse;
-#[cfg(f1r3node_has_listen_for_data_at_name)]
-use models::casper::v1::ListeningNameDataResponse;
 use models::casper::{
     BlockQuery, BlocksQuery, BlocksQueryByHeight, BondStatusQuery, ContinuationAtNameQuery,
     DataAtNameByBlockQuery, DeployDataProto, ExploratoryDeployQuery, FindDeployQuery,
     IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery, PrivateNamePreviewQuery,
     ReportQuery, Status, VisualizeDagQuery,
 };
-#[cfg(f1r3node_has_deploy_finalization_status)]
-use models::casper::DeployFinalizationStatusQuery;
-#[cfg(f1r3node_has_listen_for_data_at_name)]
-use models::casper::DataAtNameQuery;
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Server;
