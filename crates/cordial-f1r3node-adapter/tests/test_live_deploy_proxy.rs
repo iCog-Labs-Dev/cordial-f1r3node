@@ -3,12 +3,13 @@ use std::sync::Arc;
 
 use cordial_f1r3node_adapter::live_deploy_proxy::LiveDeployProxy;
 use models::casper::v1::{
-    deploy_response, deploy_service_server::{DeployService, DeployServiceServer},
-    status_response, BlockInfoResponse, BlockResponse, BondStatusResponse,
-    ContinuationAtNameResponse, DeployResponse, EventInfoResponse, ExploratoryDeployResponse,
-    FindDeployResponse, IsFinalizedResponse, LastFinalizedBlockResponse,
-    ListeningNameDataResponse, MachineVerifyResponse, PrivateNamePreviewResponse, RhoDataResponse,
-    StatusResponse, VisualizeBlocksResponse,
+    BlockInfoResponse, BlockResponse, BondStatusResponse, ContinuationAtNameResponse,
+    DeployResponse, EventInfoResponse, ExploratoryDeployResponse, FindDeployResponse,
+    IsFinalizedResponse, LastFinalizedBlockResponse, ListeningNameDataResponse,
+    MachineVerifyResponse, PrivateNamePreviewResponse, RhoDataResponse, StatusResponse,
+    VisualizeBlocksResponse, deploy_response,
+    deploy_service_server::{DeployService, DeployServiceServer},
+    status_response,
 };
 use models::casper::{
     BlockQuery, BlocksQuery, BlocksQueryByHeight, BondStatusQuery, ContinuationAtNameQuery,
@@ -244,7 +245,11 @@ async fn proxy_preserves_status_method_name_and_passthrough() {
         .await
         .unwrap();
 
-    let response = proxy.status(tonic::Request::new(())).await.unwrap().into_inner();
+    let response = proxy
+        .status(tonic::Request::new(()))
+        .await
+        .unwrap()
+        .into_inner();
     match response.message {
         Some(status_response::Message::Status(status)) => {
             assert_eq!(status.address, "proxy-upstream");

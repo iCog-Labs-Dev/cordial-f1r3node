@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use casper::rust::util::construct_deploy;
 use clap::Parser;
-use models::rust::casper::protocol::casper_message::DeployData as ModelDeployData;
 use models::casper::v1::{deploy_response, deploy_service_client::DeployServiceClient};
+use models::rust::casper::protocol::casper_message::DeployData as ModelDeployData;
 use tonic::transport::Endpoint;
 
 #[derive(Debug, Parser)]
@@ -35,8 +35,8 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let endpoint =
-        Endpoint::from_shared(args.grpc_url.clone()).context("invalid grpc url for deploy submitter")?;
+    let endpoint = Endpoint::from_shared(args.grpc_url.clone())
+        .context("invalid grpc url for deploy submitter")?;
     let channel = endpoint
         .connect()
         .await
