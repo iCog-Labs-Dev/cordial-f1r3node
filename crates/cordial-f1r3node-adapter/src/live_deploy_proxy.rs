@@ -1,18 +1,25 @@
 use std::sync::Arc;
 
+#[cfg(f1r3node_has_listen_for_data_at_name)]
+use models::casper::DataAtNameQuery;
+#[cfg(f1r3node_has_deploy_finalization_status)]
+use models::casper::DeployFinalizationStatusQuery;
+#[cfg(f1r3node_has_deploy_finalization_status)]
+use models::casper::v1::DeployFinalizationStatusResponse;
+#[cfg(f1r3node_has_listen_for_data_at_name)]
+use models::casper::v1::ListeningNameDataResponse;
 use models::casper::v1::{
-    deploy_service_client::DeployServiceClient, deploy_service_server::DeployService,
     BlockInfoResponse, BlockResponse, BondStatusResponse, ContinuationAtNameResponse,
     DeployResponse, EventInfoResponse, ExploratoryDeployResponse, FindDeployResponse,
-    IsFinalizedResponse, LastFinalizedBlockResponse, ListeningNameDataResponse,
-    MachineVerifyResponse, PrivateNamePreviewResponse, RhoDataResponse, StatusResponse,
-    VisualizeBlocksResponse,
+    IsFinalizedResponse, LastFinalizedBlockResponse, MachineVerifyResponse,
+    PrivateNamePreviewResponse, RhoDataResponse, StatusResponse, VisualizeBlocksResponse,
+    deploy_service_client::DeployServiceClient, deploy_service_server::DeployService,
 };
 use models::casper::{
     BlockQuery, BlocksQuery, BlocksQueryByHeight, BondStatusQuery, ContinuationAtNameQuery,
-    DataAtNameByBlockQuery, DataAtNameQuery, DeployDataProto, ExploratoryDeployQuery,
-    FindDeployQuery, IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery,
-    PrivateNamePreviewQuery, ReportQuery, VisualizeDagQuery,
+    DataAtNameByBlockQuery, DeployDataProto, ExploratoryDeployQuery, FindDeployQuery,
+    IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery, PrivateNamePreviewQuery,
+    ReportQuery, VisualizeDagQuery,
 };
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
@@ -29,7 +36,9 @@ pub enum LiveDeployProxyError {
 impl std::fmt::Display for LiveDeployProxyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Transport(err) => write!(f, "failed to connect to upstream deploy service: {err}"),
+            Self::Transport(err) => {
+                write!(f, "failed to connect to upstream deploy service: {err}")
+            }
             Self::Status(err) => write!(f, "upstream deploy service call failed: {err}"),
         }
     }
@@ -45,7 +54,8 @@ pub struct LiveDeployProxy {
 
 impl LiveDeployProxy {
     pub async fn connect(uri: impl Into<String>) -> Result<Self, LiveDeployProxyError> {
-        let endpoint = Endpoint::from_shared(uri.into()).map_err(LiveDeployProxyError::Transport)?;
+        let endpoint =
+            Endpoint::from_shared(uri.into()).map_err(LiveDeployProxyError::Transport)?;
         let channel = endpoint
             .connect()
             .await
@@ -161,6 +171,7 @@ impl DeployService for LiveDeployProxy {
         Ok(tonic::Response::new(stream))
     }
 
+    #[cfg(f1r3node_has_listen_for_data_at_name)]
     async fn listen_for_data_at_name(
         &self,
         request: tonic::Request<DataAtNameQuery>,
@@ -169,6 +180,18 @@ impl DeployService for LiveDeployProxy {
             .lock()
             .await
             .listen_for_data_at_name(request)
+            .await
+    }
+
+    #[cfg(f1r3node_has_deploy_finalization_status)]
+    async fn deploy_finalization_status(
+        &self,
+        request: tonic::Request<DeployFinalizationStatusQuery>,
+    ) -> Result<tonic::Response<DeployFinalizationStatusResponse>, tonic::Status> {
+        self.upstream
+            .lock()
+            .await
+            .deploy_finalization_status(request)
             .await
     }
 
@@ -244,7 +267,12 @@ impl DeployService for LiveDeployProxy {
         &self,
         request: tonic::Request<BlocksQueryByHeight>,
     ) -> Result<tonic::Response<Self::getBlocksByHeightsStream>, tonic::Status> {
-        let response = self.upstream.lock().await.get_blocks_by_heights(request).await?;
+        let response = self
+            .upstream
+            .lock()
+            .await
+            .get_blocks_by_heights(request)
+            .await?;
         let stream = proxy_server_stream(response.into_inner()).await?;
         Ok(tonic::Response::new(stream))
     }
