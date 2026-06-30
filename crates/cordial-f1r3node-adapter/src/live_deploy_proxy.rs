@@ -3,17 +3,24 @@ use std::sync::Arc;
 use models::casper::v1::{
     BlockInfoResponse, BlockResponse, BondStatusResponse, ContinuationAtNameResponse,
     DeployResponse, EventInfoResponse, ExploratoryDeployResponse, FindDeployResponse,
-    IsFinalizedResponse, LastFinalizedBlockResponse, ListeningNameDataResponse,
-    MachineVerifyResponse, PrivateNamePreviewResponse, RhoDataResponse, StatusResponse,
-    VisualizeBlocksResponse, deploy_service_client::DeployServiceClient,
-    deploy_service_server::DeployService,
+    IsFinalizedResponse, LastFinalizedBlockResponse, MachineVerifyResponse,
+    PrivateNamePreviewResponse, RhoDataResponse, StatusResponse, VisualizeBlocksResponse,
+    deploy_service_client::DeployServiceClient, deploy_service_server::DeployService,
 };
+#[cfg(f1r3node_has_deploy_finalization_status)]
+use models::casper::v1::DeployFinalizationStatusResponse;
+#[cfg(f1r3node_has_listen_for_data_at_name)]
+use models::casper::v1::ListeningNameDataResponse;
 use models::casper::{
     BlockQuery, BlocksQuery, BlocksQueryByHeight, BondStatusQuery, ContinuationAtNameQuery,
-    DataAtNameByBlockQuery, DataAtNameQuery, DeployDataProto, ExploratoryDeployQuery,
-    FindDeployQuery, IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery,
-    PrivateNamePreviewQuery, ReportQuery, VisualizeDagQuery,
+    DataAtNameByBlockQuery, DeployDataProto, ExploratoryDeployQuery, FindDeployQuery,
+    IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery, PrivateNamePreviewQuery,
+    ReportQuery, VisualizeDagQuery,
 };
+#[cfg(f1r3node_has_deploy_finalization_status)]
+use models::casper::DeployFinalizationStatusQuery;
+#[cfg(f1r3node_has_listen_for_data_at_name)]
+use models::casper::DataAtNameQuery;
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Channel, Endpoint};
@@ -164,6 +171,7 @@ impl DeployService for LiveDeployProxy {
         Ok(tonic::Response::new(stream))
     }
 
+    #[cfg(f1r3node_has_listen_for_data_at_name)]
     async fn listen_for_data_at_name(
         &self,
         request: tonic::Request<DataAtNameQuery>,
@@ -172,6 +180,18 @@ impl DeployService for LiveDeployProxy {
             .lock()
             .await
             .listen_for_data_at_name(request)
+            .await
+    }
+
+    #[cfg(f1r3node_has_deploy_finalization_status)]
+    async fn deploy_finalization_status(
+        &self,
+        request: tonic::Request<DeployFinalizationStatusQuery>,
+    ) -> Result<tonic::Response<DeployFinalizationStatusResponse>, tonic::Status> {
+        self.upstream
+            .lock()
+            .await
+            .deploy_finalization_status(request)
             .await
     }
 
