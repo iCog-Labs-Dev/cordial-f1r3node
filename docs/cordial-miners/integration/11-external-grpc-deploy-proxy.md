@@ -28,6 +28,7 @@ unchanged.
 
 - `crates/cordial-f1r3node-adapter/src/live_deploy_proxy.rs`
 - `crates/cordial-f1r3node-adapter/src/bin/live_deploy_proxy.rs`
+- `crates/cordial-f1r3node-adapter/src/bin/submit_live_deploy.rs`
 - `crates/cordial-f1r3node-adapter/tests/test_live_deploy_proxy.rs`
 
 ## How it works
@@ -41,6 +42,11 @@ inside the node itself.
 
 ## Run
 
+Start a local `f1r3node` first so the proxy has a real upstream deploy
+service to forward into.
+
+Then start the proxy:
+
 ```bash
 cargo run -p cordial-f1r3node-adapter --bin live_deploy_proxy -- \
   --bind-addr 127.0.0.1:40411 \
@@ -49,6 +55,53 @@ cargo run -p cordial-f1r3node-adapter --bin live_deploy_proxy -- \
 
 Clients can then submit deploys to the proxy on `127.0.0.1:40411`, while the
 proxy forwards those deploys to the real node on `127.0.0.1:40401`.
+
+## Submit a live deploy
+
+Use the deploy submitter binary to send a valid secp256k1-signed deploy
+through the proxy:
+
+```bash
+cargo run -p cordial-f1r3node-adapter --bin submit_live_deploy -- \
+  --grpc-url http://127.0.0.1:40411
+```
+
+By default this uses the same canonical secp256k1 deploy construction path as
+`f1r3node`, so the upstream node can accept it as a real deploy rather than
+rejecting it as a malformed test payload.
+
+Useful optional flags:
+
+- `--term` — override the submitted Rholang term
+- `--phlo-price` — set the deploy phlo price
+- `--phlo-limit` — set the deploy phlo limit
+- `--shard-id` — choose the shard id
+- `--valid-after-block-number` — set the deploy validity floor
+
+Example:
+
+```bash
+cargo run -p cordial-f1r3node-adapter --bin submit_live_deploy -- \
+  --grpc-url http://127.0.0.1:40411 \
+  --term '@0!("hello cordial")'
+```
+
+## Expected result
+
+When the path is working correctly, the submitter should print a successful
+deploy response from the upstream node:
+
+```text
+Deploy accepted: Success!
+DeployId is: ...
+```
+
+This proves:
+
+- the client reached the Cordial proxy
+- the proxy observed the `doDeploy` request
+- the proxy forwarded the request upstream
+- the upstream `f1r3node` accepted the deploy
 
 ## Why this matters
 
