@@ -5,18 +5,26 @@ use cordial_f1r3node_adapter::live_deploy_proxy::LiveDeployProxy;
 use models::casper::v1::{
     BlockInfoResponse, BlockResponse, BondStatusResponse, ContinuationAtNameResponse,
     DeployResponse, EventInfoResponse, ExploratoryDeployResponse, FindDeployResponse,
-    IsFinalizedResponse, LastFinalizedBlockResponse, ListeningNameDataResponse,
-    MachineVerifyResponse, PrivateNamePreviewResponse, RhoDataResponse, StatusResponse,
-    VisualizeBlocksResponse, deploy_response,
+    IsFinalizedResponse, LastFinalizedBlockResponse, MachineVerifyResponse,
+    PrivateNamePreviewResponse, RhoDataResponse, StatusResponse, VisualizeBlocksResponse,
+    deploy_response,
     deploy_service_server::{DeployService, DeployServiceServer},
     status_response,
 };
+#[cfg(f1r3node_has_deploy_finalization_status)]
+use models::casper::v1::DeployFinalizationStatusResponse;
+#[cfg(f1r3node_has_listen_for_data_at_name)]
+use models::casper::v1::ListeningNameDataResponse;
 use models::casper::{
     BlockQuery, BlocksQuery, BlocksQueryByHeight, BondStatusQuery, ContinuationAtNameQuery,
-    DataAtNameByBlockQuery, DataAtNameQuery, DeployDataProto, ExploratoryDeployQuery,
-    FindDeployQuery, IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery,
-    PrivateNamePreviewQuery, ReportQuery, Status, VisualizeDagQuery,
+    DataAtNameByBlockQuery, DeployDataProto, ExploratoryDeployQuery, FindDeployQuery,
+    IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery, PrivateNamePreviewQuery,
+    ReportQuery, Status, VisualizeDagQuery,
 };
+#[cfg(f1r3node_has_deploy_finalization_status)]
+use models::casper::DeployFinalizationStatusQuery;
+#[cfg(f1r3node_has_listen_for_data_at_name)]
+use models::casper::DataAtNameQuery;
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Server;
@@ -84,11 +92,20 @@ impl DeployService for RecordingUpstream {
         Err(tonic::Status::unimplemented("getBlocks"))
     }
 
+    #[cfg(f1r3node_has_listen_for_data_at_name)]
     async fn listen_for_data_at_name(
         &self,
         _request: tonic::Request<DataAtNameQuery>,
     ) -> Result<tonic::Response<ListeningNameDataResponse>, tonic::Status> {
         Err(tonic::Status::unimplemented("listenForDataAtName"))
+    }
+
+    #[cfg(f1r3node_has_deploy_finalization_status)]
+    async fn deploy_finalization_status(
+        &self,
+        _request: tonic::Request<DeployFinalizationStatusQuery>,
+    ) -> Result<tonic::Response<DeployFinalizationStatusResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("deployFinalizationStatus"))
     }
 
     async fn get_data_at_name(
@@ -165,17 +182,17 @@ impl DeployService for RecordingUpstream {
         &self,
         _request: tonic::Request<()>,
     ) -> Result<tonic::Response<StatusResponse>, tonic::Status> {
+        let status = Status {
+            address: "proxy-upstream".to_string(),
+            network_id: "standalone-dev".to_string(),
+            shard_id: "root".to_string(),
+            peers: 0,
+            nodes: 0,
+            min_phlo_price: 1,
+            ..Default::default()
+        };
         Ok(tonic::Response::new(StatusResponse {
-            message: Some(status_response::Message::Status(Status {
-                version: None,
-                address: "proxy-upstream".to_string(),
-                network_id: "standalone-dev".to_string(),
-                shard_id: "root".to_string(),
-                peers: 0,
-                nodes: 0,
-                min_phlo_price: 1,
-                peer_list: vec![],
-            })),
+            message: Some(status_response::Message::Status(status)),
         }))
     }
 }
