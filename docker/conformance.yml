@@ -1,10 +1,8 @@
-name: cordial-f1r3node-conformance
-
 services:
   cordial-conformance:
     build:
       context: ../..
-      dockerfile: cordial-f1r3node/docker/Dockerfile
+      dockerfile: blocklace/docker/Dockerfile
       target: cordial-conformance
       args:
         CORDIAL_RUST_BASE: ${CORDIAL_RUST_BASE:-rust:slim-bookworm}

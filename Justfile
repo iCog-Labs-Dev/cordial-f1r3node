@@ -6,6 +6,7 @@ docker_standalone := "docker/standalone.yml"
 docker_prebuilt_standalone := "docker/prebuilt-standalone.yml"
 docker_conformance := "docker/conformance.yml"
 docker_four_node := "docker/four-node-intercept.yml"
+docker_four_node_cluster := "docker/four-node-cluster.yml"
 demo_data := "/tmp/cordial-f1r3node-demo"
 
 default:
@@ -53,6 +54,7 @@ demo-cordial-config: demo-cordial-env
     docker compose --env-file {{docker_env}} -f {{docker_prebuilt_standalone}} config >/dev/null
     docker compose --env-file {{docker_env}} -f {{docker_conformance}} config >/dev/null
     docker compose --env-file {{docker_env}} -f {{docker_four_node}} config >/dev/null
+    docker compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} config >/dev/null
     echo "Cordial Miners compose files are valid."
 
 demo-cordial-image-check: demo-cordial-env
@@ -116,11 +118,37 @@ demo-cordial-four-node-logs: demo-cordial-env
 demo-cordial-four-node-down: demo-cordial-env
     docker compose --env-file {{docker_env}} -f {{docker_four_node}} down -v
 
+demo-cordial-four-node-cluster-config: demo-cordial-env
+    docker compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} config >/dev/null
+    echo "Cordial Miners real four-node cluster compose file is valid."
+
+demo-cordial-four-node-cluster-up: demo-cordial-env demo-cordial-image-check
+    docker compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} up -d
+
+demo-cordial-four-node-cluster-wait:
+    timeout 300 bash -c 'for port in 55403 51403 52403 53403 54403; do until curl -fsS "http://127.0.0.1:${port}/api/status" >/dev/null; do sleep 5; done; done'
+
+demo-cordial-four-node-cluster-status:
+    for port in 55403 51403 52403 53403 54403; do echo "node http:${port}"; curl -s "http://127.0.0.1:${port}/api/status" | jq '{networkId,isValidator,isReady,peers,nodes,lastFinalizedBlockNumber}'; done
+
+demo-cordial-four-node-cluster-verify: demo-cordial-four-node-cluster-up
+    docker compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} run --rm cordial-four-node-cluster-verifier
+
+demo-cordial-four-node-cluster-blocks:
+    for port in 51403 52403 53403 54403; do echo "node http:${port}"; curl -s "http://127.0.0.1:${port}/api/blocks/10" | jq '[.[].blockInfo | {blockNumber,blockHash,sender,seqNum,deployCount,isFinalized}]'; done
+
+demo-cordial-four-node-cluster-logs: demo-cordial-env
+    docker compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} logs --tail=120 cordial-boot cordial-validator-1 cordial-validator-2 cordial-validator-3 cordial-validator-4
+
+demo-cordial-four-node-cluster-down: demo-cordial-env
+    docker compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} down -v
+
 demo-cordial-down: demo-cordial-env
     docker compose --env-file {{docker_env}} -f {{docker_standalone}} down -v
     docker compose --env-file {{docker_env}} -f {{docker_prebuilt_standalone}} down -v
     docker compose --env-file {{docker_env}} -f {{docker_conformance}} down -v
     docker compose --env-file {{docker_env}} -f {{docker_four_node}} down -v
+    docker compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} down -v
 
 demo-cordial-local-clean:
     rm -rf {{demo_data}}

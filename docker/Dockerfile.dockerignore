@@ -27,22 +27,22 @@
 !f1r3node/node/
 !f1r3node/node/**
 
-!cordial-f1r3node/
-!cordial-f1r3node/Cargo.toml
-!cordial-f1r3node/Cargo.lock
-!cordial-f1r3node/rust-toolchain.toml
-!cordial-f1r3node/rustfmt.toml
-!cordial-f1r3node/README.md
-!cordial-f1r3node/crates/
-!cordial-f1r3node/crates/**
-!cordial-f1r3node/docs/
-!cordial-f1r3node/docs/**
-!cordial-f1r3node/scripts/
-!cordial-f1r3node/scripts/**
+!blocklace/
+!blocklace/Cargo.toml
+!blocklace/Cargo.lock
+!blocklace/rust-toolchain.toml
+!blocklace/rustfmt.toml
+!blocklace/README.md
+!blocklace/crates/
+!blocklace/crates/**
+!blocklace/docs/
+!blocklace/docs/**
+!blocklace/scripts/
+!blocklace/scripts/**
 
 f1r3node/.git
 f1r3node/target
 f1r3node/node_modules
-cordial-f1r3node/.git
-cordial-f1r3node/target
-cordial-f1r3node/node_modules
+blocklace/.git
+blocklace/target
+blocklace/node_modules
