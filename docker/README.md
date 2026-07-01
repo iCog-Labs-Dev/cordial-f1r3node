@@ -22,26 +22,31 @@ Cordial Miners integration.
 | `standalone.yml` | Builds and starts one standalone node from the sibling `f1r3node` checkout plus this repository |
 | `prebuilt-standalone.yml` | Optional shortcut for a local image that was already built from the current integration branch |
 | `conformance.yml` | Runs the Cordial Miners conformance test suite inside Docker |
-| `four-node-intercept.yml` | Starts four local f1r3node runtimes and verifies their Cordial ordered views match |
+| `four-node-intercept.yml` | Starts four local f1r3node runtimes in local-intercept mode and verifies their Cordial ordered views match |
+| `four-node-cluster.yml` | Starts a real connected local cluster: bootstrap + four validators + verifier |
 | `conf/cordial-standalone.conf` | Minimal standalone node config |
 | `conf/cordial-four-node.conf` | Four-node local-intercept config for the KR convergence demo |
-| `genesis/cordial-bonds.txt` | Bonds the demo validator public key |
+| `conf/f1r3node-defaults.conf` | Upstream runtime defaults expected by the Rust node binary |
+| `conf/f1r3node-kamon.conf` | Upstream metrics/runtime config expected by the Rust node binary |
+| `genesis/cordial-bonds.txt` | Bonds the four demo validator public keys |
 | `genesis/cordial-wallets.txt` | Empty wallet file for the no-deploy standalone demo |
-| `scripts/verify-four-node-order.sh` | Containerized four-node ordered-view verifier |
+| `scripts/generate-four-node-cluster-certs.sh` | Generates local EC TLS certs for bootstrap + validators |
+| `scripts/verify-four-node-order.sh` | Containerized four-node ordered-view verifier for the local-intercept demo |
+| `scripts/verify-four-node-cluster.sh` | Containerized verifier for the real connected four-node cluster |
 
 ## Quick Commands
 
-From the `cordial-f1r3node` repository root:
+From the repository root:
 
 ```bash
 cp -n docker/.env.example docker/.env
-docker compose --env-file docker/.env -f docker/standalone.yml config
-docker compose --env-file docker/.env -f docker/conformance.yml run --rm cordial-conformance
-docker compose --env-file docker/.env -f docker/standalone.yml up -d --build
+docker-compose --env-file docker/.env -f docker/standalone.yml config
+docker-compose --env-file docker/.env -f docker/conformance.yml run --rm cordial-conformance
+docker-compose --env-file docker/.env -f docker/standalone.yml up -d --build
 curl -s http://127.0.0.1:40403/api/status | jq
 curl -s -X POST http://127.0.0.1:40405/api/propose
 curl -s http://127.0.0.1:40403/api/blocks/10 | jq
-docker compose --env-file docker/.env -f docker/standalone.yml down -v
+docker-compose --env-file docker/.env -f docker/standalone.yml down -v
 ```
 
 The `Justfile` wraps these commands as `just demo-cordial-*`.
@@ -63,10 +68,44 @@ already exists from the current integration branch, start at
 `just demo-cordial-four-node-config`.
 
 The four-node demo is a non-breaking logic prototype. It starts four local
-f1r3node runtimes with `--consensus cordial-miners`, triggers the same local
-proposal path on each runtime, then compares the ordered block views returned by
-`/api/blocks/10`. It does not replace f1r3node peer discovery or the production
-consensus networking layer.
+`f1r3node` runtimes with `--consensus cordial-miners`, each using its own bonded
+validator identity, then compares the ordered block views returned by
+`/api/blocks/10`. It does not replace `f1r3node` peer discovery or the
+production consensus networking layer.
+
+For the connected four-node cluster demo:
+
+```bash
+./docker/scripts/generate-four-node-cluster-certs.sh
+just demo-cordial-four-node-cluster-config
+just demo-cordial-four-node-cluster-up
+just demo-cordial-four-node-cluster-wait
+just demo-cordial-four-node-cluster-status
+just demo-cordial-four-node-cluster-verify
+just demo-cordial-four-node-cluster-blocks
+just demo-cordial-four-node-cluster-down
+```
+
+This path is heavier than the local-intercept demo. It launches:
+
+- one bootstrap node
+- four bonded validators with distinct validator keys
+- a verifier that checks:
+  - all validators joined the expected network
+  - validators are bonded
+  - validators are not isolated (`peers` / `nodes` visibility)
+  - finalized ordered views converge
+
+The real-cluster path now depends on local EC TLS certificates for each node.
+They are generated into `docker/certs/` by
+`docker/scripts/generate-four-node-cluster-certs.sh` and are intentionally kept
+out of git.
+
+If you rebuild the Docker image after changing runtime packaging, use:
+
+```bash
+docker-compose --env-file docker/.env -f docker/standalone.yml build cordial-standalone
+```
 
 The Dockerfile starts from `rust:slim-bookworm`, installs the f1r3node pinned
 `nightly-2026-02-09` toolchain with retry support, and removes local

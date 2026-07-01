@@ -1,2 +1,6 @@
 /target
+node_modules/
+docker/.env
+docker/certs/
+docker/keys/
 docs/cordial-miners/generated/

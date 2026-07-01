@@ -46,12 +46,14 @@ The compared projection is:
 }
 ```
 
-For this Docker KR demo, all four containers use the same demo validator key.
-That keeps the intercepted local input stream identical and makes the expected
-ordered view byte-for-byte comparable. The four-validator protocol behavior is
-tested separately by `crates/cordial-f1r3node-adapter/tests/conformance.rs`,
-which covers honest-majority finality, equivocation rejection, slash evidence,
-and tau prefix invariance.
+For this Docker KR demo, the four containers use four distinct bonded demo
+validator keys. That makes the run closer to a real multi-validator local
+cluster while still keeping the convergence check simple: after local proposal,
+the ordered block view exposed by each node should match. The broader
+four-validator protocol behavior is also covered by
+`crates/cordial-f1r3node-adapter/tests/conformance.rs`, which tests
+honest-majority finality, equivocation rejection, slash evidence, and tau
+prefix invariance.
 
 ## Commands
 

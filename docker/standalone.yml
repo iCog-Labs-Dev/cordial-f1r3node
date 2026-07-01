@@ -1,10 +1,8 @@
-name: cordial-f1r3node-standalone
-
 services:
   cordial-standalone:
     build:
       context: ../..
-      dockerfile: cordial-f1r3node/docker/Dockerfile
+      dockerfile: blocklace/docker/Dockerfile
       target: runtime
       args:
         CORDIAL_RUST_BASE: ${CORDIAL_RUST_BASE:-rust:slim-bookworm}
