@@ -24,7 +24,7 @@ services:
       - run
       - -s
       - --host=cordial-node-1
-      - --validator-private-key=${CORDIAL_FOUR_NODE_PRIVATE_KEY:-0101010101010101010101010101010101010101010101010101010101010101}
+      - --validator-private-key=${CORDIAL_FOUR_NODE_1_PRIVATE_KEY:-0101010101010101010101010101010101010101010101010101010101010101}
       - --allow-private-addresses
       - --no-upnp
       - --consensus
@@ -52,7 +52,7 @@ services:
       - run
       - -s
       - --host=cordial-node-2
-      - --validator-private-key=${CORDIAL_FOUR_NODE_PRIVATE_KEY:-0101010101010101010101010101010101010101010101010101010101010101}
+      - --validator-private-key=${CORDIAL_FOUR_NODE_2_PRIVATE_KEY:-0202020202020202020202020202020202020202020202020202020202020202}
       - --allow-private-addresses
       - --no-upnp
       - --consensus
@@ -80,7 +80,7 @@ services:
       - run
       - -s
       - --host=cordial-node-3
-      - --validator-private-key=${CORDIAL_FOUR_NODE_PRIVATE_KEY:-0101010101010101010101010101010101010101010101010101010101010101}
+      - --validator-private-key=${CORDIAL_FOUR_NODE_3_PRIVATE_KEY:-0303030303030303030303030303030303030303030303030303030303030303}
       - --allow-private-addresses
       - --no-upnp
       - --consensus
@@ -108,7 +108,7 @@ services:
       - run
       - -s
       - --host=cordial-node-4
-      - --validator-private-key=${CORDIAL_FOUR_NODE_PRIVATE_KEY:-0101010101010101010101010101010101010101010101010101010101010101}
+      - --validator-private-key=${CORDIAL_FOUR_NODE_4_PRIVATE_KEY:-0404040404040404040404040404040404040404040404040404040404040404}
       - --allow-private-addresses
       - --no-upnp
       - --consensus
