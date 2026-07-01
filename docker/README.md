@@ -25,7 +25,7 @@ Cordial Miners integration.
 | `four-node-intercept.yml` | Starts four local f1r3node runtimes and verifies their Cordial ordered views match |
 | `conf/cordial-standalone.conf` | Minimal standalone node config |
 | `conf/cordial-four-node.conf` | Four-node local-intercept config for the KR convergence demo |
-| `genesis/cordial-bonds.txt` | Bonds the demo validator public key |
+| `genesis/cordial-bonds.txt` | Bonds the four demo validator public keys |
 | `genesis/cordial-wallets.txt` | Empty wallet file for the no-deploy standalone demo |
 | `scripts/verify-four-node-order.sh` | Containerized four-node ordered-view verifier |
 
@@ -63,10 +63,10 @@ already exists from the current integration branch, start at
 `just demo-cordial-four-node-config`.
 
 The four-node demo is a non-breaking logic prototype. It starts four local
-f1r3node runtimes with `--consensus cordial-miners`, triggers the same local
-proposal path on each runtime, then compares the ordered block views returned by
-`/api/blocks/10`. It does not replace f1r3node peer discovery or the production
-consensus networking layer.
+`f1r3node` runtimes with `--consensus cordial-miners`, each using its own bonded
+validator identity, then compares the ordered block views returned by
+`/api/blocks/10`. It does not replace `f1r3node` peer discovery or the
+production consensus networking layer.
 
 The Dockerfile starts from `rust:slim-bookworm`, installs the f1r3node pinned
 `nightly-2026-02-09` toolchain with retry support, and removes local
