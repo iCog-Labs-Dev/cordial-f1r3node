@@ -457,9 +457,11 @@ fn ordered_block_identities_with_cache(
             return (Vec::new(), None);
         }
 
-        if let Some(leader) =
-            latest_single_validator_finalized_block_id_from_depths(&depths, validator, ES_WAVELENGTH)
-        {
+        if let Some(leader) = latest_single_validator_finalized_block_id_from_depths(
+            &depths,
+            validator,
+            ES_WAVELENGTH,
+        ) {
             let observed = blocklace
                 .observe(&leader)
                 .into_iter()
