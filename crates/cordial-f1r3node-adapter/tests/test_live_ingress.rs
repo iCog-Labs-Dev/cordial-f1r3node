@@ -410,6 +410,81 @@ fn latest_ordered_output_rejects_same_round_fork() {
 }
 
 #[test]
+fn last_finalized_block_hash_and_latest_ordered_output_agree_during_fork() {
+    let shard_conf = CasperShardConf {
+        shard_name: "root".to_string(),
+        max_number_of_parents: 16,
+        fault_tolerance_threshold: 0.333,
+        deploy_lifespan: 50,
+        min_phlo_price: 1,
+        ..CasperShardConf::default()
+    };
+
+    let signing_key = test_signing_key(41);
+    let creator = test_public_key(&signing_key);
+
+    let mut bonds = HashMap::new();
+    bonds.insert(NodeId(creator.clone()), 100);
+
+    let mut ingress =
+        LiveIngress::with_consensus_view(RecordingAdapter::default(), bonds, shard_conf, "root");
+
+    // Genesis block (round 0), no predecessors.
+    let genesis =
+        build_test_block_message_with_state(&creator, &[], &signing_key, "secp256k1", 0, 1);
+    ingress
+        .ingest_block_message(&genesis)
+        .expect("genesis should mirror");
+
+    // Two distinct blocks, same creator, same round (block_number = 2),
+    // both built on genesis — this is the equivocation scenario.
+    let fork_a = build_test_block_message_with_state(
+        &creator,
+        &[(genesis.block_hash.clone(), creator.clone())],
+        &signing_key,
+        "secp256k1",
+        1,
+        2,
+    );
+    let fork_b = build_test_block_message_with_state(
+        &creator,
+        &[(genesis.block_hash.clone(), creator.clone())],
+        &signing_key,
+        "secp256k1",
+        2,
+        2,
+    );
+
+    assert_ne!(
+        fork_a.block_hash, fork_b.block_hash,
+        "fork blocks must be distinct for this to actually be equivocation"
+    );
+
+    ingress
+        .ingest_block_message(&fork_a)
+        .expect("fork_a should mirror");
+    ingress
+        .ingest_block_message(&fork_b)
+        .expect("fork_b should mirror");
+
+    let last_finalized = ingress
+        .last_finalized_block_hash()
+        .expect("should not error");
+    let ordered_output = ingress.latest_ordered_output();
+
+    assert!(
+        last_finalized.is_none(),
+        "last_finalized_block_hash must be None during equivocation, got {:?}",
+        last_finalized
+    );
+    assert!(
+        ordered_output.anchor.is_none(),
+        "anchor must be None during equivocation, got {:?}",
+        ordered_output.anchor_hash()
+    );
+}
+
+#[test]
 fn latest_ordered_output_before_first_complete_wave() {
     let shard_conf = CasperShardConf {
         shard_name: "root".to_string(),
