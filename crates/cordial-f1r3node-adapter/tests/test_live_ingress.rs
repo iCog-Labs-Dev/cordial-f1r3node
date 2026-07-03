@@ -248,6 +248,247 @@ fn live_ingress_exposes_snapshot_and_finality_over_mirrored_state() {
     assert_eq!(snapshot.on_chain_state.active_validators.len(), 4);
 }
 
+#[test]
+fn latest_ordered_output_is_monotonic_across_batches() {
+    let shard_conf = CasperShardConf {
+        shard_name: "root".to_string(),
+        max_number_of_parents: 16,
+        fault_tolerance_threshold: 0.333,
+        deploy_lifespan: 50,
+        min_phlo_price: 1,
+        ..CasperShardConf::default()
+    };
+
+    let signing_key = test_signing_key(41);
+    let creator = test_public_key(&signing_key);
+
+    let mut bonds = HashMap::new();
+    bonds.insert(NodeId(creator.clone()), 100);
+
+    let mut ingress =
+        LiveIngress::with_consensus_view(RecordingAdapter::default(), bonds, shard_conf, "root");
+
+    // Build 6 sequential blocks forming 2 waves (wavelength=3).
+    // Each block references the previous one as predecessor.
+    let mut blocks = Vec::new();
+    let mut prev_hash = Vec::new();
+    for i in 0..6u64 {
+        let parents = if i == 0 {
+            vec![]
+        } else {
+            vec![(prev_hash.clone(), creator.clone())]
+        };
+        let block_msg = build_test_block_message_with_state(
+            &creator,
+            &parents,
+            &signing_key,
+            "secp256k1",
+            i,
+            (i + 1) as u8,
+        );
+        prev_hash = block_msg.block_hash.clone();
+        blocks.push(block_msg);
+    }
+
+    // Batch 1: ingest first 3 blocks (completes wave 0).
+    for block_msg in &blocks[0..3] {
+        ingress
+            .ingest_block_message(block_msg)
+            .expect("batch 1 block should mirror");
+    }
+    let first_output = ingress.latest_ordered_output();
+
+    // Batch 2: ingest remaining 3 blocks (completes wave 1).
+    for block_msg in &blocks[3..6] {
+        ingress
+            .ingest_block_message(block_msg)
+            .expect("batch 2 block should mirror");
+    }
+    let second_output = ingress.latest_ordered_output();
+
+    // The first batch's blocks must be a prefix of the second batch's blocks.
+    assert!(
+        second_output.blocks.starts_with(&first_output.blocks),
+        "ordered output must be monotonic: first batch should be prefix of second. \
+         first_hashes={:?}, second_hashes={:?}",
+        first_output.block_hashes(),
+        second_output.block_hashes(),
+    );
+
+    // Sanity: after 2 full waves, both wave leaders are in the output.
+    assert!(
+        first_output
+            .blocks
+            .iter()
+            .any(|id| id.content_hash == blocks[0].block_hash.as_slice()),
+        "genesis (wave 0 leader) should be finalized after wave 0"
+    );
+    assert!(
+        second_output
+            .blocks
+            .iter()
+            .any(|id| id.content_hash == blocks[3].block_hash.as_slice()),
+        "block 3 (wave 1 leader) should be finalized after wave 1"
+    );
+}
+
+#[test]
+fn latest_ordered_output_rejects_same_round_fork() {
+    let shard_conf = CasperShardConf {
+        shard_name: "root".to_string(),
+        max_number_of_parents: 16,
+        fault_tolerance_threshold: 0.333,
+        deploy_lifespan: 50,
+        min_phlo_price: 1,
+        ..CasperShardConf::default()
+    };
+
+    let signing_key = test_signing_key(41);
+    let creator = test_public_key(&signing_key);
+
+    let mut bonds = HashMap::new();
+    bonds.insert(NodeId(creator.clone()), 100);
+
+    let mut ingress =
+        LiveIngress::with_consensus_view(RecordingAdapter::default(), bonds, shard_conf, "root");
+
+    // Genesis block (round 0), no predecessors.
+    let genesis = build_test_block_message_with_state(
+        &creator,
+        &[],
+        &signing_key,
+        "secp256k1",
+        0,
+        1,
+    );
+    ingress
+        .ingest_block_message(&genesis)
+        .expect("genesis should mirror");
+
+    // Two distinct blocks, same creator, same round (block_number = 2),
+    // both built on genesis. Distinct `i` index (1 vs 2) should be enough
+    // to produce distinct content hashes while landing in the same round —
+    // this is the equivocation scenario.
+    let fork_a = build_test_block_message_with_state(
+        &creator,
+        &[(genesis.block_hash.clone(), creator.clone())],
+        &signing_key,
+        "secp256k1",
+        1,
+        2,
+    );
+    let fork_b = build_test_block_message_with_state(
+        &creator,
+        &[(genesis.block_hash.clone(), creator.clone())],
+        &signing_key,
+        "secp256k1",
+        2,
+        2,
+    );
+
+    assert_ne!(
+        fork_a.block_hash, fork_b.block_hash,
+        "fork blocks must be distinct for this to actually be equivocation"
+    );
+
+    ingress
+        .ingest_block_message(&fork_a)
+        .expect("fork_a should mirror");
+    ingress
+        .ingest_block_message(&fork_b)
+        .expect("fork_b should mirror");
+
+    let output = ingress.latest_ordered_output();
+
+    // Equivocation must be terminal: no anchor, no ordered blocks — and
+    // critically, this must NOT silently fall through to a weighted_tau
+    // result that trusts the equivocating validator's frontier.
+    assert!(
+        output.anchor.is_none(),
+        "anchor must be None when the sole bonded validator has equivocated, got {:?}",
+        output.anchor_hash()
+    );
+    assert!(
+        output.blocks.is_empty(),
+        "blocks must be empty when the sole bonded validator has equivocated, got {:?}",
+        output.block_hashes()
+    );
+}
+
+#[test]
+fn latest_ordered_output_before_first_complete_wave() {
+    let shard_conf = CasperShardConf {
+        shard_name: "root".to_string(),
+        max_number_of_parents: 16,
+        fault_tolerance_threshold: 0.333,
+        deploy_lifespan: 50,
+        min_phlo_price: 1,
+        ..CasperShardConf::default()
+    };
+
+    let signing_key = test_signing_key(41);
+    let creator = test_public_key(&signing_key);
+
+    let mut bonds = HashMap::new();
+    bonds.insert(NodeId(creator.clone()), 100);
+
+    let mut ingress =
+        LiveIngress::with_consensus_view(RecordingAdapter::default(), bonds, shard_conf, "root");
+
+    // With no blocks ingested at all, the output must be empty and must
+    // not panic — this exercises the `leaders` non-empty but
+    // `compute_all_depths` empty edge before any wave exists.
+    let empty_output = ingress.latest_ordered_output();
+    assert!(empty_output.blocks.is_empty());
+    assert!(empty_output.anchor.is_none());
+
+    // Ingest only 2 of the 3 blocks needed to complete wave 0
+    // (wavelength = 3, so rounds 0..=2 must all be present and singular).
+    let genesis = build_test_block_message_with_state(
+        &creator,
+        &[],
+        &signing_key,
+        "secp256k1",
+        0,
+        1,
+    );
+    ingress
+        .ingest_block_message(&genesis)
+        .expect("genesis should mirror");
+
+    let round_two = build_test_block_message_with_state(
+        &creator,
+        &[(genesis.block_hash.clone(), creator.clone())],
+        &signing_key,
+        "secp256k1",
+        1,
+        2,
+    );
+    ingress
+        .ingest_block_message(&round_two)
+        .expect("round_two should mirror");
+
+    // Wave 0 needs rounds 0, 1, 2 — round 2 (block_number 3) is missing.
+    // This must not panic and should not fabricate a leader/blocks; it's
+    // the genuine "no complete wave yet" case that the single-validator
+    // fast path falls through on, deferring to weighted_tau.
+    let partial_output = ingress.latest_ordered_output();
+
+    // We don't assert a specific non-empty/empty outcome here since
+    // weighted_tau may or may not detect finality via self-ratification
+    // depending on core's exact semantics — the point of this test is that
+    // it completes without panicking and stays internally consistent:
+    // an anchor implies at least one block, and vice versa.
+    assert_eq!(
+        partial_output.anchor.is_some(),
+        !partial_output.blocks.is_empty(),
+        "anchor and blocks must agree on whether anything is finalized yet: \
+         anchor={:?}, blocks={:?}",
+        partial_output.anchor_hash(),
+        partial_output.block_hashes(),
+    );
+}
+
 #[derive(Default)]
 struct RecordingAdapter {
     received_blocks: Vec<Block>,
