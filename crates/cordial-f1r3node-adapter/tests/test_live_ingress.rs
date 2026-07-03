@@ -353,14 +353,8 @@ fn latest_ordered_output_rejects_same_round_fork() {
         LiveIngress::with_consensus_view(RecordingAdapter::default(), bonds, shard_conf, "root");
 
     // Genesis block (round 0), no predecessors.
-    let genesis = build_test_block_message_with_state(
-        &creator,
-        &[],
-        &signing_key,
-        "secp256k1",
-        0,
-        1,
-    );
+    let genesis =
+        build_test_block_message_with_state(&creator, &[], &signing_key, "secp256k1", 0, 1);
     ingress
         .ingest_block_message(&genesis)
         .expect("genesis should mirror");
@@ -444,14 +438,8 @@ fn latest_ordered_output_before_first_complete_wave() {
 
     // Ingest only 2 of the 3 blocks needed to complete wave 0
     // (wavelength = 3, so rounds 0..=2 must all be present and singular).
-    let genesis = build_test_block_message_with_state(
-        &creator,
-        &[],
-        &signing_key,
-        "secp256k1",
-        0,
-        1,
-    );
+    let genesis =
+        build_test_block_message_with_state(&creator, &[], &signing_key, "secp256k1", 0, 1);
     ingress
         .ingest_block_message(&genesis)
         .expect("genesis should mirror");
