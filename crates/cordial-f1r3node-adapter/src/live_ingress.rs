@@ -40,7 +40,6 @@ use crate::block_translation::BlockMessage;
 use crate::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
 use crate::ordered_output::OrderedFinalizedOutput;
 use crate::shard_conf::CasperShardConf;
-use crate::ordered_output::OrderedFinalizedOutput;
 use crate::snapshot::{
     CasperSnapshot, SnapshotError, build_snapshot, latest_finalized_block_id,
     ordered_finalized_block_hashes_with_cache, ordered_finalized_output,
