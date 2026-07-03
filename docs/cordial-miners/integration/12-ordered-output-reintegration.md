@@ -200,3 +200,9 @@ This note establishes that:
 - the cleanest first seam is post-finality ordered-output export
 - proposer replacement or deploy-driven control should come later, after
   ordered output has a stable consumer boundary
+
+## See Also
+
+- [13-ordered-output-export.md](./13-ordered-output-export.md) — documents
+  the stable `OrderedFinalizedOutput` export type and how the adapter
+  exposes it
