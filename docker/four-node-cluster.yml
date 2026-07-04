@@ -1,9 +1,10 @@
-name: cordial-f1r3node-four-node-cluster
-
 x-cordial-node-common: &cordial-node-common
   image: ${CORDIAL_F1R3NODE_IMAGE:-cordial-f1r3node:local}
+  entrypoint:
+    - /opt/docker/bin/node
   user: root
   restart: unless-stopped
+  tty: true
   networks:
     - cordial-real-four-node
   environment:
@@ -22,19 +23,18 @@ services:
     container_name: ${CORDIAL_BOOTSTRAP_HOST:-cordial-boot}
     command:
       - run
+      - --config-file=/var/lib/rnode/rnode.conf
+      - --tls-key-path=/var/lib/rnode/node.key.pem
+      - --tls-certificate-path=/var/lib/rnode/node.certificate.pem
+      - --bonds-file=/var/lib/rnode/genesis/bonds.txt
+      - --wallets-file=/var/lib/rnode/genesis/wallets.txt
       - --host=${CORDIAL_BOOTSTRAP_HOST:-cordial-boot}
       - --bootstrap=rnode://${CORDIAL_BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${CORDIAL_BOOTSTRAP_HOST:-cordial-boot}?protocol=40400&discovery=40404
       - --allow-private-addresses
-      - --validator-private-key=${CORDIAL_BOOTSTRAP_PRIVATE_KEY:-5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657}
       - --required-signatures
       - "3"
       - --ceremony-master-mode
       - --heartbeat-disabled
-      - --consensus
-      - cordial-miners
-      - --native-token-name=${NATIVE_TOKEN_NAME:-F1R3CAP}
-      - --native-token-symbol=${NATIVE_TOKEN_SYMBOL:-F1R3}
-      - --native-token-decimals=${NATIVE_TOKEN_DECIMALS:-8}
     ports:
       - "55400:40400"
       - "55401:40401"
@@ -44,11 +44,15 @@ services:
       - "55405:40405"
     volumes:
       - cordial-real-boot-data:/var/lib/rnode
+      - ./conf/f1r3node-defaults.conf:/opt/docker/node/src/main/resources/defaults.conf:ro
+      - ./conf/f1r3node-kamon.conf:/opt/docker/node/src/main/resources/kamon.conf:ro
       - ./conf/cordial-four-node-cluster.conf:/var/lib/rnode/rnode.conf:ro
       - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
       - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
-      - ../f1r3node/docker/certs/bootstrap/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
-      - ../f1r3node/docker/certs/bootstrap/node.key.pem:/var/lib/rnode/node.key.pem:ro
+      - ./certs/bootstrap/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
+      - ./certs/bootstrap/node.key.pem:/var/lib/rnode/node.key.pem:ro
+    environment:
+      CORDIAL_NODE_VALIDATOR_PRIVATE_KEY: ${CORDIAL_BOOTSTRAP_PRIVATE_KEY:-5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657}
 
   cordial-validator-1:
     <<: *cordial-node-common
@@ -58,17 +62,15 @@ services:
         condition: service_healthy
     command:
       - run
+      - --config-file=/var/lib/rnode/rnode.conf
+      - --tls-key-path=/var/lib/rnode/node.key.pem
+      - --tls-certificate-path=/var/lib/rnode/node.certificate.pem
+      - --bonds-file=/var/lib/rnode/genesis/bonds.txt
+      - --wallets-file=/var/lib/rnode/genesis/wallets.txt
       - --host=cordial-validator-1
       - --bootstrap=rnode://${CORDIAL_BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${CORDIAL_BOOTSTRAP_HOST:-cordial-boot}?protocol=40400&discovery=40404
       - --allow-private-addresses
-      - --validator-public-key=${CORDIAL_FOUR_NODE_1_PUBLIC_KEY:-041b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f70beaf8f588b541507fed6a642c5ab42dfdf8120a7f639de5122d47a69a8e8d1}
-      - --validator-private-key=${CORDIAL_FOUR_NODE_1_PRIVATE_KEY:-0101010101010101010101010101010101010101010101010101010101010101}
       - --genesis-validator
-      - --consensus
-      - cordial-miners
-      - --native-token-name=${NATIVE_TOKEN_NAME:-F1R3CAP}
-      - --native-token-symbol=${NATIVE_TOKEN_SYMBOL:-F1R3}
-      - --native-token-decimals=${NATIVE_TOKEN_DECIMALS:-8}
     ports:
       - "51400:40400"
       - "51401:40401"
@@ -78,9 +80,16 @@ services:
       - "51405:40405"
     volumes:
       - cordial-real-validator-1-data:/var/lib/rnode
+      - ./conf/f1r3node-defaults.conf:/opt/docker/node/src/main/resources/defaults.conf:ro
+      - ./conf/f1r3node-kamon.conf:/opt/docker/node/src/main/resources/kamon.conf:ro
       - ./conf/cordial-four-node-cluster.conf:/var/lib/rnode/rnode.conf:ro
       - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
       - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
+      - ./certs/validator1/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
+      - ./certs/validator1/node.key.pem:/var/lib/rnode/node.key.pem:ro
+    environment:
+      CORDIAL_NODE_VALIDATOR_PUBLIC_KEY: ${CORDIAL_FOUR_NODE_1_PUBLIC_KEY:-1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f70beaf8f588b541507fed6a642c5ab42dfdf8120a7f639de5122d47a69a8e8d1}
+      CORDIAL_NODE_VALIDATOR_PRIVATE_KEY: ${CORDIAL_FOUR_NODE_1_PRIVATE_KEY:-0101010101010101010101010101010101010101010101010101010101010101}
 
   cordial-validator-2:
     <<: *cordial-node-common
@@ -90,17 +99,15 @@ services:
         condition: service_healthy
     command:
       - run
+      - --config-file=/var/lib/rnode/rnode.conf
+      - --tls-key-path=/var/lib/rnode/node.key.pem
+      - --tls-certificate-path=/var/lib/rnode/node.certificate.pem
+      - --bonds-file=/var/lib/rnode/genesis/bonds.txt
+      - --wallets-file=/var/lib/rnode/genesis/wallets.txt
       - --host=cordial-validator-2
       - --bootstrap=rnode://${CORDIAL_BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${CORDIAL_BOOTSTRAP_HOST:-cordial-boot}?protocol=40400&discovery=40404
       - --allow-private-addresses
-      - --validator-public-key=${CORDIAL_FOUR_NODE_2_PUBLIC_KEY:-044d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d07662a3eada2d0fe208b6d257ceb0f064284662e857f57b66b54c198bd310ded36d0}
-      - --validator-private-key=${CORDIAL_FOUR_NODE_2_PRIVATE_KEY:-0202020202020202020202020202020202020202020202020202020202020202}
       - --genesis-validator
-      - --consensus
-      - cordial-miners
-      - --native-token-name=${NATIVE_TOKEN_NAME:-F1R3CAP}
-      - --native-token-symbol=${NATIVE_TOKEN_SYMBOL:-F1R3}
-      - --native-token-decimals=${NATIVE_TOKEN_DECIMALS:-8}
     ports:
       - "52400:40400"
       - "52401:40401"
@@ -110,9 +117,16 @@ services:
       - "52405:40405"
     volumes:
       - cordial-real-validator-2-data:/var/lib/rnode
+      - ./conf/f1r3node-defaults.conf:/opt/docker/node/src/main/resources/defaults.conf:ro
+      - ./conf/f1r3node-kamon.conf:/opt/docker/node/src/main/resources/kamon.conf:ro
       - ./conf/cordial-four-node-cluster.conf:/var/lib/rnode/rnode.conf:ro
       - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
       - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
+      - ./certs/validator2/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
+      - ./certs/validator2/node.key.pem:/var/lib/rnode/node.key.pem:ro
+    environment:
+      CORDIAL_NODE_VALIDATOR_PUBLIC_KEY: ${CORDIAL_FOUR_NODE_2_PUBLIC_KEY:-4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d07662a3eada2d0fe208b6d257ceb0f064284662e857f57b66b54c198bd310ded36d0}
+      CORDIAL_NODE_VALIDATOR_PRIVATE_KEY: ${CORDIAL_FOUR_NODE_2_PRIVATE_KEY:-0202020202020202020202020202020202020202020202020202020202020202}
 
   cordial-validator-3:
     <<: *cordial-node-common
@@ -122,17 +136,15 @@ services:
         condition: service_healthy
     command:
       - run
+      - --config-file=/var/lib/rnode/rnode.conf
+      - --tls-key-path=/var/lib/rnode/node.key.pem
+      - --tls-certificate-path=/var/lib/rnode/node.certificate.pem
+      - --bonds-file=/var/lib/rnode/genesis/bonds.txt
+      - --wallets-file=/var/lib/rnode/genesis/wallets.txt
       - --host=cordial-validator-3
       - --bootstrap=rnode://${CORDIAL_BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${CORDIAL_BOOTSTRAP_HOST:-cordial-boot}?protocol=40400&discovery=40404
       - --allow-private-addresses
-      - --validator-public-key=${CORDIAL_FOUR_NODE_3_PUBLIC_KEY:-04531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe3379e92c265e71e481ba82a84675a47ac705a200fcd524e92d93b0e7386f26a5458}
-      - --validator-private-key=${CORDIAL_FOUR_NODE_3_PRIVATE_KEY:-0303030303030303030303030303030303030303030303030303030303030303}
       - --genesis-validator
-      - --consensus
-      - cordial-miners
-      - --native-token-name=${NATIVE_TOKEN_NAME:-F1R3CAP}
-      - --native-token-symbol=${NATIVE_TOKEN_SYMBOL:-F1R3}
-      - --native-token-decimals=${NATIVE_TOKEN_DECIMALS:-8}
     ports:
       - "53400:40400"
       - "53401:40401"
@@ -142,9 +154,16 @@ services:
       - "53405:40405"
     volumes:
       - cordial-real-validator-3-data:/var/lib/rnode
+      - ./conf/f1r3node-defaults.conf:/opt/docker/node/src/main/resources/defaults.conf:ro
+      - ./conf/f1r3node-kamon.conf:/opt/docker/node/src/main/resources/kamon.conf:ro
       - ./conf/cordial-four-node-cluster.conf:/var/lib/rnode/rnode.conf:ro
       - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
       - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
+      - ./certs/validator3/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
+      - ./certs/validator3/node.key.pem:/var/lib/rnode/node.key.pem:ro
+    environment:
+      CORDIAL_NODE_VALIDATOR_PUBLIC_KEY: ${CORDIAL_FOUR_NODE_3_PUBLIC_KEY:-531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe3379e92c265e71e481ba82a84675a47ac705a200fcd524e92d93b0e7386f26a5458}
+      CORDIAL_NODE_VALIDATOR_PRIVATE_KEY: ${CORDIAL_FOUR_NODE_3_PRIVATE_KEY:-0303030303030303030303030303030303030303030303030303030303030303}
 
   cordial-validator-4:
     <<: *cordial-node-common
@@ -154,17 +173,15 @@ services:
         condition: service_healthy
     command:
       - run
+      - --config-file=/var/lib/rnode/rnode.conf
+      - --tls-key-path=/var/lib/rnode/node.key.pem
+      - --tls-certificate-path=/var/lib/rnode/node.certificate.pem
+      - --bonds-file=/var/lib/rnode/genesis/bonds.txt
+      - --wallets-file=/var/lib/rnode/genesis/wallets.txt
       - --host=cordial-validator-4
       - --bootstrap=rnode://${CORDIAL_BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${CORDIAL_BOOTSTRAP_HOST:-cordial-boot}?protocol=40400&discovery=40404
       - --allow-private-addresses
-      - --validator-public-key=${CORDIAL_FOUR_NODE_4_PUBLIC_KEY:-04462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b199c07969f5442000bea455d72ae826a86bfac9089cb18152ed756ebb2a596f5}
-      - --validator-private-key=${CORDIAL_FOUR_NODE_4_PRIVATE_KEY:-0404040404040404040404040404040404040404040404040404040404040404}
       - --genesis-validator
-      - --consensus
-      - cordial-miners
-      - --native-token-name=${NATIVE_TOKEN_NAME:-F1R3CAP}
-      - --native-token-symbol=${NATIVE_TOKEN_SYMBOL:-F1R3}
-      - --native-token-decimals=${NATIVE_TOKEN_DECIMALS:-8}
     ports:
       - "54400:40400"
       - "54401:40401"
@@ -174,9 +191,16 @@ services:
       - "54405:40405"
     volumes:
       - cordial-real-validator-4-data:/var/lib/rnode
+      - ./conf/f1r3node-defaults.conf:/opt/docker/node/src/main/resources/defaults.conf:ro
+      - ./conf/f1r3node-kamon.conf:/opt/docker/node/src/main/resources/kamon.conf:ro
       - ./conf/cordial-four-node-cluster.conf:/var/lib/rnode/rnode.conf:ro
       - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
       - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
+      - ./certs/validator4/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
+      - ./certs/validator4/node.key.pem:/var/lib/rnode/node.key.pem:ro
+    environment:
+      CORDIAL_NODE_VALIDATOR_PUBLIC_KEY: ${CORDIAL_FOUR_NODE_4_PUBLIC_KEY:-462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b199c07969f5442000bea455d72ae826a86bfac9089cb18152ed756ebb2a596f5}
+      CORDIAL_NODE_VALIDATOR_PRIVATE_KEY: ${CORDIAL_FOUR_NODE_4_PRIVATE_KEY:-0404040404040404040404040404040404040404040404040404040404040404}
 
   cordial-four-node-cluster-verifier:
     image: ${CORDIAL_F1R3NODE_IMAGE:-cordial-f1r3node:local}

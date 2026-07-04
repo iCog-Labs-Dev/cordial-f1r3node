@@ -1,5 +1,3 @@
-name: cordial-f1r3node-four-node-intercept
-
 x-cordial-node-common: &cordial-node-common
   image: ${CORDIAL_F1R3NODE_IMAGE:-cordial-f1r3node:local}
   user: root
