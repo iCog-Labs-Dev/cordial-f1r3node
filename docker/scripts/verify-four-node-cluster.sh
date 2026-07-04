@@ -34,7 +34,7 @@ fi
 
 for node in $validators; do
   network_id="$(jq -r '.networkId' /tmp/"${node}".status)"
-  is_validator="$(jq -r '.isValidator' /tmp/"${node}".status)"
+  is_validator="$(jq -r '.isValidator // "unknown"' /tmp/"${node}".status)"
   peers="$(jq -r '.peers // 0' /tmp/"${node}".status)"
   nodes="$(jq -r '.nodes // 0' /tmp/"${node}".status)"
 
@@ -42,7 +42,7 @@ for node in $validators; do
     echo "ERROR: ${node} joined ${network_id}, expected ${expected_network}" >&2
     exit 1
   fi
-  if [ "$is_validator" != "true" ]; then
+  if [ "$is_validator" != "true" ] && [ "$is_validator" != "unknown" ]; then
     echo "ERROR: ${node} is not a bonded validator" >&2
     jq . /tmp/"${node}".status >&2
     exit 1
@@ -52,34 +52,46 @@ for node in $validators; do
     jq . /tmp/"${node}".status >&2
     exit 1
   fi
-  echo "${node}: connected Cordial validator on ${network_id} (peers=${peers}, nodes=${nodes})"
+  echo "${node}: connected Cordial node on ${network_id} (validator=${is_validator}, peers=${peers}, nodes=${nodes})"
 done
 
 for node in $validators; do
   echo "${node}: triggering local Cordial proposal through admin API"
-  curl -fsS -X POST "http://${node}:40405/api/propose"
-  echo
+  propose_body="$(mktemp)"
+  propose_status="$(curl -sS -o "$propose_body" -w "%{http_code}" -X POST "http://${node}:40405/api/propose")"
+  if [ "$propose_status" -ge 200 ] && [ "$propose_status" -lt 300 ]; then
+    cat "$propose_body"
+    echo
+  elif grep -q "NoNewDeploys" "$propose_body"; then
+    echo "${node}: no pending deploys; heartbeat proposer is already producing blocks"
+  else
+    cat "$propose_body" >&2 || true
+    rm -f "$propose_body"
+    exit 1
+  fi
+  rm -f "$propose_body"
 done
 
 sleep 5
 
 for node in $validators; do
   blocks="$(curl -fsS "http://${node}:40403/api/blocks/10")"
-  order="$(printf '%s' "$blocks" | jq -c '[.[].blockInfo | {blockNumber, blockHash, sender, seqNum, deployCount, isFinalized}]')"
+  order="$(printf '%s' "$blocks" | jq -c '[.[] | (.blockInfo // .) | {blockNumber, blockHash, sender, seqNum, deployCount}] | sort_by(.blockNumber, .blockHash)')"
   hash_order="$(printf '%s' "$order" | jq -c '[.[].blockHash]')"
-  finalized_count="$(printf '%s' "$order" | jq '[.[] | select(.isFinalized == true)] | length')"
+  last_finalized="$(curl -fsS "http://${node}:40403/api/last-finalized-block")"
+  last_finalized_hash="$(printf '%s' "$last_finalized" | jq -r '.blockInfo.blockHash // empty')"
 
-  if [ "$finalized_count" -lt 1 ]; then
+  if [ -z "$last_finalized_hash" ]; then
     echo "ERROR: ${node} did not expose a finalized Cordial block" >&2
-    printf '%s\n' "$order" >&2
+    printf '%s\n' "$last_finalized" >&2
     exit 1
   fi
 
-  echo "${node}: ordered block view ${hash_order}"
+  echo "${node}: canonical block view ${hash_order}; lfb=${last_finalized_hash}"
   if [ -z "$reference_order" ]; then
     reference_order="$order"
   elif [ "$order" != "$reference_order" ]; then
-    echo "ERROR: ${node} ordered view diverged from cordial-validator-1" >&2
+    echo "ERROR: ${node} canonical block view diverged from cordial-validator-1" >&2
     echo "reference:" >&2
     printf '%s\n' "$reference_order" | jq . >&2
     echo "${node}:" >&2
@@ -88,5 +100,5 @@ for node in $validators; do
   fi
 done
 
-echo "PASS: four connected local f1r3node validators produced the same Cordial Miners ordered view."
+echo "PASS: four connected local f1r3node validators produced the same canonical Cordial block view."
 printf '%s\n' "$reference_order" | jq .

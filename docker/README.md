@@ -101,6 +101,21 @@ They are generated into `docker/certs/` by
 `docker/scripts/generate-four-node-cluster-certs.sh` and are intentionally kept
 out of git.
 
+## Docker CLI Compatibility
+
+Some environments provide the legacy `docker-compose` command instead of
+`docker compose`. If a `Justfile` recipe fails with an error such as
+`unknown flag: --env-file`, run the equivalent command directly with
+`docker-compose`.
+
+Example cluster shutdown:
+
+```bash
+docker-compose --env-file docker/.env -f docker/four-node-cluster.yml down -v
+```
+
+The `cp -n` warning that may appear while creating `docker/.env` is harmless.
+
 If you rebuild the Docker image after changing runtime packaging, use:
 
 ```bash
