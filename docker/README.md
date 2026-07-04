@@ -22,7 +22,8 @@ Cordial Miners integration.
 | `standalone.yml` | Builds and starts one standalone node from the sibling `f1r3node` checkout plus this repository |
 | `prebuilt-standalone.yml` | Optional shortcut for a local image that was already built from the current integration branch |
 | `conformance.yml` | Runs the Cordial Miners conformance test suite inside Docker |
-| `four-node-intercept.yml` | Starts four local f1r3node runtimes and verifies their Cordial ordered views match |
+| `four-node-intercept.yml` | Starts four local f1r3node runtimes in local-intercept mode and verifies their Cordial ordered views match |
+| `four-node-cluster.yml` | Starts a real connected local cluster: bootstrap + four validators + verifier |
 | `conf/cordial-standalone.conf` | Minimal standalone node config |
 | `conf/cordial-four-node.conf` | Four-node local-intercept config for the KR convergence demo |
 | `genesis/cordial-bonds.txt` | Bonds the four demo validator public keys |
@@ -67,6 +68,28 @@ The four-node demo is a non-breaking logic prototype. It starts four local
 validator identity, then compares the ordered block views returned by
 `/api/blocks/10`. It does not replace `f1r3node` peer discovery or the
 production consensus networking layer.
+
+For the connected four-node cluster demo:
+
+```bash
+just demo-cordial-four-node-cluster-config
+just demo-cordial-four-node-cluster-up
+just demo-cordial-four-node-cluster-wait
+just demo-cordial-four-node-cluster-status
+just demo-cordial-four-node-cluster-verify
+just demo-cordial-four-node-cluster-blocks
+just demo-cordial-four-node-cluster-down
+```
+
+This path is heavier than the local-intercept demo. It launches:
+
+- one bootstrap node
+- four bonded validators with distinct validator keys
+- a verifier that checks:
+  - all validators joined the expected network
+  - validators are bonded
+  - validators are not isolated (`peers` / `nodes` visibility)
+  - finalized ordered views converge
 
 The Dockerfile starts from `rust:slim-bookworm`, installs the f1r3node pinned
 `nightly-2026-02-09` toolchain with retry support, and removes local
