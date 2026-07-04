@@ -125,6 +125,9 @@ demo-cordial-four-node-cluster-config: demo-cordial-env
 demo-cordial-four-node-cluster-up: demo-cordial-env demo-cordial-image-check
     docker compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} up -d
 
+demo-cordial-four-node-cluster-up-legacy: demo-cordial-env
+    docker-compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} up
+
 demo-cordial-four-node-cluster-wait:
     timeout 300 bash -c 'for port in 55403 51403 52403 53403 54403; do until curl -fsS "http://127.0.0.1:${port}/api/status" >/dev/null; do sleep 5; done; done'
 
@@ -142,6 +145,9 @@ demo-cordial-four-node-cluster-logs: demo-cordial-env
 
 demo-cordial-four-node-cluster-down: demo-cordial-env
     docker compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} down -v
+
+demo-cordial-four-node-cluster-down-legacy: demo-cordial-env
+    docker-compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} down -v
 
 demo-cordial-down: demo-cordial-env
     docker compose --env-file {{docker_env}} -f {{docker_standalone}} down -v
