@@ -87,6 +87,9 @@ RUN mkdir -p /opt/docker/bin /var/lib/rnode && \
 
 COPY --from=node-builder --chmod=755 /build/node-binary /opt/docker/bin/node
 COPY --from=node-builder --chmod=755 /build/f1r3node/node/docker-entrypoint-rust.sh /opt/docker/bin/docker-entrypoint.sh
+COPY --from=node-builder /build/f1r3node/node/src/main/resources /opt/docker/node/src/main/resources
+COPY --from=node-builder /build/f1r3node/casper/src/main/resources /opt/docker/casper/src/main/resources
+COPY --from=node-builder /build/f1r3node/rholang/examples /opt/docker/rholang/examples
 
 EXPOSE 40400 40401 40402 40403 40404 40405
 
