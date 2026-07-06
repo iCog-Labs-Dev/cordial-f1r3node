@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ASI Chain · Cordial Miners — Q1 Execution Report</title>
+<title>ASI Chain · Cordial Miners  Q1 Execution Report</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -48,7 +48,7 @@ a{color:inherit;}
 
 .deck{
   position:relative; z-index:2;
-  height:100vh; width:100vw;
+  height:100vh; height:100svh; height:100dvh; width:100vw;
   overflow-y:scroll; scroll-snap-type:y mandatory;
   scroll-behavior:smooth;
   scrollbar-width:none;
@@ -59,7 +59,7 @@ a{color:inherit;}
   --scroll-progress:0;
   --scroll-drift:0px;
   position:relative;
-  min-height:100vh; width:100%;
+  min-height:100vh; min-height:100svh; min-height:100dvh; width:100%;
   scroll-snap-align:start;
   display:flex; align-items:center; justify-content:center;
   padding:8vh 7vw;
@@ -186,6 +186,263 @@ a{color:inherit;}
 .two-col{display:grid; grid-template-columns:1fr 1fr; gap:2.5rem; align-items:center;}
 .diagram-wrap{display:flex; align-items:center; justify-content:center;}
 
+.generalize-scene{
+  display:grid;
+  grid-template-columns:minmax(250px,.84fr) 132px minmax(390px,1.26fr);
+  gap:1.05rem;
+  align-items:center;
+  margin-top:1.6rem;
+}
+.generalize-panel{
+  position:relative;
+  min-height:368px;
+  padding:1rem 1rem 1.05rem;
+  border-radius:22px;
+  border:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(255,255,255,0.03),rgba(17,21,27,0.96));
+  overflow:hidden;
+  isolation:isolate;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);
+  transition:transform .28s linear, box-shadow .35s ease, border-color .35s ease;
+}
+.generalize-panel::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.025), transparent 26%),
+    repeating-linear-gradient(90deg, transparent 0 32px, rgba(255,255,255,0.018) 32px 33px),
+    repeating-linear-gradient(0deg, transparent 0 32px, rgba(255,255,255,0.018) 32px 33px);
+  opacity:.28;
+}
+.generalize-panel.chain{
+  background:
+    radial-gradient(circle at 50% 8%, rgba(255,182,72,0.16), transparent 42%),
+    linear-gradient(180deg, rgba(255,182,72,0.05), rgba(18,21,26,0.96));
+}
+.generalize-panel.dag{
+  background:
+    radial-gradient(circle at 56% 4%, rgba(44,232,209,0.17), transparent 44%),
+    radial-gradient(circle at 82% 80%, rgba(255,90,43,0.09), transparent 26%),
+    linear-gradient(180deg, rgba(44,232,209,0.04), rgba(18,21,26,0.97));
+}
+.generalize-header{
+  position:relative;
+  z-index:2;
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:1rem;
+}
+.generalize-caption{
+  margin-top:.35rem;
+  max-width:320px;
+  font-size:.82rem;
+  line-height:1.5;
+  color:var(--text-dim);
+}
+.generalize-chip{
+  flex:none;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:.36rem .72rem;
+  border-radius:999px;
+  border:1px solid rgba(255,182,72,0.22);
+  background:rgba(255,182,72,0.08);
+  color:var(--amber);
+  font-family:var(--font-mono);
+  font-size:.66rem;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+}
+.generalize-chip.accent{
+  border-color:rgba(44,232,209,0.22);
+  background:rgba(44,232,209,0.08);
+  color:var(--cyan);
+}
+.generalize-svg{
+  position:relative;
+  z-index:2;
+  display:block;
+  width:100%;
+  height:258px;
+  margin-top:.8rem;
+  overflow:visible;
+}
+.generalize-subtag{
+  position:relative;
+  z-index:2;
+  display:inline-flex;
+  align-items:center;
+  gap:.45rem;
+  margin-top:.25rem;
+  padding:.38rem .7rem;
+  border-radius:999px;
+  border:1px solid rgba(44,232,209,0.15);
+  background:rgba(12,14,17,0.72);
+  color:var(--text-dim);
+  font-size:.75rem;
+}
+.generalize-subtag::before{
+  content:"";
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:var(--cyan);
+  box-shadow:0 0 10px rgba(44,232,209,0.45);
+}
+.generalize-pivot{
+  display:grid;
+  justify-items:center;
+  gap:.75rem;
+  align-self:center;
+}
+.generalize-orbit{
+  position:relative;
+  width:112px;
+  height:112px;
+  border-radius:50%;
+  display:grid;
+  place-items:center;
+  border:1px solid rgba(255,255,255,0.08);
+  background:
+    radial-gradient(circle at 50% 35%, rgba(255,90,43,0.18), transparent 44%),
+    radial-gradient(circle at 50% 70%, rgba(44,232,209,0.12), transparent 58%),
+    rgba(18,21,26,0.92);
+  box-shadow:inset 0 0 24px rgba(255,255,255,0.03), 0 18px 40px rgba(0,0,0,0.2);
+  overflow:hidden;
+}
+.generalize-orbit::before{
+  content:"";
+  position:absolute;
+  inset:10px;
+  border:1px dashed rgba(255,255,255,0.12);
+  border-radius:50%;
+  animation:spin 16s linear infinite;
+}
+.generalize-orbit::after{
+  content:"";
+  position:absolute;
+  width:12px;
+  height:12px;
+  border-radius:50%;
+  top:50%;
+  left:50%;
+  transform:translate(-50%,-50%) rotate(0deg) translateY(-40px);
+  background:var(--cyan);
+  box-shadow:0 0 12px rgba(44,232,209,0.55);
+  animation:orbit 4.8s linear infinite;
+}
+.generalize-big{
+  position:relative;
+  z-index:1;
+  text-align:center;
+  font-family:var(--font-display);
+  font-weight:700;
+  font-size:1.03rem;
+  line-height:1.05;
+}
+.generalize-big span{color:var(--cyan);}
+.generalize-pivot p{
+  max-width:132px;
+  text-align:center;
+  font-size:.79rem;
+  line-height:1.45;
+  color:var(--text-dim);
+}
+.generalize-notes{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:.8rem;
+  margin-top:.9rem;
+}
+.generalize-note{
+  position:relative;
+  overflow:hidden;
+  padding:.92rem 1rem;
+  border-radius:15px;
+  border:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01));
+}
+.generalize-note strong{
+  display:block;
+  margin:.22rem 0 .32rem;
+  font-family:var(--font-display);
+  font-size:.92rem;
+  color:var(--text);
+}
+.generalize-note span{
+  display:block;
+  font-size:.8rem;
+  line-height:1.5;
+  color:var(--text-dim);
+}
+.g-edge{
+  fill:none;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  stroke-width:2.2;
+  stroke-dasharray:100;
+  stroke-dashoffset:100;
+  opacity:.78;
+}
+.g-edge.chain{stroke:rgba(255,182,72,0.7);}
+.g-edge.branch{stroke:rgba(255,90,43,0.38);}
+.g-edge.support{stroke:rgba(255,255,255,0.18);}
+.g-edge.highlight{
+  stroke:var(--cyan);
+  stroke-width:2.8;
+  filter:drop-shadow(0 0 8px rgba(44,232,209,0.34));
+}
+.g-flow{
+  fill:none;
+  stroke-linecap:round;
+  stroke-width:2.4;
+  stroke-dasharray:9 15;
+  opacity:0;
+}
+.g-flow.chain{stroke:var(--amber);}
+.g-flow.highlight{stroke:var(--cyan);}
+.g-node{
+  fill:#0d1117;
+  stroke-width:2.3;
+  opacity:0;
+  transform-box:fill-box;
+  transform-origin:center;
+}
+.g-node.chain{stroke:var(--amber);}
+.g-node.branch{stroke:rgba(255,90,43,0.72);}
+.g-node.core{stroke:var(--cyan);}
+.g-node.tip{
+  stroke:var(--cyan);
+  filter:drop-shadow(0 0 14px rgba(44,232,209,0.36));
+}
+.g-halo{
+  fill:none;
+  stroke:rgba(44,232,209,0.2);
+  stroke-width:1.2;
+  opacity:0;
+  transform-box:fill-box;
+  transform-origin:center;
+}
+.g-text{
+  font-family:var(--font-mono);
+  font-size:10px;
+  letter-spacing:.08em;
+  fill:rgba(243,241,236,0.56);
+}
+.g-text.em{fill:var(--cyan);}
+.slide.in-view .g-edge{animation:edgeDraw .92s cubic-bezier(.2,.8,.2,1) forwards;}
+.slide.in-view .g-node{animation:nodeReveal .6s cubic-bezier(.2,.82,.22,1) forwards, nodePulse 3.6s ease-in-out infinite;}
+.slide.in-view .g-halo{animation:haloPulse 2.8s ease-in-out infinite;}
+.slide.in-view .g-flow{opacity:.92; animation:flowDash 3.6s linear .9s infinite;}
+.slide.is-active .generalize-panel{
+  transform:translate3d(0, calc(var(--scroll-drift) * -0.08), 0);
+  box-shadow:0 20px 40px rgba(0,0,0,0.22);
+}
+
 .reveal{opacity:0; filter:blur(8px); transform:translateY(20px) scale(.985); transition:opacity .8s cubic-bezier(.2,.7,.3,1), transform .8s cubic-bezier(.2,.7,.3,1), filter .8s cubic-bezier(.2,.7,.3,1);}
 .slide.in-view .reveal{opacity:1; filter:blur(0); transform:translateY(0) scale(1);}
 .reveal.d1{transition-delay:.05s;} .reveal.d2{transition-delay:.14s;} .reveal.d3{transition-delay:.22s;}
@@ -243,6 +500,33 @@ a{color:inherit;}
   28%{opacity:.6;}
   100%{opacity:0; transform:translateX(130%);}
 }
+@keyframes edgeDraw{
+  to{stroke-dashoffset:0;}
+}
+@keyframes nodeReveal{
+  from{opacity:0; transform:scale(.62);}
+  to{opacity:1; transform:scale(1);}
+}
+@keyframes nodePulse{
+  0%,100%{transform:scale(1);}
+  50%{transform:scale(1.08);}
+}
+@keyframes haloPulse{
+  0%,100%{opacity:.08; transform:scale(.88);}
+  50%{opacity:.56; transform:scale(1.08);}
+}
+@keyframes flowDash{
+  from{stroke-dashoffset:72;}
+  to{stroke-dashoffset:0;}
+}
+@keyframes spin{
+  from{transform:rotate(0deg);}
+  to{transform:rotate(360deg);}
+}
+@keyframes orbit{
+  from{transform:translate(-50%,-50%) rotate(0deg) translateY(-40px);}
+  to{transform:translate(-50%,-50%) rotate(360deg) translateY(-40px);}
+}
 
 /* ---------- chrome: progress / nav / counter ---------- */
 .progress-track{position:fixed; top:0; left:0; width:100%; height:2px; background:var(--line-soft); z-index:50;}
@@ -291,13 +575,52 @@ a{color:inherit;}
 }
 
 @media (max-width:820px){
+  .deck{
+    height:100svh;
+    height:100dvh;
+    scroll-snap-type:y proximity;
+  }
+  .slide{
+    min-height:100svh;
+    min-height:100dvh;
+    align-items:flex-start;
+    justify-content:flex-start;
+    padding:11vh 6vw 8vh;
+    overflow:visible;
+  }
+  .slide::before{
+    inset:2.75% 2.5%;
+    border-radius:20px;
+  }
+  .slide-inner{max-width:none;}
+  .kicker{flex-wrap:wrap; gap:.45rem; margin-bottom:1rem;}
+  .title{font-size:clamp(1.55rem,8.4vw,2.35rem); line-height:1.08;}
+  .lede{max-width:none; font-size:.95rem; line-height:1.62;}
+  .tag-row{gap:.45rem;}
+  .pill{max-width:100%;}
+  .stat-grid{grid-template-columns:1fr !important;}
+  .checklist{grid-template-columns:1fr !important;}
+  .card, .stat{padding:1.1rem 1rem;}
   .two-col{grid-template-columns:1fr; gap:1.6rem;}
+  .generalize-scene{grid-template-columns:1fr; gap:1rem;}
+  .generalize-panel{min-height:auto; padding:1rem .95rem;}
+  .generalize-svg{height:224px;}
+  .generalize-pivot{order:2;}
+  .generalize-pivot p{max-width:260px;}
+  .generalize-notes{grid-template-columns:1fr;}
+  .generalize-header{flex-direction:column; align-items:flex-start;}
+  .generalize-caption{max-width:none;}
+  .generalize-subtag{width:100%; justify-content:center; text-align:center;}
+  .table{display:block; overflow-x:auto; -webkit-overflow-scrolling:touch;}
+  .table th, .table td{white-space:nowrap;}
+  .rd-wrap{width:100%; margin-top:1.4rem;}
+  .rd-row, .rd-mini-row{width:100%; flex-wrap:wrap;}
+  .rd-box, .rd-box.rd-final{min-width:0; width:100%;}
+  .rd-connector{width:100%; text-align:center;}
   .section-num{display:none;}
-  .slide{padding:11vh 6vw 8vh;}
-  .checklist[style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr !important;}
   .flow{flex-direction:column; align-items:stretch;}
   .flow[style*="justify-content:space-between"]{justify-content:flex-start !important;}
-  .flow-step{white-space:normal; text-align:center;}
+  .flow-step{width:100%; white-space:normal; text-align:center;}
   .flow-arrow{align-self:center; transform:rotate(90deg);}
   .brandmark{font-size:.62rem; letter-spacing:.08em;}
   .counter{font-size:.68rem;}
@@ -306,7 +629,7 @@ a{color:inherit;}
 
 @media (prefers-reduced-motion: reduce){
   .deck{scroll-behavior:auto;}
-  .reveal, .slide-inner, .section-num, .card, .rd-box, .flow-step, .tag-row, .checklist li, .rd-wrap, .slide::before{
+  .reveal, .slide-inner, .section-num, .card, .rd-box, .flow-step, .tag-row, .checklist li, .rd-wrap, .slide::before, .generalize-panel, .g-edge, .g-node, .g-halo, .g-flow, .generalize-orbit::before, .generalize-orbit::after{
     transition:none !important;
     animation:none !important;
     transform:none !important;
@@ -334,7 +657,7 @@ a{color:inherit;}
   <div class="slide-inner">
     <div class="kicker reveal"><span class="dot"></span>QUARTER ONE EXECUTION REPORT</div>
     <h1 class="title reveal d1">ASI Chain<br><span class="accent">Cordial Miners</span></h1>
-    <p class="lede reveal d2">From blocklace theory to a <span style="color:var(--cyan)">f1r3node</span>‑ready consensus prototype — the full path from DAG construction to deterministic ordering, built and proven in Rust.</p>
+    <p class="lede reveal d2">From blocklace theory to a <span style="color:var(--cyan)">f1r3node</span>‑ready consensus prototype  the full path from DAG construction to deterministic ordering, built and proven in Rust.</p>
     <div class="tag-row reveal d3">
       <span class="pill"><span class="p-dot"></span>cordial-miners</span>
       <span class="pill"><span class="p-dot"></span>f1r3node</span>
@@ -364,7 +687,7 @@ a{color:inherit;}
   <div class="slide-inner">
     <div class="kicker reveal"><span class="idx">01</span><span class="dot"></span>INTRODUCTION</div>
     <h1 class="title reveal d1" style="font-size:clamp(1.9rem,3.6vw,2.8rem);">Theory made executable</h1>
-    <p class="lede reveal d2">This project turns Cordial Miners from protocol theory into a working Rust consensus prototype for the f1r3node ecosystem. We implemented the full path — blocklace DAG construction, validation, and equivocation‑aware finality — through to deterministic τ ordering, then extended it with live ingress adapters, deploy observation, persistence, and multi‑node validation. What exists now is not a paper model. It is a tested, integration‑ready consensus path.</p>
+    <p class="lede reveal d2">This project turns Cordial Miners from protocol theory into a working Rust consensus prototype for the f1r3node ecosystem. We implemented the full path  blocklace DAG construction, validation, and equivocation‑aware finality  through to deterministic τ ordering, then extended it with live ingress adapters, deploy observation, persistence, and multi‑node validation. What exists now is not a paper model. It is a tested, integration‑ready consensus path.</p>
     <div class="stat-grid reveal d3" style="margin-top:2.2rem;">
       <div class="stat"><div class="num">512</div><div class="label">tests passing</div></div>
       <div class="stat"><div class="num">3</div><div class="label">crate workspace</div></div>
@@ -375,7 +698,7 @@ a{color:inherit;}
   </div>
 </section>
 
-<!-- ============ SLIDE 4 : DIVIDER — WHAT IS A BLOCKLACE ============ -->
+<!-- ============ SLIDE 4 : DIVIDER  WHAT IS A BLOCKLACE ============ -->
 <section class="slide" id="s4">
   <div class="slide-inner" style="text-align:center;">
     <div class="kicker reveal" style="justify-content:center;"><span class="dot"></span>FOUNDATIONS</div>
@@ -391,7 +714,7 @@ a{color:inherit;}
     <div>
       <div class="kicker reveal"><span class="idx">02</span><span class="dot"></span>BLOCKLACE</div>
       <h1 class="title reveal d1" style="font-size:clamp(1.8rem,3.2vw,2.6rem);">A local view,<br>not a global chain</h1>
-      <p class="lede reveal d2">A blocklace is a local directed acyclic graph of blocks — not a single global chain. Each block can reference multiple predecessors, letting a node represent partial knowledge of the network exactly as it is seen.</p>
+      <p class="lede reveal d2">A blocklace is a local directed acyclic graph of blocks  not a single global chain. Each block can reference multiple predecessors, letting a node represent partial knowledge of the network exactly as it is seen.</p>
     </div>
     <div class="diagram-wrap reveal d3">
       <svg viewBox="0 0 360 300" width="100%" style="max-width:380px;">
@@ -464,7 +787,7 @@ a{color:inherit;}
       <div class="card" style="border-color:var(--line);">
         <div class="eyebrow" style="color:var(--text-faint);">TRADITIONAL BLOCKCHAIN</div>
         <div class="card-title" style="margin-top:.6rem;">Single linear chain</div>
-        <div class="card-body">Classical blockchains force one global chain at block‑creation time — a serialized path that becomes a massive bottleneck as the network grows.</div>
+        <div class="card-body">Classical blockchains force one global chain at block‑creation time  a serialized path that becomes a massive bottleneck as the network grows.</div>
         <svg viewBox="0 0 240 60" width="100%" style="margin-top:1.2rem;">
           <g stroke="#5b6270" stroke-width="1.6"><line x1="20" y1="30" x2="220" y2="30"/></g>
           <g fill="#171b21" stroke="#5b6270" stroke-width="1.6">
@@ -475,7 +798,7 @@ a{color:inherit;}
       <div class="card" style="border-color:var(--cyan);">
         <div class="eyebrow" style="color:var(--cyan);">BLOCKLACE / DAG</div>
         <div class="card-title" style="margin-top:.6rem;">Partially ordered DAG</div>
-        <div class="card-body">Nodes grow a partially ordered, multi‑parent DAG first — removing the serialization bottleneck — then derive consistent ordering later, under explicit safety and finality rules.</div>
+        <div class="card-body">Nodes grow a partially ordered, multi‑parent DAG first  removing the serialization bottleneck  then derive consistent ordering later, under explicit safety and finality rules.</div>
         <svg viewBox="0 0 240 60" width="100%" style="margin-top:1.2rem;">
           <g stroke="#2ce8d1" stroke-width="1.4" opacity="0.7">
             <line x1="25" y1="45" x2="75" y2="20"/><line x1="25" y1="45" x2="75" y2="45"/>
@@ -678,15 +1001,113 @@ a{color:inherit;}
   <div class="slide-inner">
     <div class="kicker reveal"><span class="idx">04</span><span class="dot"></span>COMPARISON</div>
     <h1 class="title reveal d1" style="font-size:clamp(1.8rem,3.2vw,2.5rem); margin-bottom:1.8rem;">A blocklace generalizes a blockchain</h1>
-    <table class="table reveal d2">
-      <thead><tr><th>Property</th><th>Blockchain</th><th>Blocklace</th></tr></thead>
-      <tbody>
-        <tr><td>Parent links</td><td class="old-val">Single‑parent</td><td class="new-val">Multi‑parent</td></tr>
-        <tr><td>Growth model</td><td class="old-val">One chain at a time</td><td class="new-val">Concurrent local views</td></tr>
-        <tr><td>Structure</td><td class="old-val">Total order (immediate)</td><td class="new-val">Partial order (derived later)</td></tr>
-        <tr><td>Conflict handling</td><td class="old-val">Fork choice after divergence</td><td class="new-val">Equivocation‑aware validation</td></tr>
-      </tbody>
-    </table>
+    <p class="lede reveal d2" style="max-width:860px; margin-top:0;">A blockchain is the special case where every new block selects one parent. A blocklace keeps the richer observation graph directly, so concurrency is preserved first and validation, finality, and order are derived from it later.</p>
+
+    <div class="generalize-scene reveal d3">
+      <div class="generalize-panel chain">
+        <div class="generalize-header">
+          <div>
+            <div class="eyebrow">Single lineage</div>
+            <div class="generalize-caption">Every step extends exactly one earlier block, so the structure is already a narrow path.</div>
+          </div>
+          <div class="generalize-chip">1 parent</div>
+        </div>
+        <svg class="generalize-svg" viewBox="0 0 320 260" aria-label="Blockchain path visualization">
+          <line class="g-edge chain" x1="160" y1="224" x2="160" y2="184" pathLength="100" style="animation-delay:.12s;"></line>
+          <line class="g-edge chain" x1="160" y1="184" x2="160" y2="144" pathLength="100" style="animation-delay:.22s;"></line>
+          <line class="g-edge chain" x1="160" y1="144" x2="160" y2="104" pathLength="100" style="animation-delay:.32s;"></line>
+          <line class="g-edge chain" x1="160" y1="104" x2="160" y2="64" pathLength="100" style="animation-delay:.42s;"></line>
+          <path class="g-flow chain" d="M160 224 L160 64" pathLength="100"></path>
+
+          <circle class="g-node chain" cx="160" cy="224" r="11" style="animation-delay:.18s,1.2s;"></circle>
+          <circle class="g-node chain" cx="160" cy="184" r="11" style="animation-delay:.28s,1.28s;"></circle>
+          <circle class="g-node chain" cx="160" cy="144" r="11" style="animation-delay:.38s,1.36s;"></circle>
+          <circle class="g-node chain" cx="160" cy="104" r="11" style="animation-delay:.48s,1.44s;"></circle>
+          <circle class="g-node core" cx="160" cy="64" r="12" style="animation-delay:.58s,1.52s;"></circle>
+
+          <text class="g-text" x="181" y="227">B0</text>
+          <text class="g-text" x="181" y="187">B1</text>
+          <text class="g-text" x="181" y="147">B2</text>
+          <text class="g-text" x="181" y="107">B3</text>
+          <text class="g-text em" x="181" y="67">B4</text>
+        </svg>
+      </div>
+
+      <div class="generalize-pivot">
+        <div class="generalize-orbit">
+          <div class="generalize-big">one<br><span>to many</span></div>
+        </div>
+        <p>Lift the single‑parent restriction and the path blooms into a richer local view.</p>
+      </div>
+
+      <div class="generalize-panel dag">
+        <div class="generalize-header">
+          <div>
+            <div class="eyebrow">Observation graph</div>
+            <div class="generalize-caption">Multiple predecessors preserve what was seen concurrently, not just one chosen branch.</div>
+          </div>
+          <div class="generalize-chip accent">multi‑parent</div>
+        </div>
+        <svg class="generalize-svg" viewBox="0 0 520 260" aria-label="Blocklace DAG visualization">
+          <line class="g-edge branch" x1="78" y1="220" x2="138" y2="154" pathLength="100" style="animation-delay:.1s;"></line>
+          <line class="g-edge support" x1="170" y1="220" x2="138" y2="154" pathLength="100" style="animation-delay:.15s;"></line>
+          <line class="g-edge highlight" x1="170" y1="220" x2="250" y2="154" pathLength="100" style="animation-delay:.2s;"></line>
+          <line class="g-edge support" x1="262" y1="220" x2="250" y2="154" pathLength="100" style="animation-delay:.25s;"></line>
+          <line class="g-edge support" x1="262" y1="220" x2="364" y2="154" pathLength="100" style="animation-delay:.3s;"></line>
+          <line class="g-edge branch" x1="430" y1="220" x2="364" y2="154" pathLength="100" style="animation-delay:.35s;"></line>
+
+          <line class="g-edge support" x1="138" y1="154" x2="196" y2="94" pathLength="100" style="animation-delay:.42s;"></line>
+          <line class="g-edge support" x1="250" y1="154" x2="196" y2="94" pathLength="100" style="animation-delay:.47s;"></line>
+          <line class="g-edge highlight" x1="250" y1="154" x2="312" y2="94" pathLength="100" style="animation-delay:.52s;"></line>
+          <line class="g-edge support" x1="364" y1="154" x2="312" y2="94" pathLength="100" style="animation-delay:.57s;"></line>
+
+          <line class="g-edge support" x1="196" y1="94" x2="255" y2="44" pathLength="100" style="animation-delay:.66s;"></line>
+          <line class="g-edge highlight" x1="312" y1="94" x2="255" y2="44" pathLength="100" style="animation-delay:.72s;"></line>
+          <line class="g-edge highlight" x1="250" y1="154" x2="255" y2="44" pathLength="100" style="animation-delay:.78s;"></line>
+
+          <path class="g-flow highlight" d="M170 220 L250 154 L312 94 L255 44" pathLength="100"></path>
+
+          <circle class="g-node branch" cx="78" cy="220" r="10" style="animation-delay:.14s,1.08s;"></circle>
+          <circle class="g-node core" cx="170" cy="220" r="10" style="animation-delay:.2s,1.15s;"></circle>
+          <circle class="g-node core" cx="262" cy="220" r="10" style="animation-delay:.26s,1.22s;"></circle>
+          <circle class="g-node branch" cx="430" cy="220" r="10" style="animation-delay:.32s,1.29s;"></circle>
+
+          <circle class="g-node branch" cx="138" cy="154" r="10" style="animation-delay:.4s,1.36s;"></circle>
+          <circle class="g-node core" cx="250" cy="154" r="11" style="animation-delay:.48s,1.43s;"></circle>
+          <circle class="g-node branch" cx="364" cy="154" r="10" style="animation-delay:.56s,1.5s;"></circle>
+
+          <circle class="g-node core" cx="196" cy="94" r="10" style="animation-delay:.64s,1.57s;"></circle>
+          <circle class="g-node core" cx="312" cy="94" r="10" style="animation-delay:.7s,1.64s;"></circle>
+          <circle class="g-halo" cx="255" cy="44" r="24"></circle>
+          <circle class="g-node tip" cx="255" cy="44" r="13" style="animation-delay:.8s,1.72s;"></circle>
+
+          <text class="g-text" x="55" y="241">v1</text>
+          <text class="g-text" x="147" y="241">v2</text>
+          <text class="g-text" x="239" y="241">v3</text>
+          <text class="g-text" x="407" y="241">v4</text>
+          <text class="g-text em" x="334" y="74">a chain can be extracted</text>
+        </svg>
+        <div class="generalize-subtag">a blockchain is one extractable path inside the richer graph</div>
+      </div>
+    </div>
+
+    <div class="generalize-notes reveal d4">
+      <div class="generalize-note">
+        <div class="eyebrow">01</div>
+        <strong>Path first</strong>
+        <span>Single‑parent linking collapses structure into one running path immediately.</span>
+      </div>
+      <div class="generalize-note">
+        <div class="eyebrow">02</div>
+        <strong>Visibility first</strong>
+        <span>Multi‑parent linking preserves concurrence and observation before any total order is chosen.</span>
+      </div>
+      <div class="generalize-note">
+        <div class="eyebrow">03</div>
+        <strong>Rules later</strong>
+        <span>Validation, finality, and τ ordering operate on that richer state instead of reconstructing it after the fact.</span>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -704,7 +1125,7 @@ a{color:inherit;}
       <div class="flow-arrow">&#8594;</div>
       <div class="flow-step" style="border-color:var(--amber);">Adapter Bridge<br><span style="color:var(--text-faint);font-family:var(--font-mono);font-size:.72rem;font-weight:400;">live ingress harness</span></div>
       <div class="flow-arrow">&#8594;</div>
-      <div class="flow-step" style="border-color:var(--ember);">Deploy Interception<br><span style="color:var(--text-faint);font-family:var(--font-mono);font-size:.72rem;font-weight:400;">next phase</span></div>
+      <div class="flow-step" style="border-color:var(--ember);">Deploy Interception<br><span style="color:var(--text-faint);font-family:var(--font-mono);font-size:.72rem;font-weight:400;">Complete</span></div>
     </div>
   </div>
 </section>
@@ -733,7 +1154,7 @@ a{color:inherit;}
     <div>
       <div class="kicker reveal"><span class="idx">06</span><span class="dot"></span>ARCHITECTURE</div>
       <h1 class="title reveal d1" style="font-size:clamp(1.8rem,3.2vw,2.5rem);">The prototype stack</h1>
-      <p class="lede reveal d2">Runtime APIs feed the adapter and snapshot bridge, which connects into the consensus core. From there, the protocol branches into DAG, validation, ratification, ordering, and dissemination — the functions that drive final output.</p>
+      <p class="lede reveal d2">Runtime APIs feed the adapter and snapshot bridge, which connects into the consensus core. From there, the protocol branches into DAG, validation, ratification, ordering, and dissemination the functions that drive final output.</p>
     </div>
     <div class="reveal d3" style="display:grid; gap:.6rem;">
       <div class="card" style="padding:1rem 1.3rem; border-color:var(--cyan); background:linear-gradient(180deg,rgba(44,232,209,0.1),var(--surface2)); box-shadow:0 0 22px rgba(44,232,209,0.08);"><div class="card-title" style="font-size:.92rem;">Runtime / APIs</div><div class="card-body" style="font-size:.8rem;">Expose runtime and external APIs</div></div>
@@ -843,7 +1264,7 @@ a{color:inherit;}
   <div class="slide-inner" style="text-align:center;">
     <div class="kicker reveal" style="justify-content:center;"><span class="idx">09</span><span class="dot"></span>PIPELINE, PART II</div>
     <h1 class="title reveal d1" style="font-size:clamp(2.1rem,4.8vw,3.6rem); text-align:center;">Observation<br>vs <span class="accent">Approval</span></h1>
-    <p class="lede reveal d2" style="margin:1rem auto 0; text-align:center;">Seeing a block is not the same as endorsing it — the support ladder separates the two.</p>
+    <p class="lede reveal d2" style="margin:1rem auto 0; text-align:center;">Seeing a block is not the same as endorsing it  the support ladder separates the two.</p>
   </div>
 </section>
 
@@ -1147,7 +1568,7 @@ a{color:inherit;}
       <div style="display:grid; gap:.8rem;">
         <div class="card" style="padding:1rem 1.2rem;"><div class="card-title" style="font-size:.9rem;">Four‑node convergence</div><div class="card-body" style="font-size:.8rem;">Node A–D each hold a cyan view of their own partial DAG fragment.</div></div>
         <div class="card" style="padding:1rem 1.2rem; border-color:var(--danger);"><div class="card-title" style="font-size:.9rem; color:var(--danger);">Equivocation detected</div><div class="card-body" style="font-size:.8rem;">Conflicting entries seen and isolated during convergence.</div></div>
-        <div class="card" style="padding:1rem 1.2rem;"><div class="card-title" style="font-size:.9rem;">Out‑of‑order delivery</div><div class="card-body" style="font-size:.8rem;">Messages arrive nonsequentially — and still converge.</div></div>
+        <div class="card" style="padding:1rem 1.2rem;"><div class="card-title" style="font-size:.9rem;">Out‑of‑order delivery</div><div class="card-body" style="font-size:.8rem;">Messages arrive nonsequentially  and still converge.</div></div>
       </div>
     </div>
   </div>
@@ -1166,7 +1587,7 @@ a{color:inherit;}
       <div class="flow-arrow">&#8596;</div>
       <div class="flow-step" style="border-color:var(--ember);">Cordial Core</div>
     </div>
-    <p class="lede reveal d3" style="margin-top:1.6rem;">Translation maps internal DAG state to runtime‑readable blockchain shapes — the bridge that lets f1r3node observe Cordial Miners' consensus without absorbing its internals.</p>
+    <p class="lede reveal d3" style="margin-top:1.6rem;">Translation maps internal DAG state to runtime‑readable blockchain shapes  the bridge that lets f1r3node observe Cordial Miners' consensus without absorbing its internals.</p>
   </div>
 </section>
 
@@ -1200,7 +1621,7 @@ a{color:inherit;}
         <div class="card-body" style="font-size:.8rem;">Typed deploys are recorded before native admission so the adapter can observe real ingress activity without changing node-side success or failure semantics.</div>
       </div>
     </div>
-    <div class="pill reveal d6" style="margin-top:1.35rem; border-color:var(--amber); color:var(--amber);"><span class="p-dot" style="background:var(--amber);"></span>Observer-first integration only — the live path mirrors and measures; it does not replace native Casper execution</div>
+    <div class="pill reveal d6" style="margin-top:1.35rem; border-color:var(--amber); color:var(--amber);"><span class="p-dot" style="background:var(--amber);"></span>Observer-first integration only  the live path mirrors and measures; it does not replace native Casper execution</div>
   </div>
 </section>
 
@@ -1361,14 +1782,14 @@ a{color:inherit;}
     <div class="kicker reveal"><span class="idx">17</span><span class="dot"></span>PROOF OF WORK</div>
     <h1 class="title reveal d1" style="font-size:clamp(1.8rem,3.2vw,2.5rem); margin-bottom:1.6rem;">Evidence of execution</h1>
     <ul class="checklist reveal d2" style="grid-template-columns:1fr 1fr; display:grid; column-gap:2.5rem;">
-      <li><span class="ck">&#10003;</span><span><strong>Core consensus modules</strong> — implemented and validated</span></li>
-      <li><span class="ck">&#10003;</span><span><strong>Ordering and finality tests</strong> — verified for execution paths</span></li>
-      <li><span class="ck">&#10003;</span><span><strong>Dissemination simulations</strong> — completed under partition scenarios</span></li>
-      <li><span class="ck">&#10003;</span><span><strong>Four‑node convergence demo</strong> — confirmed stable agreement</span></li>
-      <li><span class="ck">&#10003;</span><span><strong>Adapter and snapshot tests</strong> — passed with repeatable results</span></li>
-      <li><span class="ck">&#10003;</span><span><strong>Live mirror check harness</strong> — running with active diagnostics</span></li>
-      <li><span class="ck">&#10003;</span><span><strong>Trace export and browser visualizer</strong> — ready for review</span></li>
-      <li><span class="ck">&#10003;</span><span><strong>Integration notes and execution report</strong> — documented and shared</span></li>
+      <li><span class="ck">&#10003;</span><span><strong>Core consensus modules</strong>  implemented and validated</span></li>
+      <li><span class="ck">&#10003;</span><span><strong>Ordering and finality tests</strong>  verified for execution paths</span></li>
+      <li><span class="ck">&#10003;</span><span><strong>Dissemination simulations</strong>  completed under partition scenarios</span></li>
+      <li><span class="ck">&#10003;</span><span><strong>Four‑node convergence demo</strong>  confirmed stable agreement</span></li>
+      <li><span class="ck">&#10003;</span><span><strong>Adapter and snapshot tests</strong>  passed with repeatable results</span></li>
+      <li><span class="ck">&#10003;</span><span><strong>Live mirror check harness</strong>  running with active diagnostics</span></li>
+      <li><span class="ck">&#10003;</span><span><strong>Trace export and browser visualizer</strong>  ready for review</span></li>
+      <li><span class="ck">&#10003;</span><span><strong>Integration notes and execution report</strong>  documented and shared</span></li>
     </ul>
   </div>
 </section>
