@@ -11,11 +11,12 @@ use cordial_f1r3node_adapter::live_grpc::{
     trusted_block_from_light_block_info_with_options,
 };
 use cordial_f1r3node_adapter::live_ingress::LiveIngress;
+use cordial_f1r3node_adapter::ordered_output::OrderedFragment;
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 use cordial_miners_core::Block;
 use cordial_miners_core::consensus::{
-    approved_blocks_for_leader, depth, is_weighted_final_leader, leader_block_for_wave,
-    wave_of_round, weighted_final_leader_for_wave, xsort,
+    depth, is_weighted_final_leader, leader_block_for_wave, wave_of_round,
+    weighted_final_leader_for_wave,
 };
 use cordial_miners_core::execution::CordialBlockPayload;
 use cordial_miners_core::types::{BlockIdentity, NodeId};
@@ -203,6 +204,7 @@ async fn main() -> Result<()> {
             None => None,
         };
 
+    let mut ordered_fragment: Option<OrderedFragment> = None;
     let ordered_blocks = if args.skip_ordering {
         println!("[phase] skipping ordered finalized blocks");
         None
@@ -216,7 +218,21 @@ async fn main() -> Result<()> {
             }
         );
         Some(if args.ordering_fragment_only {
-            latest_ordering_fragment(&ingress, mirror_last_finalized.as_deref())?
+            // Use the stable ordered_output export seam instead of
+            // recomputing ordering (approved_blocks_for_leader + xsort)
+            // directly against the mirrored blocklace.
+            let fragment = ingress
+                .latest_finalized_ordered_fragment(3)
+                .map_err(|err| {
+                    anyhow::anyhow!("failed to compute latest ordered fragment: {err}")
+                })?
+                .unwrap_or_else(|| OrderedFragment {
+                    leader_hash: Vec::new(),
+                    blocks: Vec::new(),
+                });
+            let hashes = fragment.hashes();
+            ordered_fragment = Some(fragment);
+            hashes
         } else {
             ingress.ordered_finalized_blocks().map_err(|err| {
                 anyhow::anyhow!("failed to compute ordered finalized blocks: {err:?}")
@@ -284,6 +300,9 @@ async fn main() -> Result<()> {
     println!("Ordered blocks:    {}", ordered_count);
     if let Some(ordered) = ordered_blocks.as_ref() {
         print_ordering_preview(ordered, args.ordering_preview);
+        if let Some(fragment) = ordered_fragment.as_ref() {
+            print_ordered_fragment_summary(fragment, args.ordering_preview);
+        }
         if let Some(mirror_lfb) = mirror_last_finalized.as_ref() {
             println!(
                 "LFB in ordered:    {}",
@@ -488,32 +507,64 @@ fn compare_ordered_hashes(path: &PathBuf, current: &[String]) -> Result<OrderedC
     })
 }
 
-fn latest_ordering_fragment(
-    ingress: &LiveIngress<PassthroughAdapter>,
-    mirror_last_finalized: Option<&str>,
-) -> Result<Vec<Vec<u8>>> {
-    let Some(mirror_last_finalized) = mirror_last_finalized else {
-        return Ok(Vec::new());
-    };
+/// Print the per-block summary fields (creator, block number, round, wave)
+/// for a [`OrderedFragment`] obtained from the stable `ordered_output`
+/// export seam. Mirrors the head/tail preview shape of
+/// `print_ordering_preview`, but surfaces the metadata the seam attaches to
+/// each block instead of just its hash.
+fn print_ordered_fragment_summary(fragment: &OrderedFragment, preview: usize) {
+    println!(
+        "Ordered fragment leader: {}",
+        if fragment.leader_hash.is_empty() {
+            "<none>".to_string()
+        } else {
+            hex_string(fragment.leader_hash.clone())
+        }
+    );
 
-    let hash = StringOps::decode_hex(mirror_last_finalized.to_string())
-        .ok_or_else(|| anyhow::anyhow!("failed to decode mirror finalized hash"))?;
-    let leader = ingress
-        .blocklace()
-        .dom()
-        .iter()
-        .find(|id| id.content_hash.as_slice() == hash.as_slice())
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("failed to resolve mirror finalized leader in blocklace"))?;
+    if fragment.is_empty() {
+        println!("Ordered fragment blocks: <none>");
+        return;
+    }
 
-    let approved = approved_blocks_for_leader(ingress.blocklace(), leader);
-    let ordered = xsort(&approved)
-        .map_err(|err| anyhow::anyhow!("failed to order finalized fragment: {err:?}"))?;
+    let preview = preview.min(fragment.len());
+    println!("Ordered fragment blocks: {}", fragment.len());
+    if preview == 0 {
+        return;
+    }
 
-    Ok(ordered
-        .into_iter()
-        .map(|id| id.content_hash.to_vec())
-        .collect())
+    println!("Ordered fragment head:");
+    for block in fragment.blocks.iter().take(preview) {
+        print_ordered_block_summary(block);
+    }
+
+    if fragment.len() > preview {
+        println!("Ordered fragment tail:");
+        for block in fragment
+            .blocks
+            .iter()
+            .skip(fragment.len().saturating_sub(preview))
+        {
+            print_ordered_block_summary(block);
+        }
+    }
+}
+
+fn print_ordered_block_summary(block: &cordial_f1r3node_adapter::ordered_output::OrderedBlockSummary) {
+    println!(
+        "  - hash={} creator={} block_number={} round={} wave={}",
+        hex_string(block.content_hash.clone()),
+        hex_string(block.creator.clone()),
+        block.block_number,
+        block
+            .round
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| "<unknown>".to_string()),
+        block
+            .wave
+            .map(|w| w.to_string())
+            .unwrap_or_else(|| "<unknown>".to_string()),
+    );
 }
 
 #[derive(Debug, Clone)]

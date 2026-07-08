@@ -38,6 +38,7 @@ use cordial_miners_core::types::{BlockContent, NodeId};
 
 use crate::block_translation::BlockMessage;
 use crate::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
+use crate::ordered_output::{OrderedFragment, OrderedOutputError};
 use crate::shard_conf::CasperShardConf;
 use crate::snapshot::{
     CasperSnapshot, SnapshotError, build_snapshot, latest_finalized_block_id,
@@ -393,6 +394,29 @@ impl<A> LiveIngress<A> {
         Ok(ordered_finalized_block_hashes_with_cache(
             blocklace, bonds, cache,
         ))
+    }
+
+    /// Return the latest finalized ordered fragment through the stable
+    /// `ordered_output` export seam: the blocks approved by the current
+    /// finalized leader, linearized via weighted tau ordering, each
+    /// annotated with summary metadata (creator, block number, round,
+    /// wave).
+    ///
+    /// Returns `Ok(None)` when the mirrored state does not yet have a
+    /// finalized leader.
+    ///
+    /// This is the boundary inspection tooling and downstream consumers
+    /// should use instead of recomputing ordering against the mirrored
+    /// blocklace directly.
+    pub fn latest_finalized_ordered_fragment(
+        &self,
+        wave_length: u64,
+    ) -> Result<Option<OrderedFragment>, OrderedOutputError> {
+        crate::ordered_output::latest_finalized_ordered_fragment(
+            self.blocklace(),
+            &self.bonds,
+            wave_length,
+        )
     }
 
     /// Ingest a trusted block that was reconstructed from a live node-facing
