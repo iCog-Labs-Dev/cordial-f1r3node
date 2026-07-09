@@ -38,7 +38,7 @@ use cordial_miners_core::types::{BlockContent, NodeId};
 
 use crate::block_translation::BlockMessage;
 use crate::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
-use crate::ordered_output::{OrderedFragment, OrderedOutputError};
+use crate::ordered_output::OrderedFinalizedOutput;
 use crate::shard_conf::CasperShardConf;
 use crate::snapshot::{
     CasperSnapshot, SnapshotError, build_snapshot, latest_finalized_block_id,
@@ -396,27 +396,57 @@ impl<A> LiveIngress<A> {
         ))
     }
 
-    /// Return the latest finalized ordered fragment through the stable
-    /// `ordered_output` export seam: the blocks approved by the current
-    /// finalized leader, linearized via weighted tau ordering, each
-    /// annotated with summary metadata (creator, block number, round,
-    /// wave).
+    /// Return the latest finalized ordered output through the stable
+    /// `ordered_output` export seam: the finalized-prefix blocks (full
+    /// [`BlockIdentity`] entries, not bare hashes), linearized via weighted
+    /// tau ordering, together with the anchor and consensus metadata needed
+    /// to interpret them.
     ///
-    /// Returns `Ok(None)` when the mirrored state does not yet have a
-    /// finalized leader.
+    /// `anchor` is `None` and `blocks` is empty when the mirrored state does
+    /// not yet have a finalized leader.
     ///
     /// This is the boundary inspection tooling and downstream consumers
     /// should use instead of recomputing ordering against the mirrored
     /// blocklace directly.
-    pub fn latest_finalized_ordered_fragment(
-        &self,
+    pub fn latest_finalized_ordered_output(
+        &mut self,
         wave_length: u64,
-    ) -> Result<Option<OrderedFragment>, OrderedOutputError> {
-        crate::ordered_output::latest_finalized_ordered_fragment(
-            self.blocklace(),
-            &self.bonds,
+    ) -> Result<OrderedFinalizedOutput, SnapshotError> {
+        let anchor = latest_finalized_block_id(self.mirror.blocklace(), &self.bonds);
+
+        let hashes = {
+            let blocklace = self.mirror.blocklace();
+            let bonds = &self.bonds;
+            let cache = &mut self.ordering_cache;
+            ordered_finalized_block_hashes_with_cache(blocklace, bonds, cache)
+        };
+
+        // The ordering helper above still speaks in bare content hashes
+        // (matching `CasperSnapshot::ordered_finalized_blocks`). Resolve
+        // each hash back to its full `BlockIdentity` from the mirror so the
+        // stable export type can carry creator/signature context as well.
+        let by_hash: HashMap<Vec<u8>, BlockIdentity> = self
+            .mirror
+            .blocklace()
+            .dom()
+            .into_iter()
+            .map(|id| (id.content_hash.to_vec(), id.clone()))
+            .collect();
+
+        let blocks: Vec<BlockIdentity> = hashes
+            .into_iter()
+            .filter_map(|hash| by_hash.get(&hash).cloned())
+            .collect();
+
+        let total_mirrored_blocks = self.mirror.blocklace().dom().into_iter().count();
+
+        Ok(OrderedFinalizedOutput::new(
+            blocks,
+            anchor,
             wave_length,
-        )
+            self.bonds.len(),
+            total_mirrored_blocks,
+        ))
     }
 
     /// Ingest a trusted block that was reconstructed from a live node-facing

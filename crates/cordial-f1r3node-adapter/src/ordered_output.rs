@@ -1,206 +1,192 @@
-//! Stable export seam for ordered finalized output.
+//! Stable adapter-side data model for finalized ordered output.
 //!
-//! This module is the adapter-side boundary through which the ordered
-//! finalized fragment of the mirrored blocklace is exposed to callers —
-//! today, the `live_mirror_check` debugging harness; later, real downstream
-//! consumers.
+//! This module defines the shape of Cordial's finalized ordered output as
+//! computed from the live mirrored blocklace state. Downstream consumers
+//! (binaries, tests, node-facing consumers in future reintegration seams)
+//! read this type rather than recomputing or reinterpreting the ordering
+//! ad hoc.
 //!
-//! ## Why this exists
+//! ## What's in the model
 //!
-//! Before this module, the harness computed the "latest finalized ordered
-//! fragment" itself by calling `approved_blocks_for_leader` and `xsort`
-//! directly against the mirrored blocklace. That mixed harness/debugging
-//! logic with ordering computation and left no single place downstream
-//! integrations could depend on.
+//! | Field                 | Purpose                                         |
+//! |-----------------------|-------------------------------------------------|
+//! | `blocks`              | Ordered [`BlockIdentity`] sequence (tau order)  |
+//! | `anchor`              | Latest weighted final leader anchoring ordering |
+//! | `wavelength`          | Consensus wave size used for finality           |
+//! | `bond_count`          | Number of bonded validators at computation time |
+//! | `total_mirrored_blocks` | Total blocks in the blocklace mirror (not just finalized prefix) |
+//! | `computed_at_ns`      | Wall-clock timestamp for staleness inspection   |
 //!
-//! This module owns that computation instead. Callers get back a small,
-//! stable `OrderedFragment` value — the linearized set of blocks approved
-//! by the current finalized leader, each annotated with the summary fields
-//! (creator, block number, round, wave) useful for debugging — without
-//! needing to know anything about `Blocklace`, `xsort`, or how finality is
-//! determined.
+//! ## Relation to existing types
 //!
-//! ## Non-goals
-//!
-//! This module does **not** serve ordered output over HTTP or gRPC, and it
-//! does not address node-side consumption. It is purely the in-process
-//! export boundary; transport-level exposure is separate follow-up work.
+//! - [`super::snapshot::CasperSnapshot`] carries `ordered_finalized_blocks:
+//!   Vec<Vec<u8>>` (bare content hashes) as one field among many. That type
+//!   is tied to f1r3node's snapshot shape and is not a stable export seam.
+//! - [`OrderedFinalizedOutput`] is the *adapter-side* export type:
+//!   self-describing, includes full block identities and consensus metadata,
+//!   and is decoupled from f1r3node's snapshot layout.
+//! - The core `weighted_tau` / `tau` functions in `cordial-miners-core`
+//!   return raw `Vec<BlockIdentity>`. This type wraps that vector with the
+//!   context needed to interpret it.
 
-use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::{approved_blocks_for_leader, depth, wave_of_round, xsort};
-use cordial_miners_core::execution::CordialBlockPayload;
-use cordial_miners_core::types::{BlockIdentity, NodeId};
+use serde::{Deserialize, Serialize};
 
-use crate::snapshot::latest_finalized_block_id;
+use cordial_miners_core::types::BlockIdentity;
 
-/// Default wave length used when converting a block's round into a wave for
-/// summary purposes. This mirrors the wave length used elsewhere in the
-/// adapter (e.g. weighted final leader computation in `live_mirror_check`).
-pub const DEFAULT_WAVE_LENGTH: u64 = 3;
-
-/// Summary metadata for a single block within an [`OrderedFragment`].
+/// A finalized ordered output fragment produced by Cordial weighted-tau
+/// ordering over the live mirrored blocklace.
 ///
-/// These are the fields useful for debugging and light inspection; the
-/// export seam intentionally keeps this flat and serialization-friendly
-/// rather than exposing internal `Block`/`Blocklace` types.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OrderedBlockSummary {
-    /// Content hash identifying this block.
-    pub content_hash: Vec<u8>,
-    /// Raw creator/node id bytes for this block.
-    pub creator: Vec<u8>,
-    /// Cordial block number carried in the block's execution payload.
-    pub block_number: u64,
-    /// Blocklace depth/round of this block, if it could be computed.
-    pub round: Option<u64>,
-    /// Wave derived from `round`, if both could be computed.
-    pub wave: Option<u64>,
+/// This is the stable export type that binaries, tests, and future
+/// node-facing consumers should read instead of calling into ordering
+/// internals directly.
+///
+/// ## Construction
+///
+/// Prefer the builder-style [`new`](Self::new) constructor or the
+/// [`Default`] impl for test fixtures. Production code creates instances
+/// via the adapter's snapshot or live-ingress helpers.
+///
+/// ## Ordering invariant
+///
+/// `blocks` appears in deterministic topological order (tau order):
+/// predecessor-first tie-broken by [`BlockIdentity`]'s natural ordering.
+/// Every block in this list is finalized according to the current bonded
+/// validator set and consensus parameters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrderedFinalizedOutput {
+    /// The ordered sequence of block identities in the finalized prefix.
+    ///
+    /// Each entry carries the full [`BlockIdentity`] (content hash, creator,
+    /// signature) so consumers have everything needed without extra lookups
+    /// into the blocklace.
+    pub blocks: Vec<BlockIdentity>,
+
+    /// The latest weighted final leader that anchors this ordering fragment.
+    ///
+    /// This is the leader block whose approval frontier produced the ordered
+    /// output. `None` when no block has been finalized yet — the output is
+    /// empty and the anchor is undefined.
+    ///
+    /// Consumers can use the anchor to reason about the extent of finality
+    /// coverage or to compare against a known-good block hash.
+    pub anchor: Option<BlockIdentity>,
+
+    /// Consensus wavelength (wave size in rounds) used when computing
+    /// this output.
+    ///
+    /// Currently hard-coded to `3` (matching the `ES_WAVELENGTH` in
+    /// [`super::snapshot`]). Exposed here so that if the parameter becomes
+    /// dynamic in the future, consumers can determine which wavelength
+    /// produced the ordering.
+    pub wavelength: u64,
+
+    /// Number of bonded validators at the time the output was computed.
+    ///
+    /// Useful for inspection — a low bond count means finality reflects
+    /// less stake weight. A value of `0` indicates no bonds were provided.
+    pub bond_count: usize,
+
+    /// Total blocks in the blocklace mirror when this output was computed.
+    ///
+    /// This is not the same as `blocks.len()` (which counts only the
+    /// finalized prefix). It reflects the whole observed DAG and helps
+    /// consumers gauge how much of the mirror has been finalized.
+    pub total_mirrored_blocks: usize,
+
+    /// Wall-clock timestamp (nanoseconds since the Unix epoch) when this
+    /// output was produced.
+    ///
+    /// Consumers can compare timestamps across outputs to detect staleness
+    /// or measure ordering latency. Two outputs with the same anchor but
+    /// different timestamps mean the mirror was re-evaluated without new
+    /// finalization progress.
+    pub computed_at_ns: u128,
 }
 
-/// The ordered finalized fragment: the blocks approved by a given finalized
-/// leader, linearized via weighted tau ordering, each with summary
-/// metadata attached.
-///
-/// This is the stable, exported representation of "ordered finalized
-/// output" for a single finalized leader. It is intentionally decoupled
-/// from `Blocklace` so it can be printed, serialized, or handed to a
-/// downstream consumer without re-exposing internal adapter state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OrderedFragment {
-    /// Content hash of the finalized leader block this fragment is anchored
-    /// to.
-    pub leader_hash: Vec<u8>,
-    /// The linearized, approved blocks, in canonical (weighted tau) order.
-    pub blocks: Vec<OrderedBlockSummary>,
-}
+impl OrderedFinalizedOutput {
+    /// Construct a new ordered finalized output from its parts.
+    ///
+    /// `computed_at_ns` defaults to the current system time (use
+    /// [`with_timestamp`](Self::with_timestamp) to override).
+    pub fn new(
+        blocks: Vec<BlockIdentity>,
+        anchor: Option<BlockIdentity>,
+        wavelength: u64,
+        bond_count: usize,
+        total_mirrored_blocks: usize,
+    ) -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
 
-impl OrderedFragment {
-    /// Whether this fragment contains no blocks.
-    pub fn is_empty(&self) -> bool {
-        self.blocks.is_empty()
+        Self {
+            blocks,
+            anchor,
+            wavelength,
+            bond_count,
+            total_mirrored_blocks,
+            computed_at_ns: now,
+        }
     }
 
-    /// Number of blocks in this fragment.
+    /// Return the ordered block content hashes as `Vec<Vec<u8>>`.
+    ///
+    /// Convenience for callers that only need hash references (e.g., to
+    /// compare against a prior output or to format for logging).
+    pub fn block_hashes(&self) -> Vec<Vec<u8>> {
+        self.blocks
+            .iter()
+            .map(|id| id.content_hash.to_vec())
+            .collect()
+    }
+
+    /// Number of blocks in the ordered fragment.
     pub fn len(&self) -> usize {
         self.blocks.len()
     }
 
-    /// Reduce the fragment to bare content hashes, in order. Useful for
-    /// callers that only need the linearized identity sequence (e.g. to
-    /// persist or diff against a previous run), rather than the full
-    /// per-block summary.
-    pub fn hashes(&self) -> Vec<Vec<u8>> {
-        self.blocks.iter().map(|b| b.content_hash.clone()).collect()
+    /// Whether the ordered fragment is empty (no finalized blocks).
+    pub fn is_empty(&self) -> bool {
+        self.blocks.is_empty()
+    }
+
+    /// Return the anchor block's content hash, or `None` if no anchor exists.
+    pub fn anchor_hash(&self) -> Option<Vec<u8>> {
+        self.anchor.as_ref().map(|id| id.content_hash.to_vec())
+    }
+
+    /// Interpret the stored timestamp as a [`SystemTime`].
+    ///
+    /// Returns [`UNIX_EPOCH`] when `computed_at_ns` exceeds `u64::MAX`
+    /// nanoseconds (approximately 584 years), which won't happen in practice.
+    pub fn computed_at(&self) -> SystemTime {
+        let secs = (self.computed_at_ns / 1_000_000_000) as u64;
+        let subsec_nanos = (self.computed_at_ns % 1_000_000_000) as u32;
+        UNIX_EPOCH + std::time::Duration::new(secs, subsec_nanos)
+    }
+
+    /// Override the wall-clock timestamp.
+    ///
+    /// Useful for test fixtures or replay scenarios where the original
+    /// timestamp should be preserved rather than set to "now".
+    pub fn with_timestamp(mut self, ns: u128) -> Self {
+        self.computed_at_ns = ns;
+        self
     }
 }
 
-/// Errors produced while computing ordered output through this export seam.
-#[derive(Debug)]
-pub enum OrderedOutputError {
-    /// The weighted tau ordering function failed on the approved set.
-    Ordering(String),
-}
-
-impl std::fmt::Display for OrderedOutputError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Ordering(err) => write!(f, "failed to order finalized fragment: {err}"),
-        }
-    }
-}
-
-impl std::error::Error for OrderedOutputError {}
-
-/// Compute the ordered finalized fragment anchored at the current latest
-/// finalized block in `blocklace`: the blocks approved by that leader,
-/// linearized via weighted tau ordering, each annotated with summary
-/// metadata.
-///
-/// Returns `Ok(None)` when the mirrored state does not yet have a finalized
-/// leader (e.g. still bootstrapping) — this is a normal, expected condition
-/// rather than an error.
-///
-/// This is the stable export seam for ordered finalized output. Callers
-/// (inspection harnesses today, other downstream consumers later) should
-/// go through this function rather than recomputing
-/// `approved_blocks_for_leader` + `xsort` themselves, so that ordering
-/// computation stays in one place.
-pub fn latest_finalized_ordered_fragment(
-    blocklace: &Blocklace,
-    bonds: &HashMap<NodeId, u64>,
-    wave_length: u64,
-) -> Result<Option<OrderedFragment>, OrderedOutputError> {
-    let Some(leader) = latest_finalized_block_id(blocklace, bonds) else {
-        return Ok(None);
-    };
-
-    let leader_hash = leader.content_hash.to_vec();
-    let approved = approved_blocks_for_leader(blocklace, &leader);
-    let ordered =
-        xsort(&approved).map_err(|err| OrderedOutputError::Ordering(format!("{err:?}")))?;
-
-    let blocks = ordered
-        .into_iter()
-        .map(|id| summarize_block(blocklace, &id, wave_length))
-        .collect();
-
-    Ok(Some(OrderedFragment { leader_hash, blocks }))
-}
-
-/// Convenience wrapper over [`latest_finalized_ordered_fragment`] using
-/// [`DEFAULT_WAVE_LENGTH`].
-pub fn latest_finalized_ordered_fragment_default(
-    blocklace: &Blocklace,
-    bonds: &HashMap<NodeId, u64>,
-) -> Result<Option<OrderedFragment>, OrderedOutputError> {
-    latest_finalized_ordered_fragment(blocklace, bonds, DEFAULT_WAVE_LENGTH)
-}
-
-fn summarize_block(
-    blocklace: &Blocklace,
-    id: &BlockIdentity,
-    wave_length: u64,
-) -> OrderedBlockSummary {
-    let round = depth(blocklace, id);
-    let wave = round.and_then(|round| wave_of_round(round, wave_length));
-    let block_number = blocklace
-        .content(id)
-        .and_then(|content| CordialBlockPayload::from_bytes(&content.payload).ok())
-        .map(|payload| payload.state.block_number)
-        .unwrap_or(0);
-
-    OrderedBlockSummary {
-        content_hash: id.content_hash.to_vec(),
-        creator: id.creator.0.clone(),
-        block_number,
-        round,
-        wave,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn empty_blocklace_has_no_finalized_fragment() {
-        let blocklace = Blocklace::new();
-        let bonds = HashMap::new();
-        let result = latest_finalized_ordered_fragment_default(&blocklace, &bonds)
-            .expect("computing over an empty blocklace should not error");
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn fragment_helpers_report_empty_correctly() {
-        let fragment = OrderedFragment {
-            leader_hash: vec![1, 2, 3],
+impl Default for OrderedFinalizedOutput {
+    fn default() -> Self {
+        Self {
             blocks: Vec::new(),
-        };
-        assert!(fragment.is_empty());
-        assert_eq!(fragment.len(), 0);
-        assert!(fragment.hashes().is_empty());
+            anchor: None,
+            wavelength: 3,
+            bond_count: 0,
+            total_mirrored_blocks: 0,
+            computed_at_ns: 0,
+        }
     }
 }

@@ -3,7 +3,7 @@
 //! Unlike `live_mirror_check`, which does a full mirror-vs-HTTP comparison
 //! run, this binary does exactly one thing: mirror live blocks from a
 //! running f1r3node into a local Cordial blocklace, then print the latest
-//! finalized ordered fragment via `cordial_f1r3node_adapter::ordered_output`.
+//! finalized ordered output via `cordial_f1r3node_adapter::ordered_output`.
 //!
 //! Out of scope (see the tracking issue): HTTP/gRPC serving of ordered
 //! output, and node-side consumption. This is inspection tooling only.
@@ -16,7 +16,7 @@ use cordial_f1r3node_adapter::live_grpc::{
     trusted_block_from_light_block_info_with_options,
 };
 use cordial_f1r3node_adapter::live_ingress::LiveIngress;
-use cordial_f1r3node_adapter::ordered_output::{OrderedBlockSummary, OrderedFragment};
+use cordial_f1r3node_adapter::ordered_output::OrderedFinalizedOutput;
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 use cordial_miners_core::Block;
 use cordial_miners_core::types::{BlockIdentity, NodeId};
@@ -27,7 +27,7 @@ use std::collections::HashMap;
 #[derive(Parser, Debug)]
 #[command(name = "live-ordered-output")]
 #[command(
-    about = "Mirror live f1r3node blocks and print the latest finalized ordered fragment via the ordered_output export seam"
+    about = "Mirror live f1r3node blocks and print the latest finalized ordered output via the ordered_output export seam"
 )]
 struct Args {
     #[arg(long, default_value = "http://127.0.0.1:40401")]
@@ -100,11 +100,11 @@ async fn main() -> Result<()> {
 
     // The whole point of this binary: go through the stable export seam
     // rather than recomputing ordering against the mirrored blocklace.
-    let fragment = ingress
-        .latest_finalized_ordered_fragment(args.wave_length)
-        .map_err(|err| anyhow::anyhow!("failed to compute latest ordered fragment: {err}"))?;
+    let output = ingress
+        .latest_finalized_ordered_output(args.wave_length)
+        .map_err(|err| anyhow::anyhow!("failed to compute latest ordered output: {err}"))?;
 
-    print_fragment(fragment.as_ref(), args.preview);
+    print_output(&output, args.preview);
 
     Ok(())
 }
@@ -123,52 +123,49 @@ fn hex_string(bytes: Vec<u8>) -> String {
     PrettyPrinter::build_string_no_limit(&bytes)
 }
 
-fn print_fragment(fragment: Option<&OrderedFragment>, preview: usize) {
-    let Some(fragment) = fragment else {
-        println!("Latest finalized ordered fragment: <none> (no finalized leader yet)");
-        return;
-    };
-
+fn print_output(output: &OrderedFinalizedOutput, preview: usize) {
     println!(
-        "Latest finalized leader: {}",
-        hex_string(fragment.leader_hash.clone())
+        "Latest finalized anchor: {}",
+        output
+            .anchor_hash()
+            .map(hex_string)
+            .unwrap_or_else(|| "<none> (no finalized leader yet)".to_string())
     );
-    println!("Ordered fragment size:   {}", fragment.len());
+    println!("Wavelength:              {}", output.wavelength);
+    println!("Bond count:              {}", output.bond_count);
+    println!("Total mirrored blocks:   {}", output.total_mirrored_blocks);
+    println!("Ordered output size:     {}", output.len());
 
-    if fragment.is_empty() {
+    if output.is_empty() {
         return;
     }
 
-    let preview = preview.min(fragment.len());
-    println!("Ordered fragment head:");
-    for block in fragment.blocks.iter().take(preview) {
+    let preview = preview.min(output.len());
+    println!("Ordered output head:");
+    for block in output.blocks.iter().take(preview) {
         print_block(block);
     }
-    if fragment.len() > preview {
-        println!("Ordered fragment tail:");
-        for block in fragment
+    if output.len() > preview {
+        println!("Ordered output tail:");
+        for block in output
             .blocks
             .iter()
-            .skip(fragment.len().saturating_sub(preview))
+            .skip(output.len().saturating_sub(preview))
         {
             print_block(block);
         }
     }
 }
 
-fn print_block(block: &OrderedBlockSummary) {
+fn print_block(block: &BlockIdentity) {
+    // `BlockIdentity` (content hash + creator + signature) is all the
+    // stable seam type carries per block; round/wave are not part of it.
+    // See `live_mirror_check`'s ordered-output summary for a variant that
+    // recomputes round/wave against the mirrored blocklace for extra
+    // debug visibility.
     println!(
-        "  - hash={} creator={} block_number={} round={} wave={}",
-        hex_string(block.content_hash.clone()),
-        hex_string(block.creator.clone()),
-        block.block_number,
-        block
-            .round
-            .map(|r| r.to_string())
-            .unwrap_or_else(|| "<unknown>".to_string()),
-        block
-            .wave
-            .map(|w| w.to_string())
-            .unwrap_or_else(|| "<unknown>".to_string()),
+        "  - hash={} creator={}",
+        hex_string(block.content_hash.to_vec()),
+        hex_string(block.creator.0.clone()),
     );
 }
