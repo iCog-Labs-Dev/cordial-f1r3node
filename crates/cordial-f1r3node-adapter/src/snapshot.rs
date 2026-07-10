@@ -509,6 +509,10 @@ pub(crate) fn ordered_finalized_block_hashes_with_cache(
 ///
 /// This is the read-only adapter seam that returns the latest finalized
 /// ordered fragment from live mirrored state.
+#[allow(
+    dead_code,
+    reason = "retained as the uncached snapshot ordering helper"
+)]
 pub(crate) fn ordered_finalized_output(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,

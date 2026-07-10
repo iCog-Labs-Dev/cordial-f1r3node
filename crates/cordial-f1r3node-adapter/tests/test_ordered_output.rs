@@ -124,6 +124,12 @@ fn live_ingress_multi(creators: &[NodeId]) -> LiveIngress<TestAdapter> {
     LiveIngress::with_consensus_view(TestAdapter::default(), bonds, shard_conf(), "root")
 }
 
+fn live_ingress_weighted(validators: &[(NodeId, u64)]) -> LiveIngress<TestAdapter> {
+    let bonds = validators.iter().cloned().collect();
+
+    LiveIngress::with_consensus_view(TestAdapter::default(), bonds, shard_conf(), "root")
+}
+
 fn ingest_batch(ingress: &mut LiveIngress<TestAdapter>, blocks: &[Block]) {
     for block in blocks {
         ingress
@@ -268,11 +274,14 @@ fn multi_validator_ordered_output_is_monotonic_as_a_wave_completes() {
     let creator_3 = validator(13);
     let creator_4 = validator(14);
 
-    let mut ingress = live_ingress_multi(&[
-        creator_1.clone(),
-        creator_2.clone(),
-        creator_3.clone(),
-        creator_4.clone(),
+    // The three validators supporting the leader hold 90% of the bonded
+    // weight, so this scenario exercises stake-weighted finality rather
+    // than relying on an equal-validator head count.
+    let mut ingress = live_ingress_weighted(&[
+        (creator_1.clone(), 100),
+        (creator_2.clone(), 400),
+        (creator_3.clone(), 300),
+        (creator_4.clone(), 200),
     ]);
 
     let leader = make_block(&creator_1, 0, 1, &[]);

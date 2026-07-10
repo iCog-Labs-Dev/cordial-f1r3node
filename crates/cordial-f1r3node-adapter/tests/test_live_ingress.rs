@@ -11,6 +11,9 @@ use cordial_miners_core::crypto::{hash_content, sign};
 use cordial_miners_core::execution::{BlockState, CordialBlockPayload};
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
+/// Number of rounds in one consensus wave which same as `ES_WAVELENGTH` in `snapshot.rs`.
+const WAVELENGTH: u64 = 3;
+
 #[test]
 fn new_live_ingress_starts_in_defined_phase() {
     let ingress = LiveIngress::new(());
@@ -296,7 +299,9 @@ fn latest_ordered_output_is_monotonic_across_batches() {
             .ingest_block_message(block_msg)
             .expect("batch 1 block should mirror");
     }
-    let first_output = ingress.latest_ordered_output();
+    let first_output = ingress
+        .latest_finalized_ordered_output(WAVELENGTH)
+        .expect("first batch ordered output should be computed");
 
     // Batch 2: ingest remaining 3 blocks (completes wave 1).
     for block_msg in &blocks[3..6] {
@@ -304,7 +309,9 @@ fn latest_ordered_output_is_monotonic_across_batches() {
             .ingest_block_message(block_msg)
             .expect("batch 2 block should mirror");
     }
-    let second_output = ingress.latest_ordered_output();
+    let second_output = ingress
+        .latest_finalized_ordered_output(WAVELENGTH)
+        .expect("second batch ordered output should be computed");
 
     // The first batch's blocks must be a prefix of the second batch's blocks.
     assert!(
@@ -392,7 +399,9 @@ fn latest_ordered_output_rejects_same_round_fork() {
         .ingest_block_message(&fork_b)
         .expect("fork_b should mirror");
 
-    let output = ingress.latest_ordered_output();
+    let output = ingress
+        .latest_finalized_ordered_output(WAVELENGTH)
+        .expect("ordered output should be computed during equivocation");
 
     // Equivocation must be terminal: no anchor, no ordered blocks — and
     // critically, this must NOT silently fall through to a weighted_tau
@@ -470,7 +479,9 @@ fn last_finalized_block_hash_and_latest_ordered_output_agree_during_fork() {
     let last_finalized = ingress
         .last_finalized_block_hash()
         .expect("should not error");
-    let ordered_output = ingress.latest_ordered_output();
+    let ordered_output = ingress
+        .latest_finalized_ordered_output(WAVELENGTH)
+        .expect("ordered output finality lookup should succeed during equivocation");
 
     assert!(
         last_finalized.is_none(),
@@ -507,7 +518,9 @@ fn latest_ordered_output_before_first_complete_wave() {
     // With no blocks ingested at all, the output must be empty and must
     // not panic — this exercises the `leaders` non-empty but
     // `compute_all_depths` empty edge before any wave exists.
-    let empty_output = ingress.latest_ordered_output();
+    let empty_output = ingress
+        .latest_finalized_ordered_output(WAVELENGTH)
+        .expect("ordered output should be computed before any blocks are ingested");
     assert!(empty_output.blocks.is_empty());
     assert!(empty_output.anchor.is_none());
 
@@ -535,7 +548,9 @@ fn latest_ordered_output_before_first_complete_wave() {
     // This must not panic and should not fabricate a leader/blocks; it's
     // the genuine "no complete wave yet" case that the single-validator
     // fast path falls through on, deferring to weighted_tau.
-    let partial_output = ingress.latest_ordered_output();
+    let partial_output = ingress
+        .latest_finalized_ordered_output(WAVELENGTH)
+        .expect("ordered output should be computed before the first complete wave");
 
     // We don't assert a specific non-empty/empty outcome here since
     // weighted_tau may or may not detect finality via self-ratification
