@@ -442,19 +442,19 @@ fn print_ordering_preview(ordered: &[Vec<u8>], preview: usize) {
     }
 }
 
-struct OrderedComparison {
-    status: &'static str,
-    prefix_relation: &'static str,
-    first_mismatch: Option<String>,
+pub(crate) struct OrderedComparison {
+    pub(crate) status: &'static str,
+    pub(crate) prefix_relation: &'static str,
+    pub(crate) first_mismatch: Option<String>,
 }
 
-fn write_ordered_hashes(path: &PathBuf, ordered: &[String]) -> Result<()> {
+pub(crate) fn write_ordered_hashes(path: &PathBuf, ordered: &[String]) -> Result<()> {
     let body = serde_json::to_string_pretty(ordered)
         .context("failed to serialize ordered hashes to JSON")?;
     fs::write(path, body).with_context(|| format!("failed to write {}", path.display()))
 }
 
-fn compare_ordered_hashes(path: &PathBuf, current: &[String]) -> Result<OrderedComparison> {
+pub(crate) fn compare_ordered_hashes(path: &PathBuf, current: &[String]) -> Result<OrderedComparison> {
     let body =
         fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     let previous: Vec<String> = serde_json::from_str(&body)

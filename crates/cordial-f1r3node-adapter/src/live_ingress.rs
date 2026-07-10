@@ -42,7 +42,7 @@ use crate::ordered_output::OrderedFinalizedOutput;
 use crate::shard_conf::CasperShardConf;
 use crate::snapshot::{
     CasperSnapshot, SnapshotError, build_snapshot, latest_finalized_block_id,
-    ordered_finalized_block_hashes_with_cache, ordered_finalized_output,
+    ordered_finalized_block_hashes_with_cache,
 };
 
 /// High-level runtime phase for the live ingress adapter.
