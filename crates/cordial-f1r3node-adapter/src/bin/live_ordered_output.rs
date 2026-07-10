@@ -103,6 +103,7 @@ async fn main() -> Result<()> {
     let output = ingress
         .latest_finalized_ordered_output(args.wave_length)
         .map_err(|err| anyhow::anyhow!("failed to compute latest ordered output: {err:?}"))?;
+        
 
     print_output(&output, args.preview);
 
