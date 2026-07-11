@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
     // rather than recomputing ordering against the mirrored blocklace.
     let output = ingress
         .latest_finalized_ordered_output(args.wave_length)
-        .map_err(|err| anyhow::anyhow!("failed to compute latest ordered output: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("failed to compute latest ordered output: {err:?}"))?;
 
     print_output(&output, args.preview);
 

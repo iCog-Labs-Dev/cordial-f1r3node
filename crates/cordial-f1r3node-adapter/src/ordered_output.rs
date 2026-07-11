@@ -153,6 +153,14 @@ impl OrderedFinalizedOutput {
         self.blocks.is_empty()
     }
 
+    /// Return `true` whether this output preserves a previously exported finalized prefix.
+    ///
+    /// A valid newer output may be identical to `previous` or may append new finalized blocks.
+    /// Previously exported blocks must not be removed,replaced, or reordered.
+    pub fn preserves_prefix(&self, previous: &Self) -> bool {
+        self.blocks.starts_with(&previous.blocks)
+    }
+
     /// Return the anchor block's content hash, or `None` if no anchor exists.
     pub fn anchor_hash(&self) -> Option<Vec<u8>> {
         self.anchor.as_ref().map(|id| id.content_hash.to_vec())
@@ -188,5 +196,63 @@ impl Default for OrderedFinalizedOutput {
             total_mirrored_blocks: 0,
             computed_at_ns: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::OrderedFinalizedOutput;
+    use cordial_miners_core::types::{BlockIdentity, NodeId};
+
+    fn block(tag: u8) -> BlockIdentity {
+        BlockIdentity {
+            content_hash: [tag; 32],
+            creator: NodeId(vec![tag]),
+            signature: vec![tag; 64],
+        }
+    }
+
+    fn output(blocks: Vec<BlockIdentity>) -> OrderedFinalizedOutput {
+        OrderedFinalizedOutput::new(blocks, None, 3, 1, 0).with_timestamp(0)
+    }
+
+    #[test]
+    fn identical_output_preserves_previous_prefix() {
+        let previous = output(vec![block(1), block(2)]);
+        let current = output(vec![block(1), block(2)]);
+
+        assert!(current.preserves_prefix(&previous));
+    }
+
+    #[test]
+    fn appended_output_preserves_previous_prefix() {
+        let previous = output(vec![block(1), block(2)]);
+        let current = output(vec![block(1), block(2), block(3)]);
+
+        assert!(current.preserves_prefix(&previous));
+    }
+
+    #[test]
+    fn reordered_output_does_not_preserve_previous_prefix() {
+        let previous = output(vec![block(1), block(2)]);
+        let current = output(vec![block(2), block(1), block(3)]);
+
+        assert!(!current.preserves_prefix(&previous));
+    }
+
+    #[test]
+    fn truncated_output_does_not_preserve_previous_prefix() {
+        let previous = output(vec![block(1), block(2), block(3)]);
+        let current = output(vec![block(1), block(2)]);
+
+        assert!(!current.preserves_prefix(&previous));
+    }
+
+    #[test]
+    fn replaced_block_does_not_preserve_previous_prefix() {
+        let previous = output(vec![block(1), block(2)]);
+        let current = output(vec![block(1), block(9), block(3)]);
+
+        assert!(!current.preserves_prefix(&previous));
     }
 }
