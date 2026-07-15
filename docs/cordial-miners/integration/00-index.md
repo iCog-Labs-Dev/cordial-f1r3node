@@ -43,20 +43,11 @@ and easy to extend as new implementation notes are added.
    - Adds a no-node-changes external gRPC proxy for deploy observation
    - Preserves `f1r3node` method names while observing and forwarding `doDeploy`
 12. [12-ordered-output-reintegration.md](./12-ordered-output-reintegration.md)
-    - Defines the first clean seam for reconnecting Cordial output back to node-facing behavior
-    - Recommends exporting finalized ordered output before attempting proposer-side control
-13. [13-ordered-output-export.md](./13-ordered-output-export.md)
-    - Documents the stable `OrderedFinalizedOutput` export type and its fields
-    - Explains how the adapter produces, exposes, and intends the output to be consumed
-14. [14-ordered-output-consumer-boundary.md](./14-ordered-output-consumer-boundary.md)
-    - Defines the first node-facing consumer boundary for exported finalized ordered output
-    - Describes the `ReadOrderedOutput` trait and adapter-side shared container
-15. [15-shared-ordered-output-reader.md](./15-shared-ordered-output-reader.md)
-    - Documents the implemented in-process shared ordered output reader
-    - Covers prefix-preserving updates, staleness checks, and read-only consumption
-16. [16-ordered-output-file-export.md](./16-ordered-output-file-export.md)
-    - Documents the JSON file export seam for finalized ordered output
-    - Shows how sidecar tooling can read tau output without touching `f1r3node`
+   - Defines the first clean seam for reconnecting Cordial output back to node-facing behavior
+   - Recommends exporting finalized ordered output before attempting proposer-side control
+13. [13-four-node-ordering-convergence.md](./13-four-node-ordering-convergence.md)
+   - Documents the real four-node bounded window-order convergence verifier
+   - Compares mirrored ordered output from all validator gRPC endpoints
 
 ## Scope Of This Track
 

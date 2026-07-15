@@ -16,7 +16,7 @@ use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 use cordial_miners_core::Block;
 use cordial_miners_core::consensus::{
     depth, is_weighted_final_leader, leader_block_for_wave, wave_of_round,
-    weighted_final_leader_for_wave,
+    weighted_final_leader_for_wave, xsort,
 };
 use cordial_miners_core::execution::CordialBlockPayload;
 use cordial_miners_core::types::{BlockIdentity, NodeId};
@@ -56,6 +56,15 @@ struct Args {
     #[arg(long, default_value_t = 64)]
     height_batch_size: i64,
 
+    #[arg(long)]
+    height_bootstrap_window: Option<i64>,
+
+    #[arg(long)]
+    height_bootstrap_target: Option<i64>,
+
+    #[arg(long, default_value_t = false)]
+    trusted_window_boundary: bool,
+
     #[arg(long, default_value_t = false)]
     skip_ordering: bool,
 
@@ -67,6 +76,9 @@ struct Args {
 
     #[arg(long, default_value_t = false)]
     ordering_fragment_only: bool,
+
+    #[arg(long, default_value_t = false)]
+    window_ordering_fragment: bool,
 
     #[arg(long)]
     write_ordered_file: Option<PathBuf>,
@@ -81,6 +93,14 @@ impl BlocklaceAdapter<BlockIdentity> for PassthroughAdapter {
     fn on_block(&mut self, _block: Block) -> anyhow::Result<()> {
         Ok(())
     }
+}
+
+struct HeightBootstrapConfig {
+    start_height: i64,
+    target_max_height: i64,
+    batch_size: i64,
+    parents_only_bootstrap: bool,
+    trusted_window_boundary: bool,
 }
 
 #[tokio::main]
@@ -122,19 +142,31 @@ async fn main() -> Result<()> {
 
     let mut decoded_messages = 0usize;
     let mut height_bootstrapped = 0usize;
-    let target_max_height = recent_blocks
+    let observed_target_max_height = recent_blocks
         .iter()
         .map(|block| block.block_number)
         .max()
         .unwrap_or(0);
+    let target_max_height = args
+        .height_bootstrap_target
+        .unwrap_or(observed_target_max_height)
+        .min(observed_target_max_height);
 
     if args.height_bootstrap {
+        let bootstrap_start = args
+            .height_bootstrap_window
+            .map(|window| (target_max_height - window.max(1) + 1).max(0))
+            .unwrap_or(0);
         height_bootstrapped = bootstrap_by_heights(
             &mut grpc,
             &mut ingress,
-            target_max_height,
-            args.height_batch_size.max(1),
-            args.parents_only_bootstrap,
+            HeightBootstrapConfig {
+                start_height: bootstrap_start,
+                target_max_height,
+                batch_size: args.height_batch_size.max(1),
+                parents_only_bootstrap: args.parents_only_bootstrap,
+                trusted_window_boundary: args.trusted_window_boundary,
+            },
             &mut decoded_messages,
         )
         .await?;
@@ -170,11 +202,18 @@ async fn main() -> Result<()> {
 
     println!("[phase] bootstrap complete");
 
-    println!("[phase] computing mirror last finalized block");
-    let mirror_last_finalized = ingress
-        .last_finalized_block_hash()
-        .map_err(|err| anyhow::anyhow!("failed to compute mirror last finalized block: {err:?}"))?
-        .map(hex_string);
+    let mirror_last_finalized = if args.window_ordering_fragment && args.skip_http_compare {
+        println!("[phase] skipping mirror last finalized block for window ordering");
+        None
+    } else {
+        println!("[phase] computing mirror last finalized block");
+        ingress
+            .last_finalized_block_hash()
+            .map_err(|err| {
+                anyhow::anyhow!("failed to compute mirror last finalized block: {err:?}")
+            })?
+            .map(hex_string)
+    };
 
     println!("[phase] querying gRPC last finalized block");
     let grpc_last_finalized = grpc
@@ -211,13 +250,17 @@ async fn main() -> Result<()> {
     } else {
         println!(
             "[phase] computing {}",
-            if args.ordering_fragment_only {
-                "latest finalized ordered output"
+            if args.window_ordering_fragment {
+                "mirrored window ordering fragment"
+            } else if args.ordering_fragment_only {
+                "latest finalized ordering fragment"
             } else {
                 "ordered finalized blocks"
             }
         );
-        Some(if args.ordering_fragment_only {
+        Some(if args.window_ordering_fragment {
+            window_ordering_fragment(&ingress)?
+        } else if args.ordering_fragment_only {
             // Use the stable ordered_output export seam instead of
             // recomputing ordering (approved_blocks_for_leader + xsort)
             // directly against the mirrored blocklace.
@@ -264,10 +307,24 @@ async fn main() -> Result<()> {
     println!("Parents-only:      {}", args.parents_only_bootstrap);
     println!("Height bootstrap:  {}", args.height_bootstrap);
     println!("Height batch:      {}", args.height_batch_size);
+    println!(
+        "Height window:     {}",
+        args.height_bootstrap_window
+            .map(|window| window.to_string())
+            .unwrap_or_else(|| "<full>".to_string())
+    );
+    println!(
+        "Height target:     {}",
+        args.height_bootstrap_target
+            .map(|target| target.to_string())
+            .unwrap_or_else(|| "<latest>".to_string())
+    );
+    println!("Trusted boundary:  {}", args.trusted_window_boundary);
     println!("Skip ordering:     {}", args.skip_ordering);
     println!("Skip HTTP compare: {}", args.skip_http_compare);
     println!("Ordering preview:  {}", args.ordering_preview);
     println!("Fragment only:     {}", args.ordering_fragment_only);
+    println!("Window fragment:   {}", args.window_ordering_fragment);
     println!(
         "Write ordered:     {}",
         args.write_ordered_file
@@ -583,6 +640,23 @@ fn print_ordered_block_summary(block: &BlockIdentity, ingress: &LiveIngress<Pass
     );
 }
 
+fn window_ordering_fragment(ingress: &LiveIngress<PassthroughAdapter>) -> Result<Vec<Vec<u8>>> {
+    let blocks = ingress
+        .blocklace()
+        .dom()
+        .into_iter()
+        .filter_map(|id| ingress.blocklace().get(id))
+        .collect();
+
+    let ordered = xsort(&blocks)
+        .map_err(|err| anyhow::anyhow!("failed to order mirrored window: {err:?}"))?;
+
+    Ok(ordered
+        .into_iter()
+        .map(|id| id.content_hash.to_vec())
+        .collect())
+}
+
 #[derive(Debug, Clone)]
 struct MirrorBlockMeta {
     creator: String,
@@ -745,21 +819,19 @@ fn mirrored_blocks_in_height_range(
 async fn bootstrap_by_heights(
     grpc: &mut LiveGrpcBlockClient,
     ingress: &mut LiveIngress<PassthroughAdapter>,
-    target_max_height: i64,
-    batch_size: i64,
-    parents_only_bootstrap: bool,
+    config: HeightBootstrapConfig,
     decoded_messages: &mut usize,
 ) -> Result<usize> {
-    let mut start = 0i64;
+    let mut start = config.start_height.max(0);
     let mut bootstrapped = 0usize;
 
     println!(
-        "[height-bootstrap] target_max_height={}, batch_size={}",
-        target_max_height, batch_size
+        "[height-bootstrap] start_height={}, target_max_height={}, batch_size={}",
+        start, config.target_max_height, config.batch_size
     );
 
-    while start <= target_max_height {
-        let end = (start + batch_size - 1).min(target_max_height);
+    while start <= config.target_max_height {
+        let end = (start + config.batch_size - 1).min(config.target_max_height);
         let blocks = grpc
             .light_blocks_by_heights(start, end)
             .await
@@ -779,14 +851,25 @@ async fn bootstrap_by_heights(
                 .with_context(|| format!("failed to decode live block {}", info.block_hash))?;
             *decoded_messages += 1;
 
-            let block =
-                trusted_block_from_light_block_info_with_options(info, !parents_only_bootstrap)
+            let block = trusted_block_from_light_block_info_with_options(
+                info,
+                !config.parents_only_bootstrap,
+            )
+            .with_context(|| format!("failed to reconstruct trusted block {}", info.block_hash))?;
+            if config.trusted_window_boundary {
+                ingress
+                    .ingest_trusted_window_block(block)
                     .with_context(|| {
-                        format!("failed to reconstruct trusted block {}", info.block_hash)
+                        format!(
+                            "failed to mirror live block {} with trusted window boundary",
+                            info.block_hash
+                        )
                     })?;
-            ingress
-                .ingest_trusted_block(block)
-                .with_context(|| format!("failed to mirror live block {}", info.block_hash))?;
+            } else {
+                ingress
+                    .ingest_trusted_block(block)
+                    .with_context(|| format!("failed to mirror live block {}", info.block_hash))?;
+            }
             bootstrapped += 1;
         }
 
