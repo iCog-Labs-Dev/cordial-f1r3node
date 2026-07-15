@@ -112,6 +112,46 @@ fn live_ingress_buffers_out_of_order_blocks_until_predecessors_arrive() {
 }
 
 #[test]
+fn live_ingress_window_boundary_applies_blocks_with_missing_predecessors() {
+    let signing_key = test_signing_key(14);
+    let creator = test_public_key(&signing_key);
+    let missing_parent = BlockIdentity {
+        content_hash: [42u8; 32],
+        creator: NodeId(vec![99]),
+        signature: vec![],
+    };
+    let block = build_test_block_with_predecessors(
+        NodeId(creator),
+        [missing_parent].into_iter().collect(),
+        &signing_key,
+        25,
+        8,
+    );
+
+    let mut strict_ingress = LiveIngress::new(RecordingAdapter::default());
+    strict_ingress
+        .ingest_trusted_block(block.clone())
+        .expect("strict trusted ingestion should buffer incomplete closure");
+    assert_eq!(strict_ingress.blocklace().dom().len(), 0);
+    assert_eq!(strict_ingress.pending_blocks().len(), 1);
+
+    let mut window_ingress = LiveIngress::new(RecordingAdapter::default());
+    window_ingress
+        .ingest_trusted_window_block(block.clone())
+        .expect("window boundary ingestion should apply trusted recent block");
+    assert_eq!(window_ingress.blocklace().dom().len(), 1);
+    assert!(window_ingress.pending_blocks().is_empty());
+    assert!(
+        window_ingress
+            .blocklace()
+            .content(&block.identity)
+            .expect("window block should be mirrored")
+            .predecessors
+            .is_empty()
+    );
+}
+
+#[test]
 fn live_ingress_ignores_duplicate_blocks_in_mirror_state() {
     let signing_key = test_signing_key(13);
     let creator = test_public_key(&signing_key);
@@ -713,5 +753,39 @@ fn build_test_block_message_with_state(
         sig_algorithm: sig_algorithm.to_string(),
         shard_id: "0".to_string(),
         extra_bytes: vec![],
+    }
+}
+
+fn build_test_block_with_predecessors(
+    creator: NodeId,
+    predecessors: HashSet<BlockIdentity>,
+    signing_key: &[u8],
+    block_number: u64,
+    state_tag: u8,
+) -> Block {
+    let payload = CordialBlockPayload {
+        state: BlockState {
+            pre_state_hash: vec![state_tag; 32],
+            post_state_hash: vec![state_tag.wrapping_add(1); 32],
+            bonds: vec![],
+            block_number,
+        },
+        deploys: vec![],
+        rejected_deploys: vec![],
+        system_deploys: vec![],
+    };
+    let content = BlockContent {
+        payload: payload.to_bytes(),
+        predecessors,
+    };
+    let content_hash = hash_content(&content);
+    let signature = sign(&content_hash, signing_key);
+    Block {
+        identity: BlockIdentity {
+            content_hash,
+            creator,
+            signature,
+        },
+        content,
     }
 }

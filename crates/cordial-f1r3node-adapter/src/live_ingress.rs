@@ -174,6 +174,37 @@ where
         })
     }
 
+    pub fn ingest_with_trusted_boundary(&mut self, block: Block) -> Result<MirrorUpdate, String> {
+        let mut block = self.canonicalize_block(block);
+
+        if self.blocklace.get(&block.identity).is_some() {
+            return Ok(MirrorUpdate {
+                disposition: MirrorDisposition::Duplicate,
+                released_from_buffer: 0,
+            });
+        }
+
+        if self.pending.contains_key(&block.identity) {
+            return Ok(MirrorUpdate {
+                disposition: MirrorDisposition::Duplicate,
+                released_from_buffer: 0,
+            });
+        }
+
+        block
+            .content
+            .predecessors
+            .retain(|pred_id| self.resolve_known_identity(pred_id).is_some());
+
+        self.blocklace.insert(block, &self.verifier)?;
+        let released_from_buffer = self.release_pending()?;
+
+        Ok(MirrorUpdate {
+            disposition: MirrorDisposition::Applied,
+            released_from_buffer,
+        })
+    }
+
     fn predecessors_available(&self, block: &Block) -> bool {
         block
             .content
@@ -457,6 +488,31 @@ impl<A> LiveIngress<A> {
         let update = self
             .mirror
             .ingest(block)
+            .map_err(LiveIngressError::Mirror)?;
+        self.phase = LiveIngressPhase::Connected;
+        Ok(update)
+    }
+
+    /// Ingest a trusted live block while treating missing predecessors as a
+    /// bounded-window boundary.
+    ///
+    /// This is intended for live inspection against a running node when the
+    /// verifier intentionally mirrors only recent heights. The normal
+    /// `ingest_trusted_block` path remains strict and buffers blocks until the
+    /// complete predecessor closure is present.
+    pub fn ingest_trusted_window_block(
+        &mut self,
+        block: Block,
+    ) -> Result<MirrorUpdate, LiveIngressError>
+    where
+        A: BlocklaceAdapter<BlockIdentity>,
+    {
+        self.adapter
+            .on_block(block.clone())
+            .map_err(LiveIngressError::Adapter)?;
+        let update = self
+            .mirror
+            .ingest_with_trusted_boundary(block)
             .map_err(LiveIngressError::Mirror)?;
         self.phase = LiveIngressPhase::Connected;
         Ok(update)
