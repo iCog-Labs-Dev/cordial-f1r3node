@@ -137,6 +137,9 @@ demo-cordial-four-node-cluster-status:
 demo-cordial-four-node-cluster-verify: demo-cordial-four-node-cluster-up
     docker compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} run --rm cordial-four-node-cluster-verifier
 
+demo-cordial-four-node-cluster-ordering:
+    ./docker/scripts/verify-four-node-cluster-ordering.sh
+
 demo-cordial-four-node-cluster-blocks:
     for port in 51403 52403 53403 54403; do echo "node http:${port}"; curl -s "http://127.0.0.1:${port}/api/blocks/10" | jq '[.[].blockInfo | {blockNumber,blockHash,sender,seqNum,deployCount,isFinalized}]'; done
 
