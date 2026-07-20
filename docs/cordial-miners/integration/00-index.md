@@ -48,6 +48,9 @@ and easy to extend as new implementation notes are added.
 13. [13-ordered-output-export.md](./13-ordered-output-export.md)
     - Documents the stable `OrderedFinalizedOutput` export type and its fields
     - Explains how the adapter produces, exposes, and intends the output to be consumed
+14. [14-ordered-output-consumer-boundary.md](./14-ordered-output-consumer-boundary.md)
+    - Defines the first node-facing consumer boundary for exported finalized ordered output
+    - Describes the `ReadOrderedOutput` trait and adapter-side shared container
 
 ## Scope Of This Track
 
@@ -62,5 +65,6 @@ The integration notes in this folder focus on:
 
 Future notes in this folder are expected to cover:
 
-- downstream node-facing consumption of finalized ordered fragments
-- proposer-facing integration only after the ordered-output seam is established
+- transport wiring for ordered output (gRPC / IPC serving of `OrderedFinalizedOutput`)
+- push / notification delivery for ordered output consumers
+- proposer-facing integration only after the consumer boundary is validated
