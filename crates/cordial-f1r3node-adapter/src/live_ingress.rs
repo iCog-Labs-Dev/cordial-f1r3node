@@ -404,10 +404,48 @@ impl<A> LiveIngress<A> {
     /// finalized blocks, the anchoring weighted final leader, consensus
     /// metadata, and a wall-clock timestamp.
     ///
-    /// Monotonicity guarantee: each subsequent call produces a prefix of the
-    /// next — blocks are never removed or reordered.
-    pub fn latest_ordered_output(&self) -> OrderedFinalizedOutput {
-        ordered_finalized_output(self.mirror.blocklace(), &self.bonds)
+    /// This is the boundary inspection tooling and downstream consumers
+    /// should use instead of recomputing ordering against the mirrored
+    /// blocklace directly.
+    pub fn latest_finalized_ordered_output(
+        &mut self,
+        wave_length: u64,
+    ) -> Result<OrderedFinalizedOutput, SnapshotError> {
+        let anchor = latest_finalized_block_id(self.mirror.blocklace(), &self.bonds);
+
+        let hashes = {
+            let blocklace = self.mirror.blocklace();
+            let bonds = &self.bonds;
+            let cache = &mut self.ordering_cache;
+            ordered_finalized_block_hashes_with_cache(blocklace, bonds, cache)
+        };
+
+        // The ordering helper above still speaks in bare content hashes
+        // (matching `CasperSnapshot::ordered_finalized_blocks`). Resolve
+        // each hash back to its full `BlockIdentity` from the mirror so the
+        // stable export type can carry creator/signature context as well.
+        let by_hash: HashMap<Vec<u8>, BlockIdentity> = self
+            .mirror
+            .blocklace()
+            .dom()
+            .into_iter()
+            .map(|id| (id.content_hash.to_vec(), id.clone()))
+            .collect();
+
+        let blocks: Vec<BlockIdentity> = hashes
+            .into_iter()
+            .filter_map(|hash| by_hash.get(&hash).cloned())
+            .collect();
+
+        let total_mirrored_blocks = self.mirror.blocklace().dom().len();
+
+        Ok(OrderedFinalizedOutput::new(
+            blocks,
+            anchor,
+            wave_length,
+            self.bonds.len(),
+            total_mirrored_blocks,
+        ))
     }
 
     /// Ingest a trusted block that was reconstructed from a live node-facing

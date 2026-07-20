@@ -17,12 +17,15 @@ use cordial_f1r3node_adapter::live_grpc::{
 };
 use cordial_f1r3node_adapter::live_ingress::LiveIngress;
 use cordial_f1r3node_adapter::ordered_output::OrderedFinalizedOutput;
+use cordial_f1r3node_adapter::ordered_output_file::write_latest_ordered_output_file;
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
+use cordial_f1r3node_adapter::shared_ordered_output::SharedOrderedOutput;
 use cordial_miners_core::Block;
 use cordial_miners_core::types::{BlockIdentity, NodeId};
 use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::string_ops::StringOps;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "live-ordered-output")]
@@ -44,6 +47,12 @@ struct Args {
 
     #[arg(long, default_value_t = 5)]
     preview: usize,
+
+    #[arg(long)]
+    write_output_file: Option<PathBuf>,
+
+    #[arg(long, default_value_t = false)]
+    allow_empty_output: bool,
 }
 
 struct PassthroughAdapter;
@@ -103,7 +112,13 @@ async fn main() -> Result<()> {
     let output = ingress
         .latest_finalized_ordered_output(args.wave_length)
         .map_err(|err| anyhow::anyhow!("failed to compute latest ordered output: {err:?}"))?;
-        
+
+    if let Some(path) = args.write_output_file.as_ref() {
+        let reader = SharedOrderedOutput::from_output(output.clone());
+        write_latest_ordered_output_file(path, &reader, args.allow_empty_output)
+            .with_context(|| format!("failed to write ordered output file {}", path.display()))?;
+        println!("Wrote ordered output: {}", path.display());
+    }
 
     print_output(&output, args.preview);
 
