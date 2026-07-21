@@ -178,6 +178,10 @@ pub enum SnapshotError {
 
     /// Block number overflowed i64 when building the height index.
     BlockNumberOverflow { block_hash: [u8; 32], value: u64 },
+
+    /// Updating a shared ordered-output reader would rewrite a previously
+    /// published finalized prefix.
+    OrderedOutputPrefixViolation,
 }
 
 /// Build a [`CasperSnapshot`] from the current blocklace state.
@@ -443,7 +447,7 @@ pub(crate) fn ordered_finalized_block_hashes(
 ///
 /// So the fork check is performed explicitly and short-circuits before any
 /// fallthrough decision is made; only "no complete wave yet" falls through.
-fn ordered_block_identities_with_cache(
+pub(crate) fn ordered_block_identities_with_cache(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,
     cache: &mut OrderingCache,

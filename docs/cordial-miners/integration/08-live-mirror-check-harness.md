@@ -92,6 +92,19 @@ cargo run -p cordial-f1r3node-adapter --bin live_mirror_check -- \
   --write-ordered-file /tmp/ordered-baseline.json
 ```
 
+Verify the saved ordered hash list:
+
+```bash
+jq 'length' /tmp/ordered-baseline.json
+jq '.[0:3]' /tmp/ordered-baseline.json
+jq '.[-3:]' /tmp/ordered-baseline.json
+```
+
+`live_mirror_check --write-ordered-file` writes a JSON array of finalized block
+hashes in Cordial tau order. The `length` value should match the `Ordered
+blocks` value printed by the harness, and the head/tail checks should match the
+printed `Ordered head` and `Ordered tail`.
+
 Compare a later run against a previously saved ordering:
 
 ```bash
