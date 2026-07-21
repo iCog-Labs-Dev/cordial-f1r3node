@@ -51,6 +51,9 @@ and easy to extend as new implementation notes are added.
 14. [14-ordered-output-consumer-boundary.md](./14-ordered-output-consumer-boundary.md)
     - Defines the first node-facing consumer boundary for exported finalized ordered output
     - Describes the `ReadOrderedOutput` trait and adapter-side shared container
+15. [15-shared-ordered-output-reader.md](./15-shared-ordered-output-reader.md)
+    - Documents the implemented in-process shared ordered output reader
+    - Covers prefix-preserving updates, staleness checks, and read-only consumption
 
 ## Scope Of This Track
 
