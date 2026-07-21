@@ -11,9 +11,10 @@ modified, and no proposer behavior is changed.
 ## Purpose
 
 The adapter can produce finalized ordered output through
-`LiveIngress::latest_finalized_ordered_output(...)`. The shared reader gives
-downstream adapter-side code a stable way to hold and read the latest output
-without recomputing ordering or touching the blocklace.
+`LiveIngress::latest_finalized_ordered_output(...)`. `LiveIngress` owns a
+`SharedOrderedOutput` instance and updates it whenever that method computes a
+new output. Downstream adapter-side code can then read the latest published
+output without recomputing ordering or touching the blocklace.
 
 ## Implementation
 
@@ -30,6 +31,7 @@ It defines:
   - exposes `latest()`, `anchor_hash()`, and `is_stale(...)`
 - `SharedOrderedOutput`
   - adapter-side container for the latest `OrderedFinalizedOutput`
+  - owned by `LiveIngress`
   - supports prefix-preserving updates
   - supports clearing for lifecycle resets and tests
 - `SharedOrderedOutputError`
@@ -65,6 +67,12 @@ The tests cover:
 - clearing the reader
 
 ## What This Does Not Do
+
+`LiveIngress` exposes the owned reader through:
+
+```text
+LiveIngress::ordered_output_reader()
+```
 
 This implementation is an in-process consumer boundary only. It does not yet:
 

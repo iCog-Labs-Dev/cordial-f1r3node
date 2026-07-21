@@ -454,7 +454,10 @@ pub(crate) fn write_ordered_hashes(path: &PathBuf, ordered: &[String]) -> Result
     fs::write(path, body).with_context(|| format!("failed to write {}", path.display()))
 }
 
-pub(crate) fn compare_ordered_hashes(path: &PathBuf, current: &[String]) -> Result<OrderedComparison> {
+pub(crate) fn compare_ordered_hashes(
+    path: &PathBuf,
+    current: &[String],
+) -> Result<OrderedComparison> {
     let body =
         fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     let previous: Vec<String> = serde_json::from_str(&body)

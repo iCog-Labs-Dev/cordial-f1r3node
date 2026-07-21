@@ -54,6 +54,9 @@ and easy to extend as new implementation notes are added.
 15. [15-shared-ordered-output-reader.md](./15-shared-ordered-output-reader.md)
     - Documents the implemented in-process shared ordered output reader
     - Covers prefix-preserving updates, staleness checks, and read-only consumption
+16. [16-ordered-output-file-export.md](./16-ordered-output-file-export.md)
+    - Documents the JSON file export seam for finalized ordered output
+    - Shows how sidecar tooling can read tau output without touching `f1r3node`
 
 ## Scope Of This Track
 
