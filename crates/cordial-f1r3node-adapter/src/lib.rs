@@ -34,5 +34,6 @@ pub mod repository;
 pub mod rspace_runtime;
 pub mod runtime_bridge;
 pub mod shard_conf;
+pub mod shared_ordered_output;
 pub mod slashing;
 pub mod snapshot;
