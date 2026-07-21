@@ -29,6 +29,7 @@ pub mod live_deploy_proxy;
 pub mod live_grpc;
 pub mod live_ingress;
 pub mod ordered_output;
+pub mod ordered_output_file;
 pub mod proposer;
 pub mod repository;
 pub mod rspace_runtime;
