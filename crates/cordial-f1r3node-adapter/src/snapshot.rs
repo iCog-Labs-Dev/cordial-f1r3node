@@ -178,6 +178,10 @@ pub enum SnapshotError {
 
     /// Block number overflowed i64 when building the height index.
     BlockNumberOverflow { block_hash: [u8; 32], value: u64 },
+
+    /// Updating a shared ordered-output reader would rewrite a previously
+    /// published finalized prefix.
+    OrderedOutputPrefixViolation,
 }
 
 /// Build a [`CasperSnapshot`] from the current blocklace state.

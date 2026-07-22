@@ -6,6 +6,7 @@ use cordial_f1r3node_adapter::block_translation::{
 use cordial_f1r3node_adapter::grpc_ingest::BlocklaceAdapter;
 use cordial_f1r3node_adapter::live_ingress::{LiveIngress, LiveIngressError, LiveIngressPhase};
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
+use cordial_f1r3node_adapter::shared_ordered_output::ReadOrderedOutput;
 use cordial_miners_core::Block;
 use cordial_miners_core::crypto::{hash_content, sign};
 use cordial_miners_core::execution::{BlockState, CordialBlockPayload};
@@ -302,6 +303,11 @@ fn latest_ordered_output_is_monotonic_across_batches() {
     let first_output = ingress
         .latest_finalized_ordered_output(WAVELENGTH)
         .expect("first batch ordered output should be computed");
+    assert_eq!(
+        ingress.ordered_output_reader().latest(),
+        Some(&first_output),
+        "live ingress should publish computed output into its shared reader"
+    );
 
     // Batch 2: ingest remaining 3 blocks (completes wave 1).
     for block_msg in &blocks[3..6] {
@@ -312,6 +318,11 @@ fn latest_ordered_output_is_monotonic_across_batches() {
     let second_output = ingress
         .latest_finalized_ordered_output(WAVELENGTH)
         .expect("second batch ordered output should be computed");
+    assert_eq!(
+        ingress.ordered_output_reader().latest(),
+        Some(&second_output),
+        "shared reader should track the latest computed output"
+    );
 
     // The first batch's blocks must be a prefix of the second batch's blocks.
     assert!(
