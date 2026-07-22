@@ -112,7 +112,7 @@ fn live_ingress_single(creator: &NodeId) -> LiveIngress<TestAdapter> {
     let mut bonds = HashMap::new();
     bonds.insert(creator.clone(), 100);
 
-    LiveIngress::with_consensus_view(TestAdapter::default(), bonds, shard_conf(), "root")
+    LiveIngress::with_consensus_view(TestAdapter, bonds, shard_conf(), "root")
 }
 
 fn live_ingress_multi(creators: &[NodeId]) -> LiveIngress<TestAdapter> {
@@ -121,13 +121,13 @@ fn live_ingress_multi(creators: &[NodeId]) -> LiveIngress<TestAdapter> {
         bonds.insert(creator.clone(), 100);
     }
 
-    LiveIngress::with_consensus_view(TestAdapter::default(), bonds, shard_conf(), "root")
+    LiveIngress::with_consensus_view(TestAdapter, bonds, shard_conf(), "root")
 }
 
 fn live_ingress_weighted(validators: &[(NodeId, u64)]) -> LiveIngress<TestAdapter> {
     let bonds = validators.iter().cloned().collect();
 
-    LiveIngress::with_consensus_view(TestAdapter::default(), bonds, shard_conf(), "root")
+    LiveIngress::with_consensus_view(TestAdapter, bonds, shard_conf(), "root")
 }
 
 fn ingest_batch(ingress: &mut LiveIngress<TestAdapter>, blocks: &[Block]) {
@@ -286,9 +286,9 @@ fn multi_validator_ordered_output_is_monotonic_as_a_wave_completes() {
 
     let leader = make_block(&creator_1, 0, 1, &[]);
 
-    let round1_v2 = make_block(&creator_2, 1, 2, &[leader.identity.clone()]);
-    let round1_v3 = make_block(&creator_3, 1, 3, &[leader.identity.clone()]);
-    let round1_v4 = make_block(&creator_4, 1, 4, &[leader.identity.clone()]);
+    let round1_v2 = make_block(&creator_2, 1, 2, std::slice::from_ref(&leader.identity));
+    let round1_v3 = make_block(&creator_3, 1, 3, std::slice::from_ref(&leader.identity));
+    let round1_v4 = make_block(&creator_4, 1, 4, std::slice::from_ref(&leader.identity));
 
     let round1_support = vec![
         round1_v2.identity.clone(),
@@ -345,9 +345,9 @@ fn multi_validator_ordered_output_does_not_rewrite_finalized_prefix_on_unrelated
     ]);
 
     let leader = make_block(&creator_1, 0, 1, &[]);
-    let round1_v2 = make_block(&creator_2, 1, 2, &[leader.identity.clone()]);
-    let round1_v3 = make_block(&creator_3, 1, 3, &[leader.identity.clone()]);
-    let round1_v4 = make_block(&creator_4, 1, 4, &[leader.identity.clone()]);
+    let round1_v2 = make_block(&creator_2, 1, 2, std::slice::from_ref(&leader.identity));
+    let round1_v3 = make_block(&creator_3, 1, 3, std::slice::from_ref(&leader.identity));
+    let round1_v4 = make_block(&creator_4, 1, 4, std::slice::from_ref(&leader.identity));
 
     let round1_support = vec![
         round1_v2.identity.clone(),
