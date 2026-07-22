@@ -2,7 +2,7 @@ services:
   cordial-conformance:
     build:
       context: ../..
-      dockerfile: blocklace/docker/Dockerfile
+      dockerfile: cordial-f1r3node/docker/Dockerfile
       target: cordial-conformance
       args:
         CORDIAL_RUST_BASE: ${CORDIAL_RUST_BASE:-rust:slim-bookworm}
