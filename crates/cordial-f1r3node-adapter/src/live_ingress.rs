@@ -42,7 +42,7 @@ use crate::ordered_output::OrderedFinalizedOutput;
 use crate::shard_conf::CasperShardConf;
 use crate::snapshot::{
     CasperSnapshot, SnapshotError, build_snapshot, latest_finalized_block_id,
-    ordered_finalized_block_hashes_with_cache,
+    ordered_block_identities_with_cache, ordered_finalized_block_hashes_with_cache,
 };
 
 /// High-level runtime phase for the live ingress adapter.
@@ -411,31 +411,12 @@ impl<A> LiveIngress<A> {
         &mut self,
         wave_length: u64,
     ) -> Result<OrderedFinalizedOutput, SnapshotError> {
-        let anchor = latest_finalized_block_id(self.mirror.blocklace(), &self.bonds);
-
-        let hashes = {
+        let (blocks, anchor) = {
             let blocklace = self.mirror.blocklace();
             let bonds = &self.bonds;
             let cache = &mut self.ordering_cache;
-            ordered_finalized_block_hashes_with_cache(blocklace, bonds, cache)
+            ordered_block_identities_with_cache(blocklace, bonds, cache)
         };
-
-        // The ordering helper above still speaks in bare content hashes
-        // (matching `CasperSnapshot::ordered_finalized_blocks`). Resolve
-        // each hash back to its full `BlockIdentity` from the mirror so the
-        // stable export type can carry creator/signature context as well.
-        let by_hash: HashMap<Vec<u8>, BlockIdentity> = self
-            .mirror
-            .blocklace()
-            .dom()
-            .into_iter()
-            .map(|id| (id.content_hash.to_vec(), id.clone()))
-            .collect();
-
-        let blocks: Vec<BlockIdentity> = hashes
-            .into_iter()
-            .filter_map(|hash| by_hash.get(&hash).cloned())
-            .collect();
 
         let total_mirrored_blocks = self.mirror.blocklace().dom().len();
 
