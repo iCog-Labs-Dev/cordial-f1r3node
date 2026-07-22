@@ -16,7 +16,7 @@ use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 use cordial_miners_core::Block;
 use cordial_miners_core::consensus::{
     depth, is_weighted_final_leader, leader_block_for_wave, wave_of_round,
-    weighted_final_leader_for_wave,
+    weighted_final_leader_for_wave, xsort,
 };
 use cordial_miners_core::execution::CordialBlockPayload;
 use cordial_miners_core::types::{BlockIdentity, NodeId};
@@ -261,7 +261,15 @@ async fn main() -> Result<()> {
         Some(if args.window_ordering_fragment {
             window_ordering_fragment(&ingress)?
         } else if args.ordering_fragment_only {
-            latest_ordering_fragment(&ingress, mirror_last_finalized.as_deref())?
+            // Use the stable ordered_output export seam instead of
+            // recomputing ordering (approved_blocks_for_leader + xsort)
+            // directly against the mirrored blocklace.
+            let output = ingress.latest_finalized_ordered_output(3).map_err(|err| {
+                anyhow::anyhow!("failed to compute latest ordered output: {err:?}")
+            })?;
+            let hashes = output.block_hashes();
+            ordered_output = Some(output);
+            hashes
         } else {
             ingress.ordered_finalized_blocks().map_err(|err| {
                 anyhow::anyhow!("failed to compute ordered finalized blocks: {err:?}")
