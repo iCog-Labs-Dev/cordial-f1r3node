@@ -1,0 +1,8 @@
+[package]
+name = "cordial-por"
+description = "Proof-of-Reputation state and weight export for Cordial Miners"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+cordial-miners-core = { path = "../cordial-miners-core" }
