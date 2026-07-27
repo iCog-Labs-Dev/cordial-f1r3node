@@ -22,11 +22,14 @@
 pub mod block_translation;
 pub mod casper_adapter;
 pub mod crypto_bridge;
+pub mod grpc_deploy_ingress;
 pub mod grpc_ingest;
+pub mod http_deploy_ingress;
 pub mod http_observer;
 pub mod live_deploy_ingress;
 pub mod live_deploy_proxy;
 pub mod live_grpc;
+pub mod live_http_deploy_proxy;
 pub mod live_ingress;
 pub mod ordered_output;
 pub mod ordered_output_file;

@@ -70,6 +70,19 @@ impl LiveDeployProxy {
         }
     }
 
+    /// Share an existing `LiveDeployIngress` with another component
+    /// (e.g. a `LiveHttpDeployProxy`) so gRPC- and HTTP-observed deploys
+    /// land in one unified staged view.
+    pub fn with_shared_ingress(
+        client: DeployServiceClient<Channel>,
+        ingress: Arc<Mutex<LiveDeployIngress>>,
+    ) -> Self {
+        Self {
+            upstream: Arc::new(Mutex::new(client)),
+            ingress,
+        }
+    }
+
     pub async fn observed_deploys(&self) -> Vec<ObservedDeploy> {
         self.ingress
             .lock()
