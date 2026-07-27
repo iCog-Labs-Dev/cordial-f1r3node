@@ -36,3 +36,4 @@ k256 = { version = "0.13", features = ["ecdsa"] }
 async-trait = "0.1"
 either = "1"
 hex = "0.4"
+axum = "0.8"
