@@ -35,6 +35,9 @@ clap = { version = "4.6", features = ["derive"] }
 casper = { path = "../../../f1r3node/casper" }
 models = { path = "../../../f1r3node/models" }
 
+# ── HTTP deploy ingress server ──────────────────────────────────────────────
+axum.workspace = true
+
 # ── logging ───────────────────────────────────────────────────────────────
 tracing      = "0.1"
 
