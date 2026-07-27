@@ -86,6 +86,7 @@ impl std::fmt::Display for HttpDeployConversionError {
 
 impl std::error::Error for HttpDeployConversionError {}
 
+#[derive(Debug)]
 pub struct LiveDeployIngress {
     staged: HashMap<Vec<u8>, ObservedDeploy>,
     observed_order: Vec<Vec<u8>>,
@@ -126,6 +127,13 @@ impl LiveDeployIngress {
         Ok(self.observe_http_deploy(&deploy))
     }
 
+    /// Observe a deploy from the given source.
+    ///
+    /// **Duplicate semantics:** if the same signature is re-observed from the
+    /// *same* source the observation count is intentionally not incremented
+    /// (quiets retries / duplicate delivery). If it arrives via a *different*
+    /// source (e.g. HTTP then gRPC) the count *is* bumped, reflecting a
+    /// genuine multi-path sighting.
     pub fn observe_deploy(
         &mut self,
         source: DeployIngressSource,
@@ -140,7 +148,7 @@ impl LiveDeployIngress {
             && entry.sources.len() == 1
             && entry.sources.contains(&source)
         {
-            // already initialized with the first observation
+            // same source, same signature — retry/duplicate, don't bump count
         } else {
             entry.observe_again(source);
         }
