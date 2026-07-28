@@ -144,12 +144,7 @@ impl LiveDeployIngress {
             self.observed_order.push(signature.clone());
             ObservedDeploy::from_signed(source, deploy)
         });
-        if entry.observation_count == 1
-            && entry.sources.len() == 1
-            && entry.sources.contains(&source)
-        {
-            // same source, same signature — retry/duplicate, don't bump count
-        } else {
+        if !entry.sources.contains(&source) {
             entry.observe_again(source);
         }
         entry.clone()
