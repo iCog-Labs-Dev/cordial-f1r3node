@@ -164,22 +164,31 @@ pub fn validate_block(
     }
 
     // 4. Closure axiom — all predecessors must exist
-    if config.check_closure {
-        let missing: Vec<BlockIdentity> = block
-            .content
-            .predecessors
-            .iter()
-            .filter(|pred_id| blocklace.content(pred_id).is_none())
-            .cloned()
-            .collect();
+    let missing_predecessors: Vec<BlockIdentity> = block
+        .content
+        .predecessors
+        .iter()
+        .filter(|pred_id| blocklace.content(pred_id).is_none())
+        .cloned()
+        .collect();
 
-        if !missing.is_empty() {
-            errors.push(InvalidBlock::MissingPredecessors { missing });
-        }
+    if config.check_closure && !missing_predecessors.is_empty() {
+        errors.push(InvalidBlock::MissingPredecessors {
+            missing: missing_predecessors.clone(),
+        });
     }
 
     // 5. Chain axiom — inserting this block must not create equivocation
-    if config.check_chain_axiom {
+    //
+    // Only decidable once the block's causal history is present. The check
+    // establishes comparability by walking the local blocklace from the
+    // creator's existing blocks through this block's predecessors, so a block
+    // whose predecessors have not arrived yet would be reported as an
+    // equivocation purely because the path cannot be traced. That matters
+    // twice over: the block is honest and must still be retried once its
+    // history lands, and a spurious `Equivocation` is evidence against a
+    // validator that did nothing wrong.
+    if config.check_chain_axiom && missing_predecessors.is_empty() {
         let creator = &block.identity.creator;
         let creator_blocks = blocklace.blocks_by(creator);
 
