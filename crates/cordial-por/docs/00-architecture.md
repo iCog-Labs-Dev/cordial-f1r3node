@@ -1,11 +1,10 @@
-
 # cordial-por Architecture
 
 ## Purpose
 
-`cordial-por` is the dedicated crate for Proof-of-Reputation (PoR) state, reputation-derived weights, and (future) audit data that feed the weighted path of Cordial Miners.  
+`cordial-por` is the dedicated crate for Proof-of-Reputation (PoR) state, reputation-derived weights, and (future) audit data that feed the weighted path of Cordial Miners.
 
-Cordial Miners approval, ratification, finality, τ-ordering and blocklace consensus rules remain exclusively inside `cordial-miners-core`.  
+Cordial Miners approval, ratification, finality, τ-ordering and blocklace consensus rules remain exclusively inside `cordial-miners-core`.
 `cordial-por` computes and exports weights only; it never implements consensus.
 
 ## Design Goals
@@ -19,68 +18,134 @@ Cordial Miners approval, ratification, finality, τ-ordering and blocklace conse
 
 ```mermaid
 flowchart TD
+
     subgraph External["External / Future"]
         Ratings["Rating / evidence sources"]
         Audit["Reputation blocks / audit path"]
     end
 
     subgraph PoR["cordial-por"]
-        State["ReputationState"]
         Config["PorConfig"]
+        State["ReputationState"]
         Export["reputation_weights()"]
     end
 
     subgraph Core["cordial-miners-core"]
-        Weighted["Existing weighted APIs\n(finality, fork-choice, τ)"]
+        Weighted["Existing weighted APIs<br/>(finality, fork-choice, τ)"]
         Finality["Finality"]
         Tau["τ ordering"]
         Approval["Approval / ratification"]
         Blocklace["Blocklace rules"]
+        Ownership["Not owned by cordial-por"]
     end
 
     Ratings -.->|future| State
     Audit -.->|future| State
+
     Config --> State
     State --> Export
     Export -->|"HashMap&lt;NodeId, ReputationWeight&gt;"| Weighted
+
     Weighted --> Finality
     Weighted --> Tau
-    Approval -.->|does not own| PoR
-    Blocklace -.->|does not own| PoR
+
+    Approval -.-> Ownership
+    Blocklace -.-> Ownership
 ```
 
 ## Internal PoR Architecture
 
-The current crate is an intentional scaffold. Only the modules that exist today are shown.
+The current crate is an intentional scaffold. The implemented modules remain intentionally small, while the complete future Proof-of-Reputation pipeline is shown as dotted stages to document the intended evolution of the crate.
 
 ```mermaid
 flowchart TD
-    Config["config::PorConfig\n(scale, initial_reputation)"]
-    Types["types\n(ReputationRound, ReputationWeight,\nReputationEntry)"]
-    State["state::ReputationState\n(BTreeMap&lt;NodeId, ReputationWeight&gt;)"]
-    Weights["weights::reputation_weights()"]
-    Error["error::PorError"]
 
+    %% ---------- External ----------
+    subgraph External["External / Future"]
+        Ratings["Signed ratings / evidence"]
+    end
+
+    %% ---------- cordial-por ----------
+    subgraph PoR["cordial-por"]
+
+        Config["config::PorConfig"]
+
+        State["state::ReputationState<br/>(BTreeMap&lt;NodeId, ReputationWeight&gt;)"]
+
+        Export["weights::reputation_weights()"]
+
+        Audit["ReputationBlock / Audit Path"]
+
+        Error["error::PorError"]
+
+        Ingest["Rating ingestion"]
+        Validate["Validation"]
+        Aggregate["Round aggregation"]
+        Normalize["Normalization"]
+        Liquid["Liquid Rank"]
+        Penalty["Penalties / Slashing"]
+        Clamp["Clamp / Fixed-point conversion"]
+        Transition["Reputation state transition"]
+        Committee["Committee selection"]
+
+    end
+
+    %% ---------- cordial-miners-core ----------
+    subgraph Core["cordial-miners-core"]
+
+        Weighted["Existing weighted APIs"]
+
+        Approval["Approval"]
+        Ratification["Ratification"]
+        Finality["Finality"]
+        Tau["τ Ordering"]
+        Blocklace["Blocklace Rules"]
+
+    end
+
+    %% ---------- Current implemented path ----------
     Config --> State
-    Types --> State
-    State --> Weights
-    Error -.->|placeholder| State
+    State --> Export
+    Export -->|"HashMap&lt;NodeId, ReputationWeight&gt;"| Weighted
+
+    %% ---------- Future PoR pipeline ----------
+    Ratings -.-> Ingest
+    Ingest -.-> Validate
+    Validate -.-> Aggregate
+    Aggregate -.-> Normalize
+    Normalize -.-> Liquid
+    Liquid -.-> Penalty
+    Penalty -.-> Clamp
+    Clamp -.-> Transition
+    Transition -.-> State
+
+    State -.-> Audit
+    State -.-> Committee
+    Committee -.-> Export
+
+    Error -.-> State
+
+    %% ---------- Consumed by Cordial Miners ----------
+    Weighted --> Approval
+    Weighted --> Ratification
+    Weighted --> Finality
+    Weighted --> Tau
 ```
 
 ### Future PoR Stages
 
 > **Implementation Note:**  
-> The stages listed below are part of the intended PoR architecture described in the paper (arXiv:2108.03542 and related Liquid-Rank literature) but are **not yet implemented** in the current codebase.
+> The stages shown with dotted edges in the architecture above are part of the intended PoR architecture described in the paper (arXiv:2108.03542 and related Liquid-Rank literature) but are **not yet implemented** in the current codebase.
 
-- Rating ingestion & validation  
-- Round aggregation  
-- Normalization  
-- Liquid-Rank calculation  
-- Penalties / slashing  
-- Clamping / fixed-point conversion (beyond the scale constant already present)  
-- Reputation state transition  
-- Reputation block / audit path  
-- Committee selection  
+- Rating ingestion & validation
+- Round aggregation
+- Normalization
+- Liquid-Rank calculation
+- Penalties / slashing
+- Clamping / fixed-point conversion (beyond the scale constant already present)
+- Reputation state transition
+- Reputation block / audit path
+- Committee selection
 
 ## Module Responsibilities
 
@@ -95,7 +160,7 @@ flowchart TD
 
 ## Data Flow
 
-1. A `PorConfig` is created (defaults: scale = 1_000_000_000, initial_reputation = 200_000_000).
+1. A `PorConfig` is created (defaults: scale = `1_000_000_000`, initial_reputation = `200_000_000`).
 2. A `ReputationState` is instantiated for a given `ReputationRound`.
 3. Callers (or future ingestion logic) populate the state via `set_reputation`.
 4. `reputation_weights(&state)` produces a `HashMap<NodeId, ReputationWeight>` that is handed to the weighted APIs of `cordial-miners-core`.
@@ -112,13 +177,13 @@ flowchart TD
 
 ### cordial-por does NOT own
 
-- Approval mechanics  
-- Ratification  
-- Finality detection  
-- τ ordering  
-- Blocklace consensus rules  
-- Equivocation detection / exclusion  
-- Networking or block production  
+- Approval mechanics
+- Ratification
+- Finality detection
+- τ ordering
+- Blocklace consensus rules
+- Equivocation detection / exclusion
+- Networking or block production
 
 ## Integration Contract
 
@@ -140,15 +205,16 @@ where `ReputationWeight = u64` and `NodeId` is the type defined by `cordial-mine
 
 ## Relationship with Cordial Miners Consensus
 
-`cordial-por` computes weights.  
+`cordial-por` computes weights.
+
 It does **not** implement:
 
-- consensus  
-- approval  
-- ratification  
-- τ ordering  
-- finality  
-- blocklace rules  
+- consensus
+- approval
+- ratification
+- τ ordering
+- finality
+- blocklace rules
 
 All of the above remain the exclusive responsibility of `cordial-miners-core`. The only coupling is the consumption of the weight map.
 
