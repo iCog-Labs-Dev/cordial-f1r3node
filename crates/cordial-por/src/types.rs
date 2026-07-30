@@ -22,8 +22,6 @@ pub type ReputationWeight = u64;
 /// Fixed-point rating value.
 pub type RatingScore = u64;
 
-
-
 // ============================================================
 // Rating model
 // ============================================================
@@ -36,19 +34,17 @@ pub type RatingScore = u64;
 pub struct RatingRecord {
     pub round: ReputationRound,
 
-    /// Node providing the rating.
     pub rater: NodeId,
 
-    /// Node receiving the rating.
     pub recipient: NodeId,
 
-    /// Fixed-point rating score.
     pub score: RatingScore,
 
-    /// Optional future evidence reference.
+    pub signature: Vec<u8>,
+
+    /// Optional interaction reference.
     pub interaction_ref: Option<Vec<u8>>,
 }
-
 
 impl RatingRecord {
     pub fn new(
@@ -56,6 +52,7 @@ impl RatingRecord {
         rater: NodeId,
         recipient: NodeId,
         score: RatingScore,
+        std_signature: Vec<u8>,
     ) -> Self {
         Self {
             round,
@@ -63,10 +60,10 @@ impl RatingRecord {
             recipient,
             score,
             interaction_ref: None,
+            signature: std_signature,
         }
     }
 }
-
 
 /// Collection of ratings belonging to one round.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,8 +71,6 @@ pub struct RatingBatch {
     pub round: ReputationRound,
     pub ratings: Vec<RatingRecord>,
 }
-
-
 
 // ============================================================
 // Reputation snapshot model
@@ -88,20 +83,14 @@ pub struct ReputationEntry {
     pub reputation: ReputationWeight,
 }
 
-
 impl ReputationEntry {
-    pub fn new(
-        node_id: NodeId,
-        reputation: ReputationWeight,
-    ) -> Self {
+    pub fn new(node_id: NodeId, reputation: ReputationWeight) -> Self {
         Self {
             node_id,
             reputation,
         }
     }
 }
-
-
 
 /// Complete reputation snapshot for a round.
 ///
@@ -113,8 +102,6 @@ pub struct ReputationList {
     pub entries: Vec<ReputationEntry>,
 }
 
-
-
 /// Mathematical reputation vector representation.
 ///
 /// This is a paper-aligned structure only.
@@ -124,8 +111,6 @@ pub struct ReputationVector {
     pub round: ReputationRound,
     pub values: Vec<ReputationEntry>,
 }
-
-
 
 // ============================================================
 // Penalty placeholders
@@ -140,8 +125,6 @@ pub struct EquivocationPenalty {
     pub evidence: Vec<u8>,
 }
 
-
-
 /// Placeholder for inactivity penalties.
 ///
 /// No punishment logic exists.
@@ -151,28 +134,22 @@ pub struct InactivityPenalty {
     pub missed_rounds: u64,
 }
 
-
-
 // ============================================================
 // Reputation block model
 // ============================================================
 
 /// Metadata describing a reputation block.
 #[derive(Debug, Clone, PartialEq, Eq)]
+
 pub struct ReputationBlockHeader {
     pub round: ReputationRound,
 
-    /// Hash of previous reputation state.
-    pub previous_reputation_hash: Vec<u8>,
+    pub previous_reputation_hash: Option<Vec<u8>>,
 
-    /// Hash of ratings included in this round.
     pub ratings_hash: Vec<u8>,
 
-    /// Root commitment of reputation entries.
     pub reputation_root: Vec<u8>,
 }
-
-
 
 /// Reputation block.
 ///
@@ -183,4 +160,25 @@ pub struct ReputationBlockHeader {
 pub struct ReputationBlock {
     pub header: ReputationBlockHeader,
     pub reputation_list: ReputationList,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsensusGroupMember {
+    pub node_id: NodeId,
+    pub reputation: ReputationWeight,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsensusGroup {
+    pub round: ReputationRound,
+    pub members: Vec<ConsensusGroupMember>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RatingMatrix {
+    pub round: ReputationRound,
+    pub ratings: Vec<RatingRecord>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaderSelection {
+    pub round: ReputationRound,
+
+    pub leader: NodeId,
 }

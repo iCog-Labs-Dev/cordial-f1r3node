@@ -14,24 +14,10 @@ pub use config::PorConfig;
 pub use error::PorError;
 pub use state::ReputationState;
 
-
 pub use types::{
-    EquivocationPenalty,
-    InactivityPenalty,
-
-    RatingBatch,
-    RatingRecord,
-    RatingScore,
-
-    ReputationBlock,
-    ReputationBlockHeader,
-
-    ReputationEntry,
-    ReputationList,
-    ReputationRound,
-    ReputationVector,
-    ReputationWeight,
+    EquivocationPenalty, InactivityPenalty, RatingBatch, RatingRecord, RatingScore,
+    ReputationBlock, ReputationBlockHeader, ReputationEntry, ReputationList, ReputationRound,
+    ReputationVector, ReputationWeight,
 };
-
 
 pub use weights::reputation_weights;
