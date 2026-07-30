@@ -14,3 +14,6 @@ bincode.workspace = true
 blake2.workspace = true
 k256.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+proptest = "1"
