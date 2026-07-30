@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::select_predecessors;
+use cordial_miners_core::consensus::{
+    CordialEquivocationEvidence, EvidencePool, select_predecessors, select_predecessors_strict,
+};
 use cordial_miners_core::crypto::{SignatureScheme, hash_content};
 use cordial_miners_core::execution::{
     BlockState, Bond, CordialBlockPayload, DeployPool, DeployPoolConfig, ExecutionRequest,
@@ -54,6 +56,14 @@ pub trait BlockBroadcaster {
     fn broadcast(&self, block: &Block) -> Result<(), String>;
 }
 
+/// Tip selector that uses compatibility-mode predecessor selection.
+///
+/// This is the default selector. It includes all honest validator tips and, in addition,
+/// re-adds any known equivocator branch not yet transitively visible through those tips.
+/// Use this for adapter / snapshot paths that need full DAG coverage and inter-node
+/// compatibility.
+///
+/// For paper-native strict excommunication, use [`StrictTipSelector`] instead.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DisseminationTipSelector;
 
@@ -64,6 +74,84 @@ impl TipSelector for DisseminationTipSelector {
         bonds: &HashMap<NodeId, u64>,
     ) -> HashSet<BlockIdentity> {
         select_predecessors(blocklace, bonds)
+    }
+}
+
+/// Tip selector that uses strict (paper-native) excommunication mode.
+///
+/// In strict mode no equivocator branch ever appears as a direct predecessor of a
+/// newly proposed block. Only honest validator tips are selected. The proposer relies
+/// on transitive observation through those tips for equivocation visibility, which is
+/// the behaviour described in Cordial Miners §6.1.
+///
+/// Use this for proposer paths operating in fully protocol-faithful configuration.
+/// For adapter / snapshot paths that need full DAG coverage, use
+/// [`DisseminationTipSelector`] instead.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StrictTipSelector;
+
+impl TipSelector for StrictTipSelector {
+    fn select_tips(
+        &self,
+        blocklace: &Blocklace,
+        bonds: &HashMap<NodeId, u64>,
+    ) -> HashSet<BlockIdentity> {
+        select_predecessors_strict(blocklace, bonds)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoEvidenceSource;
+
+impl EvidenceSource for NoEvidenceSource {
+    fn pending_evidence(&mut self) -> Vec<CordialEquivocationEvidence> {
+        Vec::new()
+    }
+}
+
+/// Evidence source backed by a core [`EvidencePool`].
+///
+/// The adapter supplies the validator set it wants to query; the pool remains a
+/// pure core data structure and never sees f1r3node protobuf or RSpace types.
+pub struct EvidencePoolSource<'a, P> {
+    pool: &'a P,
+    validators: Vec<NodeId>,
+}
+
+impl<'a, P> EvidencePoolSource<'a, P> {
+    pub fn new<I>(pool: &'a P, validators: I) -> Self
+    where
+        I: IntoIterator<Item = NodeId>,
+    {
+        let validators = validators.into_iter().collect::<BTreeSet<_>>();
+        Self {
+            pool,
+            validators: validators.into_iter().collect(),
+        }
+    }
+}
+
+impl<P> EvidenceSource for EvidencePoolSource<'_, P>
+where
+    P: EvidencePool<NodeId, Block, BlockIdentity>,
+{
+    fn pending_evidence(&mut self) -> Vec<CordialEquivocationEvidence> {
+        self.validators
+            .iter()
+            .flat_map(|validator| self.pool.evidence_for(validator))
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoopSlashFormatter;
+
+impl SlashDeployFormatter<NodeId, Block, BlockIdentity> for NoopSlashFormatter {
+    fn to_slash_system_deploys(
+        &self,
+        _evidence: &[CordialEquivocationEvidence],
+    ) -> anyhow::Result<Vec<Vec<u8>>> {
+        Ok(Vec::new())
     }
 }
 
