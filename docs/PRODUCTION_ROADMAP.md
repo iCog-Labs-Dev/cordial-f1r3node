@@ -77,18 +77,42 @@ This phase turns the consensus implementation from “tested by examples” into
 **Target files:**
 
 - `crates/cordial-miners-core/src/consensus/dissemination.rs`
+- `crates/cordial-miners-core/src/consensus/mod.rs`
 - `crates/cordial-f1r3node-adapter/src/proposer.rs`
+- `crates/cordial-miners-core/tests/test_dissemination.rs`
 
 **Work:**
 
-- Keep current compatibility behavior where needed.
-- Add an explicit strict mode that stops selecting known equivocator branches as future predecessors.
-- Document the distinction between finality/order exclusion and predecessor-selection behavior.
+- Added `PredecessorSelectionMode` enum with two variants:
+  - `Compatibility` (default) — re-adds known equivocator branches not yet transitively
+    visible through the current honest tip set. Preserves inter-node compatibility.
+    Required for adapter / snapshot paths.
+  - `Strict` — paper-native excommunication (Cordial Miners §6.1): a proposer never
+    places a direct pointer to an equivocator branch. Relies solely on transitive
+    acknowledgement through honest tips.
+- All existing public functions (`select_predecessors`, `next_block_predecessors`,
+  `build_block_candidate`, `select_predecessors_sorted`) delegate to `Compatibility`
+  mode — no existing call-site changes required.
+- Added new mode-aware entry-points:
+  - `select_predecessors_with_mode` / `select_predecessors_strict`
+  - `select_predecessors_sorted_with_mode`
+  - `next_block_predecessors_with_mode`
+  - `build_block_candidate_with_mode`
+- Added `StrictTipSelector` in the adapter alongside the existing
+  `DisseminationTipSelector` (compatibility). `CordialProposer<TS>` accepts either
+  with no struct changes — callers swap the type parameter.
+- Documented the three-way distinction in module-level doc comments:
+  1. Finality / ordering exclusion (always active, in `finality.rs` / `ordering.rs`)
+  2. Compatibility predecessor selection (current default)
+  3. Strict predecessor-selection excommunication (paper-native, opt-in)
 
 **Acceptance criteria:**
 
-- Tests show finality/order exclusion.
-- Tests show strict predecessor selection avoids known equivocator branches.
+- Tests show finality/order exclusion remains unchanged (all pre-existing tests pass).
+- Tests show strict predecessor selection avoids known equivocator branches
+  (8 new tests, invariants S1–S7 in `test_dissemination.rs`).
+- Compatibility mode remains the default for all adapter paths.
+- Existing proposer and dissemination tests continue to pass (no API breakage).
 
 ## Phase 2: Live Integration Reliability
 

@@ -16,7 +16,14 @@ use crate::types::{BlockIdentity, NodeId};
 
 #[derive(Debug, Clone, Default)]
 pub struct OrderingCache {
-    dom_size_generation: usize,
+    /// Blocklace generation the cached entries were computed against, paired
+    /// with the DAG size at that time.
+    ///
+    /// The generation alone is the correct signal. The size is retained as a
+    /// secondary guard: if a future mutation path ever forgets to bump the
+    /// generation, a size change still invalidates the cache, so this can only
+    /// be stricter than the size-based check it replaces — never looser.
+    cache_generation: (u64, usize),
     approved_blocks_by_leader: HashMap<BlockIdentity, HashSet<Block>>,
     sorted_approved_by_leader: HashMap<BlockIdentity, Result<Vec<BlockIdentity>, OrderingError>>,
     previous_final_by_leader: HashMap<PreviousLeaderCacheKey, Option<BlockIdentity>>,
@@ -166,10 +173,31 @@ pub fn xsort(blocks: &HashSet<Block>) -> Result<Vec<BlockIdentity>, OrderingErro
     Ok(ordered)
 }
 
+impl OrderingCache {
+    /// Number of memoised entries currently held, across all inner caches.
+    ///
+    /// Exposed for observability: it lets a caller confirm the cache is being
+    /// populated at all, and lets tests distinguish "invalidation works" from
+    /// "caching was silently disabled".
+    pub fn cached_entries(&self) -> usize {
+        self.approved_blocks_by_leader.len()
+            + self.sorted_approved_by_leader.len()
+            + self.previous_final_by_leader.len()
+            + self.weighted_previous_final_by_leader.len()
+            + self.tau_output_by_latest_leader.len()
+            + self.weighted_tau_output_by_latest_leader.len()
+    }
+
+    /// Blocklace generation these entries were computed against.
+    pub fn generation(&self) -> u64 {
+        self.cache_generation.0
+    }
+}
+
 fn sync_cache_generation(blocklace: &Blocklace, cache: &mut OrderingCache) {
-    let dom_size_generation = blocklace.dom().len();
-    if cache.dom_size_generation != dom_size_generation {
-        cache.dom_size_generation = dom_size_generation;
+    let generation = (blocklace.generation(), blocklace.dom().len());
+    if cache.cache_generation != generation {
+        cache.cache_generation = generation;
         cache.approved_blocks_by_leader.clear();
         cache.sorted_approved_by_leader.clear();
         cache.previous_final_by_leader.clear();

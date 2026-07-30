@@ -20,9 +20,10 @@ pub use cordiality::{
 pub use dissemination::{
     PendingBlockBuffer, PredecessorSelectionMode, ProposalError, build_block_candidate,
     build_block_candidate_with_mode, next_block_predecessors, next_block_predecessors_with_mode,
-    required_acknowledgements, select_predecessors, select_predecessors_sorted,
-    select_predecessors_sorted_with_mode, select_predecessors_strict,
-    select_predecessors_with_mode, validator_visible_tips, weighted_required_acknowledgements,
+    predecessors_acknowledge_all_equivocation_branches, required_acknowledgements,
+    select_predecessors, select_predecessors_sorted, select_predecessors_sorted_with_mode,
+    select_predecessors_strict, select_predecessors_with_mode, validator_visible_tips,
+    weighted_required_acknowledgements,
 };
 pub use evidence::{
     CordialEquivocationEvidence, CordialEvidencePool, EquivocationEvidence, EvidenceBlock,
