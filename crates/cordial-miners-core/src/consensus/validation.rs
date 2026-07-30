@@ -253,10 +253,8 @@ pub fn validated_insert(
 ) -> ValidationResult {
     let result = validate_block(&block, blocklace, bonds, config);
     if result.is_valid() {
-        // Closure is already verified by validation, so insert directly
-        blocklace
-            .blocks
-            .insert(block.identity.clone(), block.content);
+        // Closure is already verified by validation, so commit directly.
+        blocklace.commit_validated(block.identity.clone(), block.content);
     }
     result
 }
