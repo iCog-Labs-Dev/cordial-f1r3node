@@ -234,6 +234,111 @@ fn extending_own_chain_passes_chain_axiom() {
     assert!(result.is_valid());
 }
 
+/// Regression: a block that arrives with a multi-round gap in its history must
+/// report only the missing predecessors, never an equivocation.
+///
+/// The chain-axiom check decides comparability by walking the local blocklace
+/// from the creator's existing blocks through the arriving block's
+/// predecessors. Across a gap of two or more rounds that walk cannot complete,
+/// because the intermediate block is not there to be walked through — so the
+/// honest block used to be reported as `Equivocation` on top of
+/// `MissingPredecessors`.
+///
+/// That combination is what made it damaging: callers buffer a block for retry
+/// only when *every* error is `MissingPredecessors`, so the extra error caused
+/// an honest block to be dropped outright instead of retried once its history
+/// arrived. See `pending_buffer_keeps_multi_round_gap_when_creator_is_known`
+/// in test_dissemination.rs for the buffering half of this behaviour.
+#[test]
+fn multi_round_gap_reports_missing_predecessors_without_equivocation() {
+    let mut bl = Blocklace::new();
+    let v1 = node(1);
+
+    // The creator's round-0 block is known locally. This is the precondition
+    // the bug needed: `blocks_by(creator)` must be non-empty for the
+    // chain-axiom loop to run at all.
+    let round0 = genesis_unsigned(&v1, 1);
+    insert(&mut bl, &round0);
+
+    // Round 1 is created but never delivered, so round 2 arrives with a
+    // two-round gap: its predecessor is absent from the local view.
+    let round1 = child_unsigned(&v1, 2, &[&round0]);
+    let round2 = child_unsigned(&v1, 3, &[&round1]);
+
+    let b = bonds(&[(1, 100)]);
+    let result = validate_block(&round2, &bl, &b, &no_crypto_config());
+
+    assert!(
+        !result.is_valid(),
+        "the gap itself is still a closure failure"
+    );
+    assert!(
+        result
+            .errors()
+            .iter()
+            .any(|e| matches!(e, InvalidBlock::MissingPredecessors { .. })),
+        "the missing round-1 predecessor should be reported: {:?}",
+        result.errors()
+    );
+    assert!(
+        !result
+            .errors()
+            .iter()
+            .any(|e| matches!(e, InvalidBlock::Equivocation { .. })),
+        "an honest block must not be reported as equivocation while its \
+         history is missing: {:?}",
+        result.errors()
+    );
+
+    // Deferring the check must not lose it. Once the gap is filled, the same
+    // block validates cleanly.
+    insert(&mut bl, &round1);
+    assert!(validate_block(&round2, &bl, &b, &no_crypto_config()).is_valid());
+}
+
+/// Guard against over-correcting the above: deferring the chain-axiom check
+/// must not let genuine equivocation through once the history *is* present.
+///
+/// `equivocating_block_fails_chain_axiom` covers this at round 0, where the
+/// creator has no predecessors at all. This covers a mid-chain round, which is
+/// the case the deferral logic actually touches.
+#[test]
+fn genuine_equivocation_is_still_detected_at_a_mid_chain_round() {
+    let mut bl = Blocklace::new();
+    let v1 = node(1);
+
+    let round0 = genesis_unsigned(&v1, 1);
+    let round1 = child_unsigned(&v1, 2, &[&round0]);
+    insert(&mut bl, &round0);
+    insert(&mut bl, &round1);
+
+    // A second, conflicting round-1 block over the same predecessor. Nothing is
+    // missing here, so the chain axiom is decidable and must fire.
+    let round1_conflicting = child_unsigned(&v1, 3, &[&round0]);
+
+    let b = bonds(&[(1, 100)]);
+    let result = validate_block(&round1_conflicting, &bl, &b, &no_crypto_config());
+
+    assert!(!result.is_valid());
+    assert!(
+        result
+            .errors()
+            .iter()
+            .any(|e| matches!(e, InvalidBlock::Equivocation { .. })),
+        "a same-round conflicting block with all predecessors present is a \
+         real equivocation: {:?}",
+        result.errors()
+    );
+    assert!(
+        !result
+            .errors()
+            .iter()
+            .any(|e| matches!(e, InvalidBlock::MissingPredecessors { .. })),
+        "nothing is missing in this scenario: {:?}",
+        result.errors()
+    );
+}
+
 // ── Content hash ──
 
 #[test]

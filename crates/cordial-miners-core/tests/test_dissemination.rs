@@ -1,9 +1,10 @@
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    PendingBlockBuffer, ProposalError, ValidationConfig, build_block_candidate,
+    InvalidBlock, PendingBlockBuffer, ProposalError, ValidationConfig, build_block_candidate,
     next_block_predecessors, required_acknowledgements, select_predecessors,
-    select_predecessors_sorted, validator_visible_tips, weighted_required_acknowledgements,
+    select_predecessors_sorted, validated_insert, validator_visible_tips,
+    weighted_required_acknowledgements,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
@@ -944,6 +945,70 @@ fn pending_buffer_resolves_chained_missing_predecessors() {
     assert!(buffer.buffered_blocks.is_empty());
     assert!(blocklace.content(&block2.identity).is_some());
     assert!(blocklace.content(&block3.identity).is_some());
+}
+
+/// Regression: a block arriving with a multi-round gap must stay buffered and
+/// resolve later, even when the creator already has a block in the local view.
+///
+/// `pending_buffer_resolves_chained_missing_predecessors` looks similar but
+/// cannot catch this: it buffers into an *empty* blocklace, so
+/// `blocks_by(creator)` is empty and the chain-axiom check never runs. The bug
+/// required the creator to already be known locally, which is the normal case
+/// for a validator that has been producing blocks all along.
+///
+/// The classification is what mattered. A caller keeps a block for retry only
+/// when every validation error is `MissingPredecessors`, so a spurious
+/// `Equivocation` alongside it caused the block to be discarded permanently
+/// rather than retried — and a node that discarded one could never finalise a
+/// later wave.
+#[test]
+fn pending_buffer_keeps_multi_round_gap_when_creator_is_known() {
+    let mut blocklace = Blocklace::new();
+    let mut buffer = PendingBlockBuffer::new();
+    let config = dissemination_test_config();
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+
+    let round0 = create_mock_block(1, 1, HashSet::new());
+    let round1 = create_mock_block(1, 2, HashSet::from([round0.identity.clone()]));
+    let round2 = create_mock_block(1, 3, HashSet::from([round1.identity.clone()]));
+
+    // The creator is already known locally.
+    insert(&mut blocklace, &round0);
+
+    // Round 2 arrives while round 1 is still in flight. Validation must blame
+    // only the gap, so that a caller knows to buffer rather than drop.
+    let result = validated_insert(round2.clone(), &mut blocklace, &bonds, &config);
+    let errors = result.errors();
+    assert!(
+        errors
+            .iter()
+            .all(|e| matches!(e, InvalidBlock::MissingPredecessors { .. })),
+        "only the missing predecessor should be reported, otherwise the block \
+         is dropped instead of buffered: {errors:?}"
+    );
+    assert!(
+        blocklace.content(&round2.identity).is_none(),
+        "the block is not insertable yet"
+    );
+
+    buffer.buffer_block_with_missing_predecessors(round2.clone());
+    buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
+    assert_eq!(
+        buffer.buffered_blocks.len(),
+        1,
+        "the gap is unchanged, so the block must stay buffered"
+    );
+
+    // The missing round arrives and the buffered block resolves.
+    insert(&mut blocklace, &round1);
+    buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
+
+    assert!(buffer.buffered_blocks.is_empty());
+    assert!(
+        blocklace.content(&round2.identity).is_some(),
+        "the buffered block should be inserted once its history arrives"
+    );
 }
 
 #[test]
