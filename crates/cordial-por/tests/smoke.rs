@@ -7,7 +7,7 @@ fn creates_rating_record() {
     let rater = NodeId(vec![1]);
     let recipient = NodeId(vec![2]);
 
-    let rating = RatingRecord::new(1, rater, recipient, 500);
+    let rating = RatingRecord::new(1, rater, recipient, 500, vec![0x01, 0x02, 0x03]);
 
     assert_eq!(rating.round, 1);
     assert_eq!(rating.score, 500);
