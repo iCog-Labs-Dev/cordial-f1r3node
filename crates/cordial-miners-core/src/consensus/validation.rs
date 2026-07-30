@@ -216,7 +216,17 @@ pub fn validate_block(
 
     // 6. Cordial condition — block references known tips and does not hide
     //    globally known equivocations already present in the local DAG view.
-    if config.check_cordial {
+    //
+    // Deferred while predecessors are missing, for the same reason as the chain
+    // axiom above. Both `missing_known_tips` and `hidden_equivocations` judge
+    // the block against a predecessor closure reconstructed from the local
+    // blocklace, so an incomplete view produces verdicts about the *view*
+    // rather than about the block. Reporting `NotCordial` or
+    // `HiddenEquivocation` here would also join `MissingPredecessors` in the
+    // error set, and callers retain a block for retry only when every error is
+    // `MissingPredecessors` — so an honest block would be discarded instead of
+    // retried once its history landed.
+    if config.check_cordial && missing_predecessors.is_empty() {
         let known_tips = collect_validator_tips(blocklace, bonds);
         let missing_tips = missing_known_tips(block, &known_tips);
 
