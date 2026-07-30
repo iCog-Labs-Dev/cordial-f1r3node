@@ -15,6 +15,21 @@
 //! 3. Selection respects the closure and chain axioms of the blocklace
 //! 4. A cordial block must acknowledge blocks from at least a supermajority (≥ 2f+1) of
 //!    miners — see Def. A.12 and Fig. 2 of the paper.
+//!
+//! ## Predecessor-Selection Modes
+//!
+//! This module exposes **two predecessor-selection behaviours** that must not be confused with
+//! each other or with finality/ordering exclusion:
+//!
+//! | Concept | Where it happens | What it does |
+//! |---|---|---|
+//! | Finality / ordering exclusion | `finality.rs`, `ordering.rs` | Equivocating validators' blocks are never elected leader and never appear in the committed output. This is always active. |
+//! | **Compatibility predecessor selection** | `select_predecessors` / [`PredecessorSelectionMode::Compatibility`] | An honest node re-adds any equivocator branch that is **not yet transitively visible** through the current honest tips, so the network never loses track of the equivocation evidence. This is the default and preserves inter-node compatibility. |
+//! | **Strict predecessor selection** | `select_predecessors_strict` / [`PredecessorSelectionMode::Strict`] | An honest node never directly points to an equivocator branch. It relies solely on transitive acknowledgement through other honest tips. This is the paper-native excommunication behaviour (§6.1): correct miners "ignore Byzantine miners" by not including direct pointers to their blocks after detecting an equivocation. |
+//!
+//! Choose **`Strict`** for paper-faithful proposer behaviour. Use **`Compatibility`** when the
+//! adapter or snapshot path must remain interoperable with observers that may not yet have
+//! received the equivocation evidence.
 
 use std::collections::{HashMap, HashSet};
 
@@ -53,63 +68,89 @@ pub fn validator_visible_tips(
     collect_validator_tips(blocklace, bonds)
 }
 
-/// Select predecessors for a newly created block from the local blocklace view.
+/// Controls how predecessor selection handles known equivocator branches.
 ///
-/// Constructs a protocol-valid set of predecessors by pointing to all visible
-/// (honest) validator tips from the local blocklace.
+/// This enum separates two distinct behaviours that are sometimes conflated:
 ///
-/// This is the core dissemination layer that determines what a proposer should
-/// announce to other validators.
+/// * **Finality / ordering exclusion** — equivocating validators are *always* excluded from
+///   leader election and the committed output, regardless of which mode is selected here.
+///   That policy lives in `finality.rs` and `ordering.rs` and is independent of this enum.
 ///
-/// **Protocol meaning**: From the Cordial Miners paper (§6.1, Alg. 3 and the equivocation
-/// exclusion discussion): correct miners ignore Byzantine miners by not including direct
-/// pointers to their blocks after detecting an equivocation. By exclusively pointing to
-/// honest validator tips:
-/// - Honest tips already transitively observe equivocations (closure property)
-/// - Equivocators are naturally filtered out and eventually ignored
-/// - Blocks remain bounded (no accumulation of historical equivocation pointers)
-/// - Protocol remains compliant with the cordial condition (Def. A.12)
+/// * **Predecessor-selection excommunication** — whether a newly proposed block should
+///   ever carry a *direct pointer* to an equivocator's branch. This is what the two
+///   variants below control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PredecessorSelectionMode {
+    /// **Compatibility mode** (default).
+    ///
+    /// When a known equivocation branch is not yet transitively visible through the current
+    /// honest tip set, it is added as a *direct predecessor* so that the network never loses
+    /// track of the evidence. This preserves interoperability with observers that may not
+    /// yet have received the equivocation, and is required by adapter / snapshot paths that
+    /// need full DAG coverage.
+    ///
+    /// This is the behaviour that has always been present in `select_predecessors`.
+    #[default]
+    Compatibility,
+
+    /// **Strict mode** (paper-native excommunication).
+    ///
+    /// From Cordial Miners §6.1: *"correct miners ignore Byzantine miners by not including
+    /// direct pointers to their blocks after detecting an equivocation."*
+    ///
+    /// In strict mode no equivocator branch ever appears as a direct predecessor.
+    /// The proposer relies solely on transitive acknowledgement through other honest tips.
+    /// This is the preferred mode for proposer-side use when the network is operating in
+    /// fully protocol-faithful (paper-native) configuration.
+    Strict,
+}
+
+/// Select predecessors for a newly created block, using the specified selection mode.
 ///
-/// **Cordiality invariant**: The returned set satisfies the cordiality condition
-/// (Def. A.12, Fig. 2) when the local view contains tips from at least 2f+1 honest
-/// validators. Callers operating in a degraded view (fewer than supermajority tips
-/// visible) should consult `required_acknowledgements` before proposing.
+/// This is the single entry-point for all predecessor-selection logic. The two modes
+/// differ only in whether known equivocator branches are ever carried as direct
+/// predecessors — see [`PredecessorSelectionMode`] for the full distinction.
 ///
-/// **Guarantees**:
+/// **Cordiality invariant**: In either mode the returned set satisfies the cordiality
+/// condition (Def. A.12, Fig. 2) when the local view contains tips from at least 2f+1
+/// honest validators. In `Strict` mode this relies on those honest tips already
+/// transitively observing the equivocation evidence.
+///
+/// **Guarantees** (both modes):
 /// - All returned predecessors exist in the blocklace (closure axiom satisfied)
-/// - All returned predecessors are from non-equivocating validators only
-/// - Deterministic: same blocklace view → same predecessor set
-/// - Non-empty when blocklace has honest validators
+/// - No equivocating validator appears in the honest-tip map
+/// - Deterministic: same blocklace view and mode → same predecessor set
+/// - Non-empty when the blocklace has at least one honest validator with a block
 /// - Empty only when the blocklace is empty or contains only equivocators
-///
-/// **Typical usage** (in a validator's block proposal logic):
-/// ```ignore
-/// let predecessors = select_predecessors(&local_blocklace, &bonds);
-/// let block_content = BlockContent {
-///     payload: my_operations,
-///     predecessors,
-/// };
-/// ```
 ///
 /// # Arguments
 /// * `blocklace` - The local blocklace DAG view
 /// * `bonds` - The bonded validator set and their stake weights
+/// * `mode` - Whether to re-add unseen equivocator branches ([`Compatibility`]) or omit
+///   them entirely ([`Strict`]).
 ///
 /// # Returns
 /// A set of block identities to be used as the block's predecessors.
-/// Returns an empty set if the blocklace is empty or contains only equivocators.
-pub fn select_predecessors(
+pub fn select_predecessors_with_mode(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,
+    mode: PredecessorSelectionMode,
 ) -> HashSet<BlockIdentity> {
-    let mut predecessors: HashSet<BlockIdentity> = validator_visible_tips(blocklace, bonds)
+    // Step 1: collect only honest (non-equivocating) validator tips.
+    let predecessors: HashSet<BlockIdentity> = validator_visible_tips(blocklace, bonds)
         .into_values()
         .collect();
 
-    if predecessors.is_empty() {
+    if predecessors.is_empty() || mode == PredecessorSelectionMode::Strict {
+        // Strict mode: never reference equivocator branches directly. Return the
+        // honest-tip set as-is. Transitive observation through those tips is sufficient.
         return predecessors;
     }
 
+    // Compatibility mode: add any equivocation branch that is not yet transitively
+    // reachable from the honest tips, so the network retains a direct reference to
+    // the full equivocation evidence.
+    let mut predecessors = predecessors;
     let mut observed: HashSet<BlockIdentity> = predecessors
         .iter()
         .flat_map(|pred_id| blocklace.observe(pred_id).into_iter())
@@ -126,10 +167,63 @@ pub fn select_predecessors(
     predecessors
 }
 
+/// Select predecessors for a newly created block (compatibility mode).
+///
+/// This is the default predecessor-selection function and preserves the original
+/// behaviour: all honest validator tips are selected, and any known equivocation
+/// branch not yet transitively visible is re-added as a direct predecessor.
+///
+/// For paper-native strict excommunication behaviour, use [`select_predecessors_strict`]
+/// or call [`select_predecessors_with_mode`] with [`PredecessorSelectionMode::Strict`].
+///
+/// **Typical usage** (adapter / snapshot paths):
+/// ```ignore
+/// let predecessors = select_predecessors(&local_blocklace, &bonds);
+/// let block_content = BlockContent { payload: my_operations, predecessors };
+/// ```
+///
+/// # Arguments
+/// * `blocklace` - The local blocklace DAG view
+/// * `bonds` - The bonded validator set and their stake weights
+///
+/// # Returns
+/// A set of block identities to be used as the block's predecessors.
+/// Returns an empty set if the blocklace is empty or contains only equivocators.
+pub fn select_predecessors(
+    blocklace: &Blocklace,
+    bonds: &HashMap<NodeId, u64>,
+) -> HashSet<BlockIdentity> {
+    select_predecessors_with_mode(blocklace, bonds, PredecessorSelectionMode::Compatibility)
+}
+
+/// Select predecessors for a newly created block (strict excommunication mode).
+///
+/// In strict mode no equivocator branch ever appears as a direct predecessor.
+/// The proposer relies solely on transitive acknowledgement through other honest tips,
+/// which is the paper-native behaviour described in Cordial Miners §6.1.
+///
+/// For full compatibility with observers that may not yet hold the equivocation
+/// evidence, use [`select_predecessors`] (compatibility mode) instead.
+///
+/// # Arguments
+/// * `blocklace` - The local blocklace DAG view
+/// * `bonds` - The bonded validator set and their stake weights
+///
+/// # Returns
+/// A set of honest validator tip block identities to be used as predecessors.
+/// Returns an empty set if the blocklace is empty or contains only equivocators.
+pub fn select_predecessors_strict(
+    blocklace: &Blocklace,
+    bonds: &HashMap<NodeId, u64>,
+) -> HashSet<BlockIdentity> {
+    select_predecessors_with_mode(blocklace, bonds, PredecessorSelectionMode::Strict)
+}
+
 /// Select predecessors and return them as a sorted vector for deterministic ordering.
 ///
-/// This is a convenience wrapper around `select_predecessors()` that returns results
-/// in a deterministic order, useful for logging, comparison, or network transmission.
+/// This is a convenience wrapper around [`select_predecessors`] (compatibility mode)
+/// that returns results in a deterministic order, useful for logging, comparison, or
+/// network transmission.
 ///
 /// Sorting is by the full natural ordering of `BlockIdentity`, so ties on
 /// `content_hash` are broken consistently by creator and signature as needed.
@@ -144,9 +238,29 @@ pub fn select_predecessors_sorted(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,
 ) -> Vec<BlockIdentity> {
-    let mut result: Vec<BlockIdentity> =
-        select_predecessors(blocklace, bonds).into_iter().collect();
+    select_predecessors_sorted_with_mode(blocklace, bonds, PredecessorSelectionMode::Compatibility)
+}
 
+/// Select predecessors and return them as a sorted vector, using the specified selection mode.
+///
+/// Sorting is by the full natural ordering of `BlockIdentity`, so ties on
+/// `content_hash` are broken consistently by creator and signature as needed.
+///
+/// # Arguments
+/// * `blocklace` - The local blocklace DAG view
+/// * `bonds` - The bonded validator set and their stake weights
+/// * `mode` - Predecessor selection mode ([`PredecessorSelectionMode`])
+///
+/// # Returns
+/// A sorted vector of block identities.
+pub fn select_predecessors_sorted_with_mode(
+    blocklace: &Blocklace,
+    bonds: &HashMap<NodeId, u64>,
+    mode: PredecessorSelectionMode,
+) -> Vec<BlockIdentity> {
+    let mut result: Vec<BlockIdentity> = select_predecessors_with_mode(blocklace, bonds, mode)
+        .into_iter()
+        .collect();
     result.sort();
     result
 }
@@ -215,7 +329,7 @@ pub enum ProposalError {
     NoPredecessorsAvailable,
 }
 
-/// Select the predecessor set for the next locally proposed block.
+/// Select the predecessor set for the next locally proposed block (compatibility mode).
 ///
 /// This helper does not decide *when* a node should propose; it only answers
 /// which predecessors should be referenced once an external scheduler requests
@@ -229,15 +343,39 @@ pub enum ProposalError {
 /// `required_acknowledgements(...)`. The returned set itself comes from
 /// `select_predecessors(...)`, which may include additional known equivocation
 /// branches needed for cordiality.
+///
+/// To use strict (paper-native) excommunication behaviour, call
+/// [`next_block_predecessors_with_mode`] with [`PredecessorSelectionMode::Strict`].
 pub fn next_block_predecessors(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,
+) -> Result<HashSet<BlockIdentity>, ProposalError> {
+    next_block_predecessors_with_mode(blocklace, bonds, PredecessorSelectionMode::Compatibility)
+}
+
+/// Select the predecessor set for the next locally proposed block, using the specified mode.
+///
+/// Identical to [`next_block_predecessors`] except the caller controls whether known
+/// equivocator branches are ever carried as direct predecessors.
+///
+/// # Arguments
+/// * `blocklace` - The local blocklace DAG view
+/// * `bonds` - The bonded validator set and their stake weights
+/// * `mode` - Predecessor selection mode ([`PredecessorSelectionMode`])
+///
+/// # Returns
+/// The predecessor set on success, or a [`ProposalError`] when the local view is
+/// insufficient to satisfy the cordiality threshold.
+pub fn next_block_predecessors_with_mode(
+    blocklace: &Blocklace,
+    bonds: &HashMap<NodeId, u64>,
+    mode: PredecessorSelectionMode,
 ) -> Result<HashSet<BlockIdentity>, ProposalError> {
     if blocklace.dom().is_empty() {
         return Ok(HashSet::new());
     }
 
-    let predecessors = select_predecessors(blocklace, bonds);
+    let predecessors = select_predecessors_with_mode(blocklace, bonds, mode);
     if predecessors.is_empty() {
         return Err(ProposalError::NoPredecessorsAvailable);
     }
@@ -252,17 +390,50 @@ pub fn next_block_predecessors(
     Ok(predecessors)
 }
 
-/// Build a deterministic block-content candidate from the current local view.
+/// Build a deterministic block-content candidate from the current local view (compatibility mode).
 ///
 /// This helper does not decide *when* a node should propose; it only answers
 /// *what* payload and predecessor set should be used once an external scheduler
 /// requests a proposal.
+///
+/// Uses [`PredecessorSelectionMode::Compatibility`] — known equivocator branches that are
+/// not yet transitively visible are re-added as direct predecessors. For strict
+/// paper-native behaviour, use [`build_block_candidate_with_mode`] with
+/// [`PredecessorSelectionMode::Strict`].
 pub fn build_block_candidate(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,
     payload: Vec<u8>,
 ) -> Result<BlockContent, ProposalError> {
-    let predecessors = next_block_predecessors(blocklace, bonds)?;
+    build_block_candidate_with_mode(
+        blocklace,
+        bonds,
+        payload,
+        PredecessorSelectionMode::Compatibility,
+    )
+}
+
+/// Build a deterministic block-content candidate from the current local view.
+///
+/// Identical to [`build_block_candidate`] except the caller controls whether known
+/// equivocator branches are ever carried as direct predecessors.
+///
+/// # Arguments
+/// * `blocklace` - The local blocklace DAG view
+/// * `bonds` - The bonded validator set and their stake weights
+/// * `payload` - The raw payload bytes for the new block
+/// * `mode` - Predecessor selection mode ([`PredecessorSelectionMode`])
+///
+/// # Returns
+/// A [`BlockContent`] ready for signing, or a [`ProposalError`] if the local view is
+/// insufficient.
+pub fn build_block_candidate_with_mode(
+    blocklace: &Blocklace,
+    bonds: &HashMap<NodeId, u64>,
+    payload: Vec<u8>,
+    mode: PredecessorSelectionMode,
+) -> Result<BlockContent, ProposalError> {
+    let predecessors = next_block_predecessors_with_mode(blocklace, bonds, mode)?;
 
     Ok(BlockContent {
         payload,
