@@ -16,6 +16,8 @@ pub struct Blocklace {
     pub(crate) checkpoint_depth: Option<u64>,
     pub(crate) checkpoint_order_prefix: Vec<BlockIdentity>,
     pub(crate) checkpoint_weighted_order_prefix: Vec<BlockIdentity>,
+    /// Monotonic counter over structural mutations. See [`Blocklace::generation`].
+    generation: u64,
 }
 
 // Construction
@@ -27,7 +29,59 @@ impl Blocklace {
             checkpoint_depth: None,
             checkpoint_order_prefix: Vec::new(),
             checkpoint_weighted_order_prefix: Vec::new(),
+            generation: 0,
         }
+    }
+}
+
+// Structural mutation — the only paths that may change the blocklace.
+//
+// Every mutation must go through these so that `generation` cannot fall behind
+// the contents. A generation counter that misses a mutation is worse than no
+// counter at all: a stale cache would be reported as fresh.
+impl Blocklace {
+    /// Monotonic count of structural mutations applied to this blocklace.
+    ///
+    /// Increments on block insertion, block removal, and checkpoint updates.
+    /// Caches keyed on this value are invalidated by any change to the DAG,
+    /// including changes that leave `dom().len()` untouched — a prune paired
+    /// with an insert, for instance, which a size-based generation cannot
+    /// distinguish from no change at all.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Insert validated content, bumping the generation.
+    ///
+    /// The caller is responsible for having validated the block; this is the
+    /// commit step only.
+    pub(crate) fn commit_validated(&mut self, id: BlockIdentity, content: BlockContent) {
+        self.blocks.insert(id, content);
+        self.generation += 1;
+    }
+
+    /// Remove a block, bumping the generation if anything was removed.
+    pub(crate) fn forget_block(&mut self, id: &BlockIdentity) -> bool {
+        let removed = self.blocks.remove(id).is_some();
+        if removed {
+            self.generation += 1;
+        }
+        removed
+    }
+
+    /// Install checkpoint state, bumping the generation.
+    pub(crate) fn set_checkpoint_state(
+        &mut self,
+        checkpoint: BlockIdentity,
+        depth: u64,
+        order_prefix: Vec<BlockIdentity>,
+        weighted_order_prefix: Vec<BlockIdentity>,
+    ) {
+        self.checkpoint = Some(checkpoint);
+        self.checkpoint_depth = Some(depth);
+        self.checkpoint_order_prefix = order_prefix;
+        self.checkpoint_weighted_order_prefix = weighted_order_prefix;
+        self.generation += 1;
     }
 }
 
@@ -111,7 +165,7 @@ impl Blocklace {
         }
 
         // 3. Commit to state
-        self.blocks.insert(block.identity.clone(), block.content);
+        self.commit_validated(block.identity.clone(), block.content);
         Ok(())
     }
     // pub fn insert(&mut self, block: Block) -> Result<(), String> {

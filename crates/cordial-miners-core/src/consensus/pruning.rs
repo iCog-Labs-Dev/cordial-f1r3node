@@ -120,13 +120,15 @@ impl Blocklace {
         }
 
         for id in &candidates {
-            self.blocks.remove(id);
+            self.forget_block(id);
         }
 
-        self.checkpoint = Some(checkpoint.clone());
-        self.checkpoint_depth = Some(checkpoint_depth);
-        self.checkpoint_order_prefix = checkpoint_order_prefix;
-        self.checkpoint_weighted_order_prefix = checkpoint_weighted_order_prefix;
+        self.set_checkpoint_state(
+            checkpoint.clone(),
+            checkpoint_depth,
+            checkpoint_order_prefix,
+            checkpoint_weighted_order_prefix,
+        );
 
         Ok(PruneReport {
             checkpoint: checkpoint.clone(),
