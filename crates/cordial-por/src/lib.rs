@@ -6,12 +6,14 @@
 
 pub mod config;
 pub mod error;
+pub mod ratings;
 pub mod state;
 pub mod types;
 pub mod weights;
 
 pub use config::PorConfig;
 pub use error::PorError;
+pub use ratings::{build_rating_batch, validate_rating};
 pub use state::ReputationState;
 
 pub use types::{

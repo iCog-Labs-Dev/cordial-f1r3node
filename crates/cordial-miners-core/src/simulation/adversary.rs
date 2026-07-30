@@ -278,6 +278,7 @@ impl ConsensusParams {
 pub struct AdversarialNetwork {
     nodes: BTreeMap<NodeId, SimNode>,
     validators: Vec<NodeId>,
+    bonds: HashMap<NodeId, u64>,
     /// Messages that will be delivered, once their release step arrives.
     inflight: Vec<InFlight>,
     /// Messages held back by an active partition. Released by [`Self::heal`].
@@ -298,7 +299,7 @@ impl AdversarialNetwork {
         bonds: HashMap<NodeId, u64>,
         config: ValidationConfig,
     ) -> Self {
-        let nodes = validators
+        let nodes: BTreeMap<NodeId, SimNode> = validators
             .iter()
             .map(|id| {
                 (
@@ -311,6 +312,7 @@ impl AdversarialNetwork {
         Self {
             nodes,
             validators,
+            bonds,
             inflight: Vec::new(),
             severed: Vec::new(),
             partition: None,
@@ -329,6 +331,43 @@ impl AdversarialNetwork {
         let validators: Vec<NodeId> = (1..=n).map(|i| NodeId(vec![i as u8])).collect();
         let bonds: HashMap<NodeId, u64> = validators.iter().map(|id| (id.clone(), 100)).collect();
         Self::new(validators, bonds, simulation_validation_config())
+    }
+
+    /// Network with explicit per-validator stake.
+    ///
+    /// The equal-stake constructor cannot exercise the weighted quorum path in
+    /// any meaningful way: when every validator has the same stake, a stake
+    /// supermajority and a count supermajority are the same set, so a bug that
+    /// counted validators instead of weighing them would pass unnoticed. Skewed
+    /// stake is what separates the two.
+    pub fn weighted(weights: &[(NodeId, u64)]) -> Self {
+        let validators: Vec<NodeId> = weights.iter().map(|(id, _)| id.clone()).collect();
+        let bonds: HashMap<NodeId, u64> = weights.iter().cloned().collect();
+        Self::new(validators, bonds, simulation_validation_config())
+    }
+
+    /// Bonded stake per validator.
+    pub fn bonds(&self) -> &HashMap<NodeId, u64> {
+        &self.bonds
+    }
+
+    /// Total bonded stake.
+    pub fn total_stake(&self) -> u64 {
+        self.bonds.values().copied().sum()
+    }
+
+    /// Stake held by `id`, or zero if it is not bonded.
+    pub fn stake_of(&self, id: &NodeId) -> u64 {
+        self.bonds.get(id).copied().unwrap_or(0)
+    }
+
+    /// Whether `validators` together hold a strict two-thirds stake majority.
+    ///
+    /// Mirrors [`crate::consensus::is_weighted_supermajority`] so tests can
+    /// state the stake arithmetic they rely on instead of assuming it.
+    pub fn is_stake_supermajority(&self, validators: &[NodeId]) -> bool {
+        let support: u64 = validators.iter().map(|id| self.stake_of(id)).sum();
+        (support as u128) * 3 > (self.total_stake() as u128) * 2
     }
 
     pub fn with_seed(mut self, seed: u64) -> Self {
@@ -646,6 +685,92 @@ impl AdversarialNetwork {
                 (id.clone(), decided)
             })
             .collect()
+    }
+
+    /// Weighted ordered output (τ) for every validator.
+    pub fn all_weighted_ordered_outputs<F>(
+        &self,
+        wavelength: u64,
+        leader_selection: F,
+    ) -> BTreeMap<NodeId, Vec<BlockIdentity>>
+    where
+        F: Fn(u64) -> Option<NodeId> + Copy,
+    {
+        self.nodes
+            .iter()
+            .map(|(id, node)| {
+                let output = node
+                    .weighted_ordered_output(wavelength, leader_selection)
+                    .unwrap_or_default();
+                (id.clone(), output)
+            })
+            .collect()
+    }
+
+    /// Latest weighted final leader per validator, paired with its wave.
+    pub fn all_weighted_final_leader_waves<F>(
+        &self,
+        wavelength: u64,
+        leader_selection: F,
+    ) -> BTreeMap<NodeId, Option<(u64, BlockIdentity)>>
+    where
+        F: Fn(u64) -> Option<NodeId> + Copy,
+    {
+        self.nodes
+            .iter()
+            .map(|(id, node)| {
+                let decided = node
+                    .latest_weighted_final_leader(wavelength, leader_selection)
+                    .and_then(|leader| {
+                        let round = depth(&node.blocklace, &leader)?;
+                        let wave = wave_of_round(round, wavelength)?;
+                        Some((wave, leader))
+                    });
+                (id.clone(), decided)
+            })
+            .collect()
+    }
+
+    /// Safety invariants over the weighted ordering path.
+    ///
+    /// Same four properties as [`Self::check_safety`], measured against
+    /// `weighted_tau` and `latest_weighted_final_leader` instead of their
+    /// count-based counterparts.
+    pub fn check_weighted_safety<F>(&self, wavelength: u64, leader_selection: F) -> SafetyResult
+    where
+        F: Fn(u64) -> Option<NodeId> + Copy,
+    {
+        let mut outputs = BTreeMap::new();
+        for (id, node) in &self.nodes {
+            let output = node
+                .weighted_ordered_output(wavelength, leader_selection)
+                .map_err(|error| {
+                    Box::new(SafetyViolation::Ordering {
+                        node: id.clone(),
+                        error,
+                    })
+                })?;
+            check_no_duplicates(id, &output)?;
+            check_causal_closure(id, &node.blocklace, &output)?;
+            outputs.insert(id.clone(), output);
+        }
+
+        let leaders = self.all_weighted_final_leader_waves(wavelength, leader_selection);
+        check_leader_agreement(&leaders)?;
+        check_prefix_consistency(&outputs)
+    }
+
+    /// Whether every validator produced the same non-empty weighted output.
+    pub fn has_converged_weighted<F>(&self, wavelength: u64, leader_selection: F) -> bool
+    where
+        F: Fn(u64) -> Option<NodeId> + Copy,
+    {
+        let outputs = self.all_weighted_ordered_outputs(wavelength, leader_selection);
+        let mut iter = outputs.values();
+        let Some(first) = iter.next() else {
+            return false;
+        };
+        !first.is_empty() && iter.all(|output| output == first)
     }
 
     /// Run every safety invariant against the current state.

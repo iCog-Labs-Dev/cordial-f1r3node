@@ -4,6 +4,11 @@ This document records the first paper-aligned data model for `cordial-por`.
 It is a guide for the next implementation issue; it should not introduce
 reputation algorithms or Cordial Miners consensus behavior by itself.
 
+This stage is intentionally limited to accepting and validating `RatingRecord`
+instances before they are assigned to a single-round `RatingBatch`. The module
+`src/ratings.rs` owns that validation and deterministic batching logic; it does
+not compute reputation states, matrices, or Liquid Rank updates.
+
 ## Paper Reference
 
 Primary reference:
@@ -103,16 +108,23 @@ Planned role:
 
 This file should not implement ratification, finality, or tau ordering.
 
-### Future Files
+### Current and Future Files
 
-Add these only when their issue is reached:
+The current implementation includes `src/ratings.rs`, which is responsible for
+validation + deterministic round batching.
 
-- `src/ratings.rs`: rating validation, deduplication, and batching
+Future work remains:
+
 - `src/liquid_rank.rs`: normalization and liquid-rank calculation
 - `src/block.rs`: reputation block construction helpers
 - `src/audit.rs`: replay and transition verification
 - `src/committee.rs`: consensus group selection
 - `src/leader.rs`: leader selection from the consensus group
+
+`EquivocationPenalty` and `InactivityPenalty` remain intentionally as Cordial
+integration extensions and are not part of the first reputation calculation
+step. Liquid Rank, rating matrix calculation, reputation updates, and all later
+consensus-selection logic remain future work.
 
 ## Paper-Aligned Structures
 
