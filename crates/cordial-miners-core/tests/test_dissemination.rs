@@ -1,8 +1,8 @@
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    InvalidBlock, PendingBlockBuffer, ProposalError, ValidationConfig, build_block_candidate,
-    next_block_predecessors, required_acknowledgements, select_predecessors,
+    BufferOutcome, BufferPolicy, InvalidBlock, PendingBlockBuffer, ProposalError, ValidationConfig,
+    build_block_candidate, next_block_predecessors, required_acknowledgements, select_predecessors,
     select_predecessors_sorted, validated_insert, validator_visible_tips,
     weighted_required_acknowledgements,
 };
@@ -1009,6 +1009,337 @@ fn pending_buffer_keeps_multi_round_gap_when_creator_is_known() {
         blocklace.content(&round2.identity).is_some(),
         "the buffered block should be inserted once its history arrives"
     );
+}
+
+/// Deferring the chain axiom must *delay* the check, not skip it: a buffered
+/// block that genuinely conflicts once its history arrives is still rejected.
+///
+/// v1 already has its round-0 block locally. The arriving block is by v1 but
+/// hangs off v2's genesis, so it does not descend from v1's own chain — a real
+/// chain-axiom conflict. It cannot be judged on arrival (v2's genesis is
+/// missing), so it is buffered; once v2's genesis lands the conflict becomes
+/// visible and the block is dropped rather than inserted.
+#[test]
+fn buffered_block_is_rejected_as_equivocation_once_its_history_arrives() {
+    let mut blocklace = Blocklace::new();
+    let mut buffer = PendingBlockBuffer::new();
+    let config = dissemination_test_config();
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+    bonds.insert(node(2), 100);
+
+    let r0_v1 = create_mock_block(1, 1, HashSet::new());
+    insert(&mut blocklace, &r0_v1);
+
+    let r0_v2 = create_mock_block(2, 2, HashSet::new());
+    let conflicting = create_mock_block(1, 3, HashSet::from([r0_v2.identity.clone()]));
+
+    // On arrival the only complaint is the missing predecessor, so a caller
+    // buffers rather than drops.
+    let arrival = validated_insert(conflicting.clone(), &mut blocklace, &bonds, &config);
+    assert!(
+        arrival
+            .errors()
+            .iter()
+            .all(|e| matches!(e, InvalidBlock::MissingPredecessors { .. })),
+        "the conflict is not yet decidable, so only the gap should be reported: {:?}",
+        arrival.errors()
+    );
+    buffer.buffer_block_with_missing_predecessors(conflicting.clone());
+
+    // The history arrives and the conflict becomes visible.
+    insert(&mut blocklace, &r0_v2);
+    buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
+
+    assert!(
+        blocklace.content(&conflicting.identity).is_none(),
+        "a genuinely equivocating block must not be inserted"
+    );
+    assert!(
+        buffer.buffered_blocks.is_empty(),
+        "it must also be dropped from the buffer, not retried forever"
+    );
+    assert!(blocklace.satisfies_chain_axiom(&node(1)));
+}
+
+/// The same block arriving repeatedly while its history is missing must not
+/// create duplicate buffer entries or duplicate insertions.
+#[test]
+fn duplicate_buffered_block_is_stored_and_inserted_once() {
+    let mut blocklace = Blocklace::new();
+    let mut buffer = PendingBlockBuffer::new();
+    let config = dissemination_test_config();
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+
+    let round0 = create_mock_block(1, 1, HashSet::new());
+    let round1 = create_mock_block(1, 2, HashSet::from([round0.identity.clone()]));
+    let round2 = create_mock_block(1, 3, HashSet::from([round1.identity.clone()]));
+    insert(&mut blocklace, &round0);
+
+    // Arrives three times while round 1 is still missing.
+    for _ in 0..3 {
+        buffer.buffer_block_with_missing_predecessors(round2.clone());
+    }
+    assert_eq!(
+        buffer.buffered_blocks.len(),
+        1,
+        "the buffer is keyed by block identity, so repeats must coalesce"
+    );
+
+    insert(&mut blocklace, &round1);
+    let before = blocklace.dom().len();
+    buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
+
+    assert!(buffer.buffered_blocks.is_empty());
+    assert!(blocklace.content(&round2.identity).is_some());
+    assert_eq!(
+        blocklace.dom().len(),
+        before + 1,
+        "exactly one block should have been inserted"
+    );
+
+    // Retrying again, and re-buffering an already-known block, must be no-ops.
+    // The known block is removed by the identity short-circuit, without going
+    // through `validated_insert` again.
+    buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
+    buffer.buffer_block_with_missing_predecessors(round2.clone());
+    buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
+    assert_eq!(blocklace.dom().len(), before + 1);
+    assert!(buffer.buffered_blocks.is_empty());
+}
+
+/// Two incompatible future blocks by the same creator, both buffered before
+/// their shared history arrives: exactly one may survive, and *which* one is
+/// deterministic.
+///
+/// `retry_buffered_blocks` replays buffered blocks in `BlockIdentity` order,
+/// not `HashMap` iteration order, so the branch with the smaller identity is
+/// inserted first on every node; the other then conflicts and is dropped.
+/// Local state therefore stays a deterministic function of messages received.
+#[test]
+fn conflicting_buffered_blocks_from_same_creator_admit_exactly_one() {
+    let mut blocklace = Blocklace::new();
+    let mut buffer = PendingBlockBuffer::new();
+    let config = dissemination_test_config();
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+
+    let round0 = create_mock_block(1, 1, HashSet::new());
+    let round1 = create_mock_block(1, 2, HashSet::from([round0.identity.clone()]));
+    insert(&mut blocklace, &round0);
+
+    // Two incompatible extensions of the same missing round.
+    let branch_a = create_mock_block(1, 3, HashSet::from([round1.identity.clone()]));
+    let branch_b = create_mock_block(1, 4, HashSet::from([round1.identity.clone()]));
+    buffer.buffer_block_with_missing_predecessors(branch_a.clone());
+    buffer.buffer_block_with_missing_predecessors(branch_b.clone());
+    assert_eq!(buffer.buffered_blocks.len(), 2);
+
+    insert(&mut blocklace, &round1);
+    buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
+
+    let inserted_a = blocklace.content(&branch_a.identity).is_some();
+    let inserted_b = blocklace.content(&branch_b.identity).is_some();
+    assert!(
+        inserted_a ^ inserted_b,
+        "exactly one branch may be admitted, got a={inserted_a} b={inserted_b}"
+    );
+
+    // Replay visits buffered blocks in identity order, so the smaller
+    // identity is admitted first and the other conflicts — on every node.
+    let mut ordered = [branch_a.identity.clone(), branch_b.identity.clone()];
+    ordered.sort();
+    assert!(
+        blocklace.content(&ordered[0]).is_some(),
+        "the branch with the smaller identity must be the survivor"
+    );
+    assert!(
+        blocklace.content(&ordered[1]).is_none(),
+        "the branch with the larger identity must be rejected"
+    );
+
+    assert!(
+        blocklace.satisfies_chain_axiom(&node(1)),
+        "admitting both would break the chain axiom for the creator"
+    );
+    assert!(
+        buffer.buffered_blocks.is_empty(),
+        "the rejected branch must be dropped, not retried forever"
+    );
+}
+
+// ── Buffer bounds (#157 item 1) ──
+
+fn tiny_policy() -> BufferPolicy {
+    BufferPolicy {
+        max_entries: 4,
+        max_entries_per_creator: 2,
+        max_retry_passes: 2,
+    }
+}
+
+/// A full buffer admits new blocks by evicting its oldest entry, so a fresh
+/// block is never locked out by stale ones.
+#[test]
+fn buffer_evicts_the_oldest_entry_at_capacity() {
+    let mut buffer = PendingBlockBuffer::with_policy(tiny_policy());
+
+    // Four creators, one block each: fills max_entries without touching quotas.
+    let blocks: Vec<Block> = (1..=4u8)
+        .map(|c| {
+            create_mock_block(
+                c,
+                1,
+                HashSet::from([create_mock_block(9, 9, HashSet::new()).identity]),
+            )
+        })
+        .collect();
+    for b in &blocks {
+        assert_eq!(
+            buffer.buffer_block_with_missing_predecessors(b.clone()),
+            BufferOutcome::Buffered
+        );
+    }
+    assert_eq!(buffer.buffered_blocks.len(), 4);
+
+    // The fifth evicts the first-arrived.
+    let newcomer = create_mock_block(
+        5,
+        1,
+        HashSet::from([create_mock_block(9, 9, HashSet::new()).identity]),
+    );
+    let outcome = buffer.buffer_block_with_missing_predecessors(newcomer.clone());
+    assert_eq!(
+        outcome,
+        BufferOutcome::BufferedEvicting(blocks[0].identity.clone())
+    );
+    assert_eq!(buffer.buffered_blocks.len(), 4, "capacity is respected");
+    assert!(buffer.buffered_blocks.contains_key(&newcomer.identity));
+    assert!(!buffer.buffered_blocks.contains_key(&blocks[0].identity));
+    assert_eq!(buffer.stats().evicted_for_capacity, 1);
+}
+
+/// One creator cannot exceed its quota, and cannot displace another creator's
+/// buffered blocks by flooding. This is the property that makes the bound a DoS
+/// defence rather than just a memory cap.
+#[test]
+fn creator_quota_stops_a_flood_from_evicting_other_creators() {
+    let mut buffer = PendingBlockBuffer::with_policy(tiny_policy());
+    let missing = create_mock_block(9, 9, HashSet::new()).identity;
+
+    // An honest creator buffers one block.
+    let honest = create_mock_block(1, 1, HashSet::from([missing.clone()]));
+    buffer.buffer_block_with_missing_predecessors(honest.clone());
+
+    // A flooder tries ten blocks but is capped at its quota of two.
+    let flooder = node(2);
+    for tag in 0..10u8 {
+        buffer.buffer_block_with_missing_predecessors(create_mock_block(
+            2,
+            tag,
+            HashSet::from([missing.clone()]),
+        ));
+    }
+
+    let flooder_held = buffer
+        .buffered_blocks
+        .keys()
+        .filter(|id| id.creator == flooder)
+        .count();
+    assert_eq!(
+        flooder_held, 2,
+        "the flooder must be held to max_entries_per_creator"
+    );
+    assert!(
+        buffer.buffered_blocks.contains_key(&honest.identity),
+        "the honest creator's block must survive the flood"
+    );
+    assert_eq!(buffer.stats().rejected_creator_quota, 8);
+}
+
+/// Repeat arrivals of the same block must not consume extra quota.
+#[test]
+fn repeat_arrival_does_not_consume_extra_quota() {
+    let mut buffer = PendingBlockBuffer::with_policy(tiny_policy());
+    let missing = create_mock_block(9, 9, HashSet::new()).identity;
+    let block = create_mock_block(1, 1, HashSet::from([missing.clone()]));
+
+    assert_eq!(
+        buffer.buffer_block_with_missing_predecessors(block.clone()),
+        BufferOutcome::Buffered
+    );
+    for _ in 0..5 {
+        assert_eq!(
+            buffer.buffer_block_with_missing_predecessors(block.clone()),
+            BufferOutcome::AlreadyBuffered
+        );
+    }
+    assert_eq!(buffer.buffered_blocks.len(), 1);
+
+    // A second distinct block from the same creator still fits the quota of two.
+    let second = create_mock_block(1, 2, HashSet::from([missing]));
+    assert_eq!(
+        buffer.buffer_block_with_missing_predecessors(second),
+        BufferOutcome::Buffered
+    );
+    assert_eq!(buffer.stats().rejected_creator_quota, 0);
+}
+
+/// A block whose predecessors never arrive is eventually evicted, so an
+/// unsatisfiable block cannot hold its slot forever.
+#[test]
+fn buffer_evicts_blocks_that_never_resolve() {
+    let mut blocklace = Blocklace::new();
+    let mut buffer = PendingBlockBuffer::with_policy(tiny_policy());
+    let config = dissemination_test_config();
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+
+    let never_arrives = create_mock_block(9, 9, HashSet::new()).identity;
+    let orphan = create_mock_block(1, 1, HashSet::from([never_arrives]));
+    buffer.buffer_block_with_missing_predecessors(orphan.clone());
+
+    // max_retry_passes = 2, so it survives the first two passes.
+    for pass in 1..=2 {
+        buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
+        assert_eq!(
+            buffer.buffered_blocks.len(),
+            1,
+            "should still be held after pass {pass}"
+        );
+    }
+
+    buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
+    assert!(
+        buffer.buffered_blocks.is_empty(),
+        "an unresolvable block must be evicted once it exceeds max_retry_passes"
+    );
+    assert_eq!(buffer.stats().evicted_stale, 1);
+}
+
+/// Retry-pass accounting must not evict a block that resolves normally.
+#[test]
+fn resolvable_block_is_inserted_rather_than_aged_out() {
+    let mut blocklace = Blocklace::new();
+    let mut buffer = PendingBlockBuffer::with_policy(tiny_policy());
+    let config = dissemination_test_config();
+    let mut bonds = HashMap::new();
+    bonds.insert(node(1), 100);
+
+    let round0 = create_mock_block(1, 1, HashSet::new());
+    let round1 = create_mock_block(1, 2, HashSet::from([round0.identity.clone()]));
+    buffer.buffer_block_with_missing_predecessors(round1.clone());
+
+    // One unsuccessful pass, then the predecessor arrives.
+    buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
+    insert(&mut blocklace, &round0);
+    buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
+
+    assert!(blocklace.content(&round1.identity).is_some());
+    assert!(buffer.buffered_blocks.is_empty());
+    assert_eq!(buffer.stats().evicted_stale, 0);
+    assert_eq!(buffer.stats().evicted_for_capacity, 0);
 }
 
 #[test]

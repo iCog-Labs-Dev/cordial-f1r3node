@@ -178,16 +178,11 @@ pub fn validate_block(
         });
     }
 
-    // 5. Chain axiom — inserting this block must not create equivocation
+    // 5. Chain axiom — inserting this block must not create equivocation.
     //
-    // Only decidable once the block's causal history is present. The check
-    // establishes comparability by walking the local blocklace from the
-    // creator's existing blocks through this block's predecessors, so a block
-    // whose predecessors have not arrived yet would be reported as an
-    // equivocation purely because the path cannot be traced. That matters
-    // twice over: the block is honest and must still be retried once its
-    // history lands, and a spurious `Equivocation` is evidence against a
-    // validator that did nothing wrong.
+    // Deferred while predecessors are missing: the comparability walk cannot
+    // succeed without the block's history, so running it early misreports an
+    // honest block as `Equivocation` and gets it dropped instead of buffered.
     if config.check_chain_axiom && missing_predecessors.is_empty() {
         let creator = &block.identity.creator;
         let creator_blocks = blocklace.blocks_by(creator);
@@ -216,7 +211,11 @@ pub fn validate_block(
 
     // 6. Cordial condition — block references known tips and does not hide
     //    globally known equivocations already present in the local DAG view.
-    if config.check_cordial {
+    //
+    // Deferred while predecessors are missing, same as the chain axiom: these
+    // checks judge the block against a closure rebuilt from the local view,
+    // and any extra error here would stop callers from buffering the block.
+    if config.check_cordial && missing_predecessors.is_empty() {
         let known_tips = collect_validator_tips(blocklace, bonds);
         let missing_tips = missing_known_tips(block, &known_tips);
 
