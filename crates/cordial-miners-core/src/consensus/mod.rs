@@ -24,7 +24,7 @@ pub use dissemination::{
 };
 pub use evidence::{
     CordialEquivocationEvidence, CordialEvidencePool, EquivocationEvidence, EvidenceBlock,
-    EvidencePool, InMemoryEvidencePool,
+    EvidencePool, InMemoryEvidencePool, record_rejected_equivocation,
 };
 pub use finality::{
     final_leader_for_wave, is_final_leader, is_weighted_final_leader, latest_final_leader,

@@ -4,8 +4,9 @@ use crate::Block;
 use crate::blocklace::Blocklace;
 use crate::consensus::OrderingError;
 use crate::consensus::{
-    InvalidBlock, PendingBlockBuffer, ProposalError, ValidationConfig, ValidationResult,
-    build_block_candidate, latest_final_leader, latest_weighted_final_leader, tau,
+    CordialEquivocationEvidence, CordialEvidencePool, EvidencePool, InvalidBlock,
+    PendingBlockBuffer, ProposalError, ValidationConfig, ValidationResult, build_block_candidate,
+    latest_final_leader, latest_weighted_final_leader, record_rejected_equivocation, tau,
     validated_insert, weighted_tau,
 };
 use crate::types::{BlockContent, BlockIdentity, NodeId};
@@ -34,6 +35,12 @@ pub struct SimNode {
     pub id: NodeId,
     pub blocklace: Blocklace,
     pub pending: PendingBlockBuffer,
+    /// Equivocation proof captured at the moment of rejection.
+    ///
+    /// Held per node rather than globally: whether a node has the proof depends
+    /// on whether *it* saw both branches, which is exactly what a partition
+    /// changes.
+    pub evidence: CordialEvidencePool,
     bonds: HashMap<NodeId, u64>,
     validation_config: ValidationConfig,
 }
@@ -48,6 +55,7 @@ impl SimNode {
             id,
             blocklace: Blocklace::new(),
             pending: PendingBlockBuffer::new(),
+            evidence: CordialEvidencePool::new(),
             bonds,
             validation_config,
         }
@@ -66,6 +74,12 @@ impl SimNode {
         ) {
             ValidationResult::Valid => DeliveryOutcome::Inserted,
             ValidationResult::Invalid(errors) => {
+                // Capture equivocation proof before the block is dropped. The
+                // chain axiom keeps both branches from ever coexisting in the
+                // blocklace, so rejection is the only moment the pair is in
+                // hand.
+                record_rejected_equivocation(&block, &errors, &self.blocklace, &mut self.evidence);
+
                 if errors
                     .iter()
                     .all(|error| matches!(error, InvalidBlock::MissingPredecessors { .. }))
@@ -94,6 +108,16 @@ impl SimNode {
 
     pub fn pending_len(&self) -> usize {
         self.pending.buffered_blocks.len()
+    }
+
+    /// Equivocation proof this node holds for `validator`.
+    pub fn evidence_for(&self, validator: &NodeId) -> Vec<CordialEquivocationEvidence> {
+        self.evidence.evidence_for(validator)
+    }
+
+    /// Whether this node holds proof that `validator` equivocated.
+    pub fn has_evidence_against(&self, validator: &NodeId) -> bool {
+        !self.evidence.evidence_for(validator).is_empty()
     }
 
     /// Build a local block candidate from the node's current view.

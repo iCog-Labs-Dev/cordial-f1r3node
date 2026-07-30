@@ -9,6 +9,9 @@ use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
 use crate::block::Block;
+use crate::blocklace::Blocklace;
+use crate::consensus::round::depth;
+use crate::consensus::validation::InvalidBlock;
 use crate::types::{BlockIdentity, NodeId};
 
 /// A block-like value that can expose a stable identity for evidence
@@ -153,3 +156,64 @@ where
 
 pub type CordialEquivocationEvidence = EquivocationEvidence<NodeId, Block, BlockIdentity>;
 pub type CordialEvidencePool = InMemoryEvidencePool<NodeId, Block, BlockIdentity>;
+
+/// Capture equivocation proof from a rejected block, at the moment of detection.
+///
+/// Equivocation is detected when a block fails validation with
+/// [`InvalidBlock::Equivocation`], which names the conflicting block already
+/// held locally. That instant is the *only* opportunity to retain the proof:
+/// the chain axiom stops both branches from ever coexisting in the blocklace,
+/// so once the incoming branch is rejected and dropped, the pair cannot be
+/// reconstructed from local state afterwards — `all_equivocations` scans the
+/// blocklace, which by construction holds at most one branch.
+///
+/// Callers should therefore invoke this with the rejected block *before*
+/// discarding it:
+///
+/// ```ignore
+/// let result = validated_insert(block.clone(), &mut blocklace, &bonds, &config);
+/// if let ValidationResult::Invalid(errors) = &result {
+///     record_rejected_equivocation(&block, errors, &blocklace, &mut pool);
+/// }
+/// ```
+///
+/// Returns `true` when new evidence was stored. Returns `false` when the errors
+/// contain no equivocation, when the conflicting block is not in the blocklace,
+/// when its round cannot be determined, or when the same proof was already held.
+pub fn record_rejected_equivocation<P>(
+    rejected: &Block,
+    errors: &[InvalidBlock],
+    blocklace: &Blocklace,
+    pool: &mut P,
+) -> bool
+where
+    P: EvidencePool<NodeId, Block, BlockIdentity>,
+{
+    let mut recorded = false;
+
+    for error in errors {
+        let InvalidBlock::Equivocation { conflicting } = error else {
+            continue;
+        };
+
+        // The counterpart must be present locally — it is the block that caused
+        // the rejection — but be defensive rather than panic on a caller that
+        // passes a stale error set.
+        let Some(held) = blocklace.get(conflicting) else {
+            continue;
+        };
+        let Some(round) = depth(blocklace, conflicting) else {
+            continue;
+        };
+
+        if pool.record_equivocation(
+            rejected.identity.creator.clone(),
+            round,
+            vec![rejected.clone(), held],
+        ) {
+            recorded = true;
+        }
+    }
+
+    recorded
+}
