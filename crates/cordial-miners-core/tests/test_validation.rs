@@ -516,6 +516,69 @@ fn block_hiding_known_equivocation_fails_strict_validation() {
     );
 }
 
+/// The cordial checks are deferred while predecessors are missing, for the same
+/// reason as the chain axiom.
+///
+/// `missing_known_tips` and `hidden_equivocations` both judge a block against a
+/// predecessor closure reconstructed from the local blocklace, so an incomplete
+/// view yields a verdict about the view rather than the block. Worse, reporting
+/// `HiddenEquivocation` alongside `MissingPredecessors` makes the error set
+/// non-uniform, and callers retain a block for retry only when *every* error is
+/// `MissingPredecessors` — so an honest block would be discarded outright under
+/// `check_cordial`, exactly as it was under the chain axiom.
+///
+/// This only affects configurations that enable `check_cordial`, which is off in
+/// `ValidationConfig::default()`.
+#[test]
+fn cordial_checks_are_deferred_while_predecessors_are_missing() {
+    let mut bl = Blocklace::new();
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+
+    // A known equivocation by v1 sits in the local view.
+    let e1 = genesis_unsigned(&v1, 1);
+    let e2 = genesis_unsigned(&v1, 2);
+    insert(&mut bl, &e1);
+    insert(&mut bl, &e2);
+
+    // v3's block acknowledges only one branch of that equivocation *and*
+    // references a predecessor that has not arrived.
+    let undelivered = genesis_unsigned(&v2, 3);
+    let candidate = child_unsigned(&v3, 4, &[&e1, &undelivered]);
+
+    let b = bonds(&[(1, 100), (2, 100), (3, 100)]);
+    let config = ValidationConfig {
+        check_cordial: true,
+        ..no_crypto_config()
+    };
+
+    let result = validate_block(&candidate, &bl, &b, &config);
+    assert!(!result.is_valid(), "the gap is still a closure failure");
+    assert!(
+        result
+            .errors()
+            .iter()
+            .all(|e| matches!(e, InvalidBlock::MissingPredecessors { .. })),
+        "while history is missing, only the gap may be reported, otherwise the \
+         block is discarded instead of buffered: {:?}",
+        result.errors()
+    );
+
+    // Once the gap is filled the cordial verdict is decidable, and the hidden
+    // equivocation is reported as it should be.
+    insert(&mut bl, &undelivered);
+    let result = validate_block(&candidate, &bl, &b, &config);
+    assert!(
+        result
+            .errors()
+            .iter()
+            .any(|e| matches!(e, InvalidBlock::HiddenEquivocation { .. })),
+        "deferring must not lose the check: {:?}",
+        result.errors()
+    );
+}
+
 // ── validated_insert ──
 
 #[test]

@@ -270,14 +270,87 @@ pub fn build_block_candidate(
     })
 }
 
+/// Bounds on how many blocks may be held awaiting their causal history.
+///
+/// Without a bound, a peer can stream blocks whose predecessors never arrive and
+/// grow the buffer until the node exhausts memory. The policy is expressed in
+/// counts and retry passes rather than wall-clock time deliberately: consensus
+/// state should stay a deterministic function of the messages received, and a
+/// clock would make eviction depend on scheduling. "Age" here therefore means
+/// *how many retry passes a block has failed to resolve*, not seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BufferPolicy {
+    /// Total blocks the buffer may hold. Exceeding it evicts the oldest arrival.
+    pub max_entries: usize,
+    /// Blocks the buffer may hold on behalf of any single creator.
+    ///
+    /// This is the part that actually resists a flood. A global cap alone lets
+    /// one abusive creator evict every honest block; a per-creator quota bounds
+    /// the damage to that creator's own share. The creator is the right axis
+    /// because blocks are signed and therefore attributable — the sending peer
+    /// is not visible at this layer.
+    pub max_entries_per_creator: usize,
+    /// Retry passes a block may fail to resolve before it is evicted as stale.
+    pub max_retry_passes: u32,
+}
+
+impl Default for BufferPolicy {
+    fn default() -> Self {
+        Self {
+            max_entries: 4096,
+            max_entries_per_creator: 256,
+            max_retry_passes: 64,
+        }
+    }
+}
+
+/// Why a block was or was not admitted to the buffer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BufferOutcome {
+    /// The block is now buffered.
+    Buffered,
+    /// An entry for this identity already existed; the buffer did not grow.
+    AlreadyBuffered,
+    /// The block was buffered, evicting the oldest entry to respect
+    /// `max_entries`.
+    BufferedEvicting(BlockIdentity),
+    /// Refused: this creator already holds `max_entries_per_creator` slots.
+    RejectedCreatorQuota { creator: NodeId },
+}
+
+/// Observability counters for buffer pressure.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BufferStats {
+    /// Blocks currently buffered.
+    pub buffered: usize,
+    /// Blocks evicted to respect `max_entries`.
+    pub evicted_for_capacity: u64,
+    /// Blocks evicted after exceeding `max_retry_passes`.
+    pub evicted_stale: u64,
+    /// Blocks refused because their creator was at quota.
+    pub rejected_creator_quota: u64,
+}
+
 /// A buffer for blocks that arrive out of order (before their predecessors).
 ///
 /// This provides the dependency-resolution side of dissemination: blocks with missing
 /// parents should be buffered and retried once dependencies arrive.
+///
+/// Admission is bounded by [`BufferPolicy`]. Note that `buffered_blocks` is
+/// public for historical reasons: writing to it directly bypasses the policy and
+/// the bookkeeping below, so prefer
+/// [`Self::buffer_block_with_missing_predecessors`].
 #[derive(Default, Debug, Clone)]
 pub struct PendingBlockBuffer {
     /// Blocks that are buffered, indexed by their identity.
     pub buffered_blocks: HashMap<BlockIdentity, Block>,
+    policy: BufferPolicy,
+    /// Arrival order, used to choose an eviction victim deterministically.
+    arrival: HashMap<BlockIdentity, u64>,
+    /// Retry passes each block has failed to resolve.
+    retry_passes: HashMap<BlockIdentity, u32>,
+    next_arrival: u64,
+    stats: BufferStats,
 }
 
 fn should_keep_buffered_after_validation(errors: &[InvalidBlock]) -> bool {
@@ -289,16 +362,127 @@ fn is_retryable_buffer_error(error: &InvalidBlock) -> bool {
 }
 
 impl PendingBlockBuffer {
-    /// Create a new empty pending block buffer.
+    /// Create a new empty pending block buffer with the default policy.
     pub fn new() -> Self {
+        Self::with_policy(BufferPolicy::default())
+    }
+
+    /// Create a new empty pending block buffer with an explicit policy.
+    pub fn with_policy(policy: BufferPolicy) -> Self {
         Self {
             buffered_blocks: HashMap::new(),
+            policy,
+            arrival: HashMap::new(),
+            retry_passes: HashMap::new(),
+            next_arrival: 0,
+            stats: BufferStats::default(),
         }
     }
 
+    pub fn policy(&self) -> BufferPolicy {
+        self.policy
+    }
+
+    /// Current buffer pressure counters.
+    pub fn stats(&self) -> BufferStats {
+        BufferStats {
+            buffered: self.buffered_blocks.len(),
+            ..self.stats
+        }
+    }
+
+    fn entries_by_creator(&self, creator: &NodeId) -> usize {
+        self.buffered_blocks
+            .keys()
+            .filter(|id| &id.creator == creator)
+            .count()
+    }
+
+    /// Identity of the oldest-arrived entry, or `None` when the buffer is empty.
+    ///
+    /// Ties on arrival order cannot happen, since `next_arrival` is strictly
+    /// increasing; the identity comparison is a defensive tie-break for entries
+    /// inserted directly into the public map, which carry no arrival record.
+    fn oldest_entry(&self) -> Option<BlockIdentity> {
+        self.buffered_blocks
+            .keys()
+            .min_by_key(|id| (self.arrival.get(*id).copied().unwrap_or(0), (*id).clone()))
+            .cloned()
+    }
+
+    fn forget(&mut self, id: &BlockIdentity) {
+        self.buffered_blocks.remove(id);
+        self.arrival.remove(id);
+        self.retry_passes.remove(id);
+    }
+
     /// Add a block to the buffer that might be missing predecessors.
-    pub fn buffer_block_with_missing_predecessors(&mut self, block: Block) {
-        self.buffered_blocks.insert(block.identity.clone(), block);
+    ///
+    /// Admission respects [`BufferPolicy`]: a creator over its quota is refused,
+    /// and a full buffer evicts its oldest entry to make room. The return value
+    /// says which happened; callers that do not care may ignore it.
+    pub fn buffer_block_with_missing_predecessors(&mut self, block: Block) -> BufferOutcome {
+        let id = block.identity.clone();
+
+        // Re-arrival of something already held: refresh the block but neither
+        // grow the buffer nor let a repeat consume extra quota.
+        if let std::collections::hash_map::Entry::Occupied(mut held) =
+            self.buffered_blocks.entry(id.clone())
+        {
+            held.insert(block);
+            return BufferOutcome::AlreadyBuffered;
+        }
+
+        let creator = id.creator.clone();
+        if self.entries_by_creator(&creator) >= self.policy.max_entries_per_creator {
+            self.stats.rejected_creator_quota += 1;
+            return BufferOutcome::RejectedCreatorQuota { creator };
+        }
+
+        let mut evicted = None;
+        if self.buffered_blocks.len() >= self.policy.max_entries
+            && let Some(victim) = self.oldest_entry()
+        {
+            self.forget(&victim);
+            self.stats.evicted_for_capacity += 1;
+            evicted = Some(victim);
+        }
+
+        self.arrival.insert(id.clone(), self.next_arrival);
+        self.next_arrival += 1;
+        self.retry_passes.insert(id.clone(), 0);
+        self.buffered_blocks.insert(id, block);
+
+        match evicted {
+            Some(victim) => BufferOutcome::BufferedEvicting(victim),
+            None => BufferOutcome::Buffered,
+        }
+    }
+
+    /// Drop entries that have failed to resolve for more than
+    /// `max_retry_passes`, and discard bookkeeping for entries that are no
+    /// longer present.
+    fn evict_stale(&mut self) {
+        let stale: Vec<BlockIdentity> = self
+            .buffered_blocks
+            .keys()
+            .filter(|id| {
+                self.retry_passes.get(*id).copied().unwrap_or(0) > self.policy.max_retry_passes
+            })
+            .cloned()
+            .collect();
+
+        for id in stale {
+            self.forget(&id);
+            self.stats.evicted_stale += 1;
+        }
+
+        // Entries inserted or removed through the public map leave orphaned
+        // bookkeeping; drop it so the maps cannot grow unbounded either.
+        self.arrival
+            .retain(|id, _| self.buffered_blocks.contains_key(id));
+        self.retry_passes
+            .retain(|id, _| self.buffered_blocks.contains_key(id));
     }
 
     /// Retry inserting buffered blocks into the given blocklace.
@@ -306,6 +490,14 @@ impl PendingBlockBuffer {
     /// Loops through buffered blocks and attempts to insert them if their
     /// predecessors are now available. Continues as long as progress is made
     /// (e.g., a block is inserted which then satisfies another block's dependencies).
+    ///
+    /// Replay is deterministic: each pass visits buffered blocks in
+    /// `BlockIdentity` order rather than `HashMap` iteration order, so every
+    /// node that buffered the same conflicting blocks resolves them the same
+    /// way. Local state stays a deterministic function of messages received.
+    ///
+    /// Blocks whose identity is already present in the blocklace are dropped
+    /// from the buffer without revalidation.
     ///
     /// Buffered replay uses the same consensus validation path as normal
     /// ingestion via `validated_insert`, so dependency resolution does not
@@ -316,18 +508,37 @@ impl PendingBlockBuffer {
     /// explicitly by validation error kind; with the current validation model,
     /// only `MissingPredecessors` is considered retryable for the supplied
     /// `bonds` and `config`.
+    ///
+    /// Returns every definitively rejected block together with its validation
+    /// errors. A block that was buffered as `MissingPredecessors` can turn out
+    /// to be an equivocation once its history arrives, and this replay is the
+    /// only place that rejection happens — callers that retain equivocation
+    /// proof (see `record_rejected_equivocation`) must be handed the rejected
+    /// block *here*, before it is dropped, or the evidence is lost.
     pub fn retry_buffered_blocks(
         &mut self,
         blocklace: &mut Blocklace,
         bonds: &HashMap<NodeId, u64>,
         config: &ValidationConfig,
-    ) {
+    ) -> Vec<(Block, Vec<InvalidBlock>)> {
+        let mut rejected = Vec::new();
         let mut progress = true;
         while progress {
             progress = false;
             let mut resolved = Vec::new();
 
-            for (id, block) in self.buffered_blocks.iter() {
+            let mut pending: Vec<BlockIdentity> = self.buffered_blocks.keys().cloned().collect();
+            pending.sort();
+
+            for id in pending {
+                // Already known: remove the entry without revalidating.
+                if blocklace.content(&id).is_some() {
+                    resolved.push(id);
+                    continue;
+                }
+
+                let block = &self.buffered_blocks[&id];
+
                 // Check if all predecessors are in the blocklace
                 let ready = block
                     .content
@@ -338,12 +549,12 @@ impl PendingBlockBuffer {
                 if ready {
                     match validated_insert(block.clone(), blocklace, bonds, config) {
                         crate::consensus::validation::ValidationResult::Valid => {
-                            resolved.push(id.clone());
+                            resolved.push(id);
                             progress = true;
                         }
                         crate::consensus::validation::ValidationResult::Invalid(errors) => {
                             if !should_keep_buffered_after_validation(&errors) {
-                                resolved.push(id.clone());
+                                resolved.push(id);
                             }
                         }
                     }
@@ -351,8 +562,17 @@ impl PendingBlockBuffer {
             }
 
             for id in resolved {
-                self.buffered_blocks.remove(&id);
+                self.forget(&id);
             }
         }
+
+        // Everything still held has failed to resolve for one more pass. Count
+        // it, then evict whatever has exceeded the policy — otherwise a block
+        // whose predecessors never arrive occupies its slot forever.
+        let remaining: Vec<BlockIdentity> = self.buffered_blocks.keys().cloned().collect();
+        for id in remaining {
+            *self.retry_passes.entry(id).or_insert(0) += 1;
+        }
+        self.evict_stale();
     }
 }
