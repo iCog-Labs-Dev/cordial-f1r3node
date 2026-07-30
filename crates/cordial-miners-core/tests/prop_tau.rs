@@ -23,7 +23,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::{tau, xsort, OrderingError};
+use cordial_miners_core::consensus::{OrderingError, tau, xsort};
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 
