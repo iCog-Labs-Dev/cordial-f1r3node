@@ -22,8 +22,6 @@ pub type ReputationWeight = u64;
 /// Fixed-point rating value.
 pub type RatingScore = u64;
 
-
-
 // ============================================================
 // Rating model
 // ============================================================
@@ -49,7 +47,6 @@ pub struct RatingRecord {
     pub interaction_ref: Option<Vec<u8>>,
 }
 
-
 impl RatingRecord {
     pub fn new(
         round: ReputationRound,
@@ -67,15 +64,12 @@ impl RatingRecord {
     }
 }
 
-
 /// Collection of ratings belonging to one round.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RatingBatch {
     pub round: ReputationRound,
     pub ratings: Vec<RatingRecord>,
 }
-
-
 
 // ============================================================
 // Reputation snapshot model
@@ -88,20 +82,14 @@ pub struct ReputationEntry {
     pub reputation: ReputationWeight,
 }
 
-
 impl ReputationEntry {
-    pub fn new(
-        node_id: NodeId,
-        reputation: ReputationWeight,
-    ) -> Self {
+    pub fn new(node_id: NodeId, reputation: ReputationWeight) -> Self {
         Self {
             node_id,
             reputation,
         }
     }
 }
-
-
 
 /// Complete reputation snapshot for a round.
 ///
@@ -113,8 +101,6 @@ pub struct ReputationList {
     pub entries: Vec<ReputationEntry>,
 }
 
-
-
 /// Mathematical reputation vector representation.
 ///
 /// This is a paper-aligned structure only.
@@ -124,8 +110,6 @@ pub struct ReputationVector {
     pub round: ReputationRound,
     pub values: Vec<ReputationEntry>,
 }
-
-
 
 // ============================================================
 // Penalty placeholders
@@ -140,8 +124,6 @@ pub struct EquivocationPenalty {
     pub evidence: Vec<u8>,
 }
 
-
-
 /// Placeholder for inactivity penalties.
 ///
 /// No punishment logic exists.
@@ -150,8 +132,6 @@ pub struct InactivityPenalty {
     pub offender: NodeId,
     pub missed_rounds: u64,
 }
-
-
 
 // ============================================================
 // Reputation block model
@@ -171,8 +151,6 @@ pub struct ReputationBlockHeader {
     /// Root commitment of reputation entries.
     pub reputation_root: Vec<u8>,
 }
-
-
 
 /// Reputation block.
 ///

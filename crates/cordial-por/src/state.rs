@@ -1,15 +1,9 @@
 use cordial_miners_core::NodeId;
 
 use crate::types::{
-    RatingRecord,
-    ReputationBlock,
-    ReputationEntry,
-    ReputationList,
-    ReputationRound,
+    RatingRecord, ReputationBlock, ReputationEntry, ReputationList, ReputationRound,
     ReputationWeight,
 };
-
-
 
 /// Local Proof-of-Reputation state.
 ///
@@ -17,7 +11,6 @@ use crate::types::{
 /// It does not calculate reputation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReputationState {
-
     current_round: ReputationRound,
 
     reputation_list: ReputationList,
@@ -27,10 +20,7 @@ pub struct ReputationState {
     latest_block: Option<ReputationBlock>,
 }
 
-
-
 impl ReputationState {
-
     pub fn new(round: ReputationRound) -> Self {
         Self {
             current_round: round,
@@ -46,67 +36,38 @@ impl ReputationState {
         }
     }
 
-
-
     pub fn round(&self) -> ReputationRound {
         self.current_round
     }
-
-
 
     pub fn reputation_list(&self) -> &ReputationList {
         &self.reputation_list
     }
 
-
-
     pub fn reputation_list_mut(&mut self) -> &mut ReputationList {
         &mut self.reputation_list
     }
-
-
 
     pub fn pending_ratings(&self) -> &[RatingRecord] {
         &self.pending_ratings
     }
 
-
-
     pub fn latest_block(&self) -> Option<&ReputationBlock> {
         self.latest_block.as_ref()
     }
 
-
-
-    pub fn add_rating(
-        &mut self,
-        rating: RatingRecord,
-    ) {
+    pub fn add_rating(&mut self, rating: RatingRecord) {
         self.pending_ratings.push(rating);
     }
 
-
-
-    pub fn set_reputation(
-        &mut self,
-        node_id: NodeId,
-        reputation: ReputationWeight,
-    ) {
+    pub fn set_reputation(&mut self, node_id: NodeId, reputation: ReputationWeight) {
         self.reputation_list
             .entries
-            .push(
-                ReputationEntry::new(
-                    node_id,
-                    reputation,
-                )
-            );
+            .push(ReputationEntry::new(node_id, reputation));
     }
 }
 
-
-
 impl Default for ReputationState {
-
     fn default() -> Self {
         Self::new(0)
     }

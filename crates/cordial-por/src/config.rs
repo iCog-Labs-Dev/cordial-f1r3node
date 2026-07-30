@@ -1,14 +1,8 @@
-use crate::types::{
-    RatingScore,
-    ReputationWeight,
-};
-
-
+use crate::types::{RatingScore, ReputationWeight};
 
 /// Configuration parameters for future PoR transitions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PorConfig {
-
     /// Fixed point scale.
     pub scale: ReputationWeight,
 
@@ -25,23 +19,12 @@ pub struct PorConfig {
     pub maximum_rating: RatingScore,
 }
 
-
-
 impl PorConfig {
+    pub const DEFAULT_SCALE: ReputationWeight = 1_000_000_000;
 
-    pub const DEFAULT_SCALE: ReputationWeight =
-        1_000_000_000;
+    pub const DEFAULT_INITIAL_REPUTATION: ReputationWeight = 200_000_000;
 
-
-    pub const DEFAULT_INITIAL_REPUTATION: ReputationWeight =
-        200_000_000;
-
-
-    pub fn new(
-        scale: ReputationWeight,
-        initial_reputation: ReputationWeight,
-    ) -> Self {
-
+    pub fn new(scale: ReputationWeight, initial_reputation: ReputationWeight) -> Self {
         Self {
             scale,
             initial_reputation,
@@ -55,27 +38,18 @@ impl PorConfig {
     }
 }
 
-
-
 impl Default for PorConfig {
-
     fn default() -> Self {
-
         Self {
-
             scale: Self::DEFAULT_SCALE,
 
-            initial_reputation:
-                Self::DEFAULT_INITIAL_REPUTATION,
+            initial_reputation: Self::DEFAULT_INITIAL_REPUTATION,
 
-            liquid_rank_alpha:
-                600_000_000,
+            liquid_rank_alpha: 600_000_000,
 
-            minimum_rating:
-                0,
+            minimum_rating: 0,
 
-            maximum_rating:
-                Self::DEFAULT_SCALE,
+            maximum_rating: Self::DEFAULT_SCALE,
         }
     }
 }
