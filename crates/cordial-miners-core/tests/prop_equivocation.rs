@@ -133,7 +133,7 @@ fn dag_with_equivocation_strategy() -> impl Strategy<Value = DagSpec> {
     dag_spec_strategy().prop_filter_map(
         "need an injected equivocation with at least one round after it",
         |spec| {
-            let (creator, round) = spec.equivocation?;
+            let (_creator, round) = spec.equivocation?;
             if round >= spec.max_round {
                 return None;
             }
