@@ -142,17 +142,19 @@ struct GeneratedDag {
 /// A proptest strategy over [`DagSpec`]. Deliberately bounded (2-5
 /// validators, 1-30 steps, 0-6 equivocation clones) so generated cases stay
 /// fast enough for CI, while the *shape* of the DAG itself is unconstrained.
-fn dag_spec_strategy() -> impl Strategy<Value = DagSpec> {
-    let step_strategy = (any::<u8>(), prop::collection::vec(0usize..40, 0..=4)).prop_map(
+fn raw_step_strategy() -> impl Strategy<Value = RawStep> {
+    (any::<u8>(), prop::collection::vec(0usize..40, 0..=4)).prop_map(
         |(creator_raw, predecessor_picks)| RawStep {
             creator_raw,
             predecessor_picks,
         },
-    );
+    )
+}
 
+fn dag_spec_strategy() -> impl Strategy<Value = DagSpec> {
     (
         2u8..=MAX_VALIDATORS,
-        prop::collection::vec(step_strategy, 1..=30),
+        prop::collection::vec(raw_step_strategy(), 1..=30),
     )
         .prop_flat_map(|(num_validators, steps)| {
             let step_count = steps.len();
@@ -177,6 +179,109 @@ fn dag_with_equivocation_strategy() -> impl Strategy<Value = DagSpec> {
     dag_spec_strategy().prop_filter("need at least one equivocation clone", |spec| {
         !spec.equivocation_clones.is_empty() && !spec.steps.is_empty()
     })
+}
+
+/// A dedicated, tightly-controlled generator for the leader-exclusion test.
+///
+/// The shared flat-step generator (`dag_spec_strategy`) can incidentally
+/// produce *extra*, unintended equivocations even when the equivocation-
+/// clones list is tightly controlled: two unrelated steps can simply end up
+/// with the same creator (`creator_raw % num_validators` collides) and both
+/// land at the same depth (e.g. both end up as genesis blocks once their
+/// out-of-range predecessor picks get sanitized away), which already makes
+/// them mutually incomparable — a second, unintended equivocation by a
+/// second creator. That's fine for the other tests in this file (none of
+/// them assume anything about how many equivocations exist), but it defeats
+/// any attempt to guarantee "exactly one equivocating creator" by picking
+/// generator *parameters* alone; the accidental case has to be constructed
+/// out of existence, not filtered after the fact.
+///
+/// This generator instead builds a clean, round-based blocklace: every
+/// round's blocks reference the *entire* previous round, so every honest
+/// creator's blocks form a strict chain (each new block is a descendant of
+/// that creator's own previous block) and can never accidentally
+/// equivocate. Exactly one designated "byzantine" creator, in exactly one
+/// designated round, is given two blocks with identical predecessors
+/// instead of one — a single, deliberate, isolated equivocation. Combined
+/// with `num_validators` drawn from 4..=5 (guaranteeing `f >= 1`), the
+/// "at most `f` Byzantine creators" precondition holds by construction.
+#[derive(Debug, Clone)]
+struct SingleEquivocationSpec {
+    num_validators: u8,
+    num_rounds: u8,
+    byzantine_creator: u8,
+    byzantine_round: u8,
+}
+
+fn single_equivocation_spec_strategy() -> impl Strategy<Value = SingleEquivocationSpec> {
+    (4u8..=MAX_VALIDATORS, 3u8..=12u8)
+        .prop_flat_map(|(num_validators, num_rounds)| {
+            (
+                Just(num_validators),
+                Just(num_rounds),
+                1u8..=num_validators,
+                0u8..num_rounds,
+            )
+        })
+        .prop_map(
+            |(num_validators, num_rounds, byzantine_creator, byzantine_round)| {
+                SingleEquivocationSpec {
+                    num_validators,
+                    num_rounds,
+                    byzantine_creator,
+                    byzantine_round,
+                }
+            },
+        )
+}
+
+struct SingleEquivocationDag {
+    blocklace: Blocklace,
+    blocks: Vec<Block>,
+}
+
+/// Materialize a [`SingleEquivocationSpec`]: round by round, every
+/// validator creates one block referencing the entire previous round —
+/// except the designated byzantine creator in the designated round, who
+/// creates two blocks sharing the same (entire-previous-round)
+/// predecessors instead of one.
+fn build_single_equivocation_dag(spec: &SingleEquivocationSpec) -> SingleEquivocationDag {
+    let mut blocklace = Blocklace::new();
+    let mut blocks: Vec<Block> = Vec::new();
+    let mut tag: u8 = 1;
+    let mut previous_round_ids: HashSet<BlockIdentity> = HashSet::new();
+
+    for round in 0..spec.num_rounds {
+        let mut this_round_ids: HashSet<BlockIdentity> = HashSet::new();
+
+        for creator in 1..=spec.num_validators {
+            let predecessors = previous_round_ids.clone();
+
+            if creator == spec.byzantine_creator && round == spec.byzantine_round {
+                let block_a = make_block(creator, tag, predecessors.clone());
+                tag += 1;
+                insert(&mut blocklace, &block_a);
+                this_round_ids.insert(block_a.identity.clone());
+                blocks.push(block_a);
+
+                let block_b = make_block(creator, tag, predecessors);
+                tag += 1;
+                insert(&mut blocklace, &block_b);
+                this_round_ids.insert(block_b.identity.clone());
+                blocks.push(block_b);
+            } else {
+                let block = make_block(creator, tag, predecessors);
+                tag += 1;
+                insert(&mut blocklace, &block);
+                this_round_ids.insert(block.identity.clone());
+                blocks.push(block);
+            }
+        }
+
+        previous_round_ids = this_round_ids;
+    }
+
+    SingleEquivocationDag { blocklace, blocks }
 }
 
 /// Materialize a [`DagSpec`] into an actual [`Blocklace`].
@@ -332,17 +437,39 @@ proptest! {
     /// equivocation's branches.
     #[test]
     fn finalized_order_excludes_equivocations_the_leader_acknowledged(
-        spec in dag_with_equivocation_strategy(),
+        spec in single_equivocation_spec_strategy(),
         wavelength in 1u64..=3,
         leader_pick in 0u8..MAX_VALIDATORS,
     ) {
-        let mut dag = build_dag(&spec);
+        let mut dag = build_single_equivocation_dag(&spec);
         let equivocations = all_equivocations(&dag.blocklace);
         prop_assume!(!equivocations.is_empty());
 
         let n = spec.num_validators as usize;
         let f = fault_tolerance(n);
-        let leader_id = 1 + (leader_pick % spec.num_validators);
+
+        // The leader-exclusion guarantee is only proven to hold when the
+        // number of actually-Byzantine (equivocating) validators does not
+        // exceed the protocol's fault-tolerance bound `f` (n >= 3f+1) —
+        // see `is_final_leader`'s use of `super_ratifies(.., n, f)` and
+        // `is_round_cordial`'s (n + f)/2 threshold.
+        // `single_equivocation_spec_strategy`/`build_single_equivocation_dag`
+        // guarantee this by construction (every honest creator always
+        // chains onto the full previous round, so only the one designated
+        // byzantine creator can ever equivocate, and num_validators >= 4
+        // guarantees f >= 1), so a violation here would mean the generator
+        // itself is broken, not just an out-of-model input — hence a hard
+        // assertion rather than a `prop_assume` discard.
+        let byzantine_creators: HashSet<NodeId> =
+            equivocations.iter().map(|e| e.creator.clone()).collect();
+        prop_assert!(
+            byzantine_creators.len() <= f,
+            "single_equivocation_spec_strategy is supposed to guarantee exactly one \
+             equivocating creator, but found {} for n={}, f={}",
+            byzantine_creators.len(),
+            n,
+            f,
+        );
 
         // Rather than hoping some existing leader block happens to have
         // observed both branches of some equivocation (true for only a tiny
@@ -351,6 +478,23 @@ proptest! {
         // predecessors are exactly the equivocation's branch identities.
         // `acknowledges_equivocation` is then true by construction.
         let equivocation = &equivocations[0];
+
+        // The leader must be a *different* validator from the one whose
+        // fork is under test — otherwise the "witness" block is just the
+        // equivocator vouching for its own branches, which isn't the
+        // leader-acknowledges-someone-else's-equivocation scenario this
+        // test claims to cover. `spec.byzantine_creator` is known directly
+        // from the generator, so the leader is picked from everyone else
+        // by construction rather than filtered after the fact.
+        let non_equivocating_ids: Vec<u8> = (1..=spec.num_validators)
+            .filter(|id| *id != spec.byzantine_creator)
+            .collect();
+        prop_assume!(
+            !non_equivocating_ids.is_empty(),
+            "no non-equivocating validator available to serve as leader"
+        );
+        let leader_id = non_equivocating_ids[(leader_pick as usize) % non_equivocating_ids.len()];
+
         let witness_predecessors: HashSet<BlockIdentity> =
             equivocation.blocks.iter().cloned().collect();
         let tag = dag.blocks.len() as u8 + 1;
@@ -362,6 +506,15 @@ proptest! {
 
         match tau(&dag.blocklace, wavelength, n, f, leader_selection) {
             Ok(ordered) => {
+                // `Ok(&[])` (or any output that just doesn't happen to
+                // mention the branches yet) would make the assertion below
+                // pass vacuously without ever exercising the exclusion
+                // logic. Require an actual finalized, non-empty output
+                // before treating this as a meaningful check.
+                prop_assume!(
+                    !ordered.is_empty(),
+                    "tau finalized an empty prefix for this spec/wavelength/leader"
+                );
                 for branch_id in &equivocation.blocks {
                     prop_assert!(!ordered.contains(branch_id));
                 }

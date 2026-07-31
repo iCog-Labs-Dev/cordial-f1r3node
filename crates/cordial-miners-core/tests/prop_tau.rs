@@ -303,16 +303,39 @@ proptest! {
 
         let mut blocklace = Blocklace::new();
         let mut previous_output: Vec<BlockIdentity> = Vec::new();
+        // `Err` is only an expected outcome *before* the first finalization
+        // (not enough blocks/votes for this wave yet). Once tau has
+        // finalized something for this (wavelength, leader) pair, adding
+        // more blocks is strictly more evidence and must never cause it to
+        // regress back to `Err` — that would be exactly as serious a bug
+        // as shrinking or reordering the finalized prefix, so it must not
+        // be silently swallowed by `if let Ok(...) = ...`.
+        let mut has_finalized_before = false;
 
         for block in &dag.blocks {
             insert(&mut blocklace, block);
 
-            if let Ok(current) = tau(&blocklace, wavelength, n, f, leader_selection) {
-                prop_assert!(
-                    current.starts_with(&previous_output),
-                    "tau output shrank or reordered a previously finalized prefix"
-                );
-                previous_output = current;
+            match tau(&blocklace, wavelength, n, f, leader_selection) {
+                Ok(current) => {
+                    prop_assert!(
+                        current.starts_with(&previous_output),
+                        "tau output shrank or reordered a previously finalized prefix"
+                    );
+                    previous_output = current;
+                    has_finalized_before = true;
+                }
+                Err(err) => {
+                    prop_assert!(
+                        !has_finalized_before,
+                        "tau regressed from Ok back to Err ({:?}) after already finalizing {:?} \
+                         for wavelength={}, leader={:?} — finality must be monotonic as the \
+                         blocklace only grows",
+                        err,
+                        previous_output,
+                        wavelength,
+                        leader_id,
+                    );
+                }
             }
         }
     }

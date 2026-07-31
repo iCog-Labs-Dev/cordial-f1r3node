@@ -5,14 +5,25 @@ use cordial_miners_core::NodeId;
 use crate::state::ReputationState;
 use crate::types::ReputationWeight;
 
-/// Export current reputation values as Cordial Miners weighted-path inputs.
+
+
+/// Export reputation values as Cordial Miners weighted-path inputs.
 ///
-/// TODO: future weight export may support policies such as reputation-only,
-/// stake-times-reputation, capped stake, or committee-only weights.
-pub fn reputation_weights(state: &ReputationState) -> HashMap<NodeId, ReputationWeight> {
+/// This crate computes weights.
+/// Cordial Miners consumes them.
+pub fn reputation_weights(
+    state: &ReputationState,
+) -> HashMap<NodeId, ReputationWeight> {
+
     state
-        .reputations()
+        .reputation_list()
+        .entries
         .iter()
-        .map(|(validator, reputation)| (validator.clone(), *reputation))
+        .map(|entry| {
+            (
+                entry.node_id.clone(),
+                entry.reputation,
+            )
+        })
         .collect()
 }
