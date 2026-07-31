@@ -4,30 +4,61 @@
 //! - `xsort` determinism and topological validity over generated block sets.
 //! - closure/ancestor consistency between `Blocklace::observe` and
 //!   `Blocklace::precedes`.
-//! - `tau` prefix preservation: computing `tau` again after the blocklace has
-//!   grown must reproduce the earlier output as a strict prefix.
+//! - `tau` prefix preservation: computing `tau` again after each additional
+//!   block is inserted must reproduce the earlier output as a strict prefix.
 //!
-//! Generates well-formed "round-based" blocklace DAGs: every validator
-//! produces exactly one block per round, referencing *every* block produced
-//! in the previous round (mirroring the fixed hand-built DAGs used in
-//! `test_ordering.rs` / `test_finality.rs`, just parameterized). Because a
-//! block's predecessors are always the previous round's blocks — already
-//! inserted into the blocklace — every generated block trivially satisfies
-//! the closure axiom, so `insert` can never fail here.
+//! ## Generator
+//!
+//! Rather than a rigid "one block per validator per round, referencing the
+//! entire previous round" structure, the DAG here is generated as a flat
+//! sequence of block-creation steps. Each step independently picks:
+//! - a creator (no forced round-robin — a validator may create many blocks
+//!   in a row or none at all);
+//! - an arbitrary, possibly-empty subset of *earlier* steps as predecessors
+//!   (sanitized to only reference already-created blocks, which guarantees
+//!   the closure axiom without constraining the shape).
+//!
+//! Because predecessor indices are unconstrained beyond "strictly earlier",
+//! this covers: validators missing "rounds" entirely, sparse predecessor
+//! sets (referencing only a few, not all, prior tips), delayed/skipped
+//! ancestor references (a block can reach far back instead of only to the
+//! immediately preceding step), irregular/non-uniform round structure
+//! (`depth` is purely structural here, not tied to generation order), and
+//! disconnected-but-valid partial histories (an empty predecessor set at
+//! any point starts a brand new, independent component).
+//!
+//! Not covered:
+//! - Pruning/checkpointed histories. `Blocklace::checkpoint()`,
+//!   `checkpoint_order_prefix()`, and `checkpoint_weighted_order_prefix()`
+//!   are never populated by this generator, even though
+//!   `checkpoint_predecessor`'s short-circuit is load-bearing in `tau`'s
+//!   recursion (see `ordering.rs`). This is a real, currently-untested code
+//!   path, not just a lower-priority corner — it needs its own tracking
+//!   issue (not filed yet) rather than staying an implicit gap referenced
+//!   only in a comment.
+//! - Divergent-predecessor equivocations. `equivocation_clones` (part of
+//!   the shared generator shape, even though this file's assertions don't
+//!   key off equivocations specifically) only ever clones an existing
+//!   step's *exact* creator and predecessor set. A real equivocator can
+//!   send branches with different predecessor sets — e.g. one cordial
+//!   branch that references every known tip and one that hides a tip — and
+//!   that shape is not generated here.
 //!
 //! On failure, proptest prints the shrunk `DagSpec` (and, for the tau test,
-//! the wavelength) that reproduces the failure, and persists it to
+//! the wavelength/leader) that reproduces the failure, and persists it to
 //! `crates/cordial-miners-core/proptest-regressions/prop_tau.txt` so CI
 //! reruns replay the same case automatically.
 
 use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::{OrderingError, tau, xsort};
+use cordial_miners_core::consensus::{tau, xsort, OrderingError};
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 
 use proptest::prelude::*;
+
+const MAX_VALIDATORS: u8 = 5;
 
 struct MockVerifier;
 
@@ -73,74 +104,102 @@ fn insert(blocklace: &mut Blocklace, block: &Block) {
         .expect("generator must only ever produce closure-valid blocks");
 }
 
-/// Parameters for a generated round-based DAG. `Debug` is derived so that a
-/// proptest failure prints the exact spec needed to reproduce the DAG.
+/// One step in the generated creation sequence: a creator plus a raw,
+/// unsanitized set of "ideas" for predecessor indices. `Debug` is derived so
+/// proptest failures print the exact spec needed to reproduce.
+#[derive(Debug, Clone)]
+struct RawStep {
+    creator_raw: u8,
+    predecessor_picks: Vec<usize>,
+}
+
 #[derive(Debug, Clone)]
 struct DagSpec {
-    validators: Vec<u8>,
-    /// Highest round index present in the DAG (rounds run `0..=max_round`).
-    max_round: u8,
-    /// Optional single equivocation point: (validator id, round).
-    equivocation: Option<(u8, u8)>,
+    num_validators: u8,
+    steps: Vec<RawStep>,
+    /// Indices into `steps` to clone as extra equivocation branches (same
+    /// creator, same predecessor set as the source step). Multiple entries
+    /// — including several pointing at the same source — are allowed.
+    equivocation_clones: Vec<usize>,
 }
 
 struct GeneratedDag {
     blocklace: Blocklace,
-    /// Blocks grouped by the round they were generated in (round 0 first).
-    blocks_by_round: Vec<Vec<Block>>,
+    /// All blocks in the exact order they were created/inserted (base
+    /// steps first, then equivocation clones).
+    blocks: Vec<Block>,
 }
 
-/// A proptest strategy over [`DagSpec`]: 2-5 validators, 0-4 extra rounds
-/// beyond genesis, and an optional equivocation point. Bounded deliberately
-/// small so generated cases stay fast enough for CI.
+/// A proptest strategy over [`DagSpec`]. Deliberately bounded (2-5
+/// validators, 1-30 steps, 0-6 equivocation clones) so generated cases stay
+/// fast enough for CI, while the *shape* of the DAG itself is unconstrained.
 fn dag_spec_strategy() -> impl Strategy<Value = DagSpec> {
-    (2usize..=5, 0u8..=4).prop_flat_map(|(num_validators, max_round)| {
-        let validators: Vec<u8> = (1..=num_validators as u8).collect();
-        let validators_for_equiv = validators.clone();
+    let step_strategy = (any::<u8>(), prop::collection::vec(0usize..40, 0..=4))
+        .prop_map(|(creator_raw, predecessor_picks)| RawStep {
+            creator_raw,
+            predecessor_picks,
+        });
 
-        (
-            Just(validators),
-            Just(max_round),
-            prop::option::of((prop::sample::select(validators_for_equiv), 0u8..=max_round)),
-        )
-            .prop_map(|(validators, max_round, equivocation)| DagSpec {
-                validators,
-                max_round,
-                equivocation,
-            })
+    (2u8..=MAX_VALIDATORS, prop::collection::vec(step_strategy, 1..=30)).prop_flat_map(
+        |(num_validators, steps)| {
+            let step_count = steps.len();
+            (
+                Just(num_validators),
+                Just(steps),
+                prop::collection::vec(0usize..step_count, 0..=6),
+            )
+        },
+    ).prop_map(|(num_validators, steps, equivocation_clones)| DagSpec {
+        num_validators,
+        steps,
+        equivocation_clones,
     })
 }
 
-/// Materialize a [`DagSpec`] into an actual [`Blocklace`].
+/// Materialize a [`DagSpec`] into an actual [`Blocklace`]. Each step's
+/// predecessor picks are sanitized down to indices that are strictly
+/// earlier than the step itself (deduped via the `HashSet`), which is what
+/// guarantees every generated block satisfies the closure axiom.
 fn build_dag(spec: &DagSpec) -> GeneratedDag {
     let mut blocklace = Blocklace::new();
-    let mut blocks_by_round: Vec<Vec<Block>> = Vec::new();
+    let mut identities: Vec<BlockIdentity> = Vec::with_capacity(spec.steps.len());
+    let mut blocks: Vec<Block> =
+        Vec::with_capacity(spec.steps.len() + spec.equivocation_clones.len());
     let mut tag: u8 = 1;
-    let mut previous_round_ids: HashSet<BlockIdentity> = HashSet::new();
 
-    for round in 0..=spec.max_round {
-        let mut this_round: Vec<Block> = Vec::new();
+    for (i, step) in spec.steps.iter().enumerate() {
+        let creator = 1 + (step.creator_raw % spec.num_validators);
+        let predecessors: HashSet<BlockIdentity> = step
+            .predecessor_picks
+            .iter()
+            .copied()
+            .filter(|&idx| idx < i)
+            .map(|idx| identities[idx].clone())
+            .collect();
 
-        for &validator in &spec.validators {
-            let is_equivocator = spec.equivocation == Some((validator, round));
-            let branch_count = if is_equivocator { 2 } else { 1 };
+        let block = make_block(creator, tag, predecessors);
+        tag += 1;
+        insert(&mut blocklace, &block);
+        identities.push(block.identity.clone());
+        blocks.push(block);
+    }
 
-            for _ in 0..branch_count {
-                let block = make_block(validator, tag, previous_round_ids.clone());
-                tag += 1;
-                insert(&mut blocklace, &block);
-                this_round.push(block);
-            }
+    for &raw_source in &spec.equivocation_clones {
+        if spec.steps.is_empty() {
+            break;
         }
+        let source_index = raw_source % spec.steps.len();
+        let source_block = &blocks[source_index];
+        let creator = source_block.identity.creator.0[0];
+        let predecessors = source_block.content.predecessors.clone();
 
-        previous_round_ids = this_round.iter().map(|b| b.identity.clone()).collect();
-        blocks_by_round.push(this_round);
+        let clone_block = make_block(creator, tag, predecessors);
+        tag += 1;
+        insert(&mut blocklace, &clone_block);
+        blocks.push(clone_block);
     }
 
-    GeneratedDag {
-        blocklace,
-        blocks_by_round,
-    }
+    GeneratedDag { blocklace, blocks }
 }
 
 /// Standard BFT fault tolerance for `n` validators: the largest `f` with
@@ -159,7 +218,7 @@ proptest! {
     #[test]
     fn xsort_is_deterministic_and_topological(spec in dag_spec_strategy()) {
         let dag = build_dag(&spec);
-        let all_blocks: HashSet<Block> = dag.blocks_by_round.iter().flatten().cloned().collect();
+        let all_blocks: HashSet<Block> = dag.blocks.iter().cloned().collect();
 
         // Rebuild an equivalent-but-differently-ordered HashSet to make sure
         // xsort's output doesn't depend on hash iteration order.
@@ -203,47 +262,46 @@ proptest! {
         let dag = build_dag(&spec);
         prop_assert!(dag.blocklace.is_closed());
 
-        for round_blocks in &dag.blocks_by_round {
-            for block in round_blocks {
-                let closure = dag.blocklace.observe(&block.identity);
-                prop_assert!(closure.contains(&block.identity));
+        for block in &dag.blocks {
+            let closure = dag.blocklace.observe(&block.identity);
+            prop_assert!(closure.contains(&block.identity));
 
-                for ancestor in &closure {
-                    if ancestor != &block.identity {
-                        prop_assert!(
-                            dag.blocklace.precedes(ancestor, &block.identity),
-                            "{:?} is in the closure of {:?} but does not precede it",
-                            ancestor,
-                            block.identity
-                        );
-                    }
+            for ancestor in &closure {
+                if ancestor != &block.identity {
+                    prop_assert!(
+                        dag.blocklace.precedes(ancestor, &block.identity),
+                        "{:?} is in the closure of {:?} but does not precede it",
+                        ancestor,
+                        block.identity
+                    );
                 }
             }
         }
     }
 
     /// `tau`'s output only ever grows: recomputing it after inserting the
-    /// next round of blocks must reproduce the previous output as a strict
+    /// next block (in generation order, which — thanks to the "strictly
+    /// earlier index" sanitization — is always a valid closure-respecting
+    /// insertion order) must reproduce the previous output as a strict
     /// prefix. This is the safety property that lets nodes stream finalized
     /// order incrementally instead of recomputing from scratch.
     #[test]
     fn tau_output_is_prefix_stable_as_dag_grows(
         spec in dag_spec_strategy(),
         wavelength in 1u64..=3,
+        leader_pick in 0u8..MAX_VALIDATORS,
     ) {
-        let n = spec.validators.len();
+        let dag = build_dag(&spec);
+        let n = spec.num_validators as usize;
         let f = fault_tolerance(n);
-        let leader_id = spec.validators[0];
+        let leader_id = 1 + (leader_pick % spec.num_validators);
         let leader_selection = move |_wave: u64| Some(node(leader_id));
 
-        let dag = build_dag(&spec);
         let mut blocklace = Blocklace::new();
         let mut previous_output: Vec<BlockIdentity> = Vec::new();
 
-        for round_blocks in &dag.blocks_by_round {
-            for block in round_blocks {
-                insert(&mut blocklace, block);
-            }
+        for block in &dag.blocks {
+            insert(&mut blocklace, block);
 
             if let Ok(current) = tau(&blocklace, wavelength, n, f, leader_selection) {
                 prop_assert!(
