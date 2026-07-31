@@ -52,7 +52,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::{tau, xsort, OrderingError};
+use cordial_miners_core::consensus::{OrderingError, tau, xsort};
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 
@@ -134,26 +134,30 @@ struct GeneratedDag {
 /// validators, 1-30 steps, 0-6 equivocation clones) so generated cases stay
 /// fast enough for CI, while the *shape* of the DAG itself is unconstrained.
 fn dag_spec_strategy() -> impl Strategy<Value = DagSpec> {
-    let step_strategy = (any::<u8>(), prop::collection::vec(0usize..40, 0..=4))
-        .prop_map(|(creator_raw, predecessor_picks)| RawStep {
+    let step_strategy = (any::<u8>(), prop::collection::vec(0usize..40, 0..=4)).prop_map(
+        |(creator_raw, predecessor_picks)| RawStep {
             creator_raw,
             predecessor_picks,
-        });
+        },
+    );
 
-    (2u8..=MAX_VALIDATORS, prop::collection::vec(step_strategy, 1..=30)).prop_flat_map(
-        |(num_validators, steps)| {
+    (
+        2u8..=MAX_VALIDATORS,
+        prop::collection::vec(step_strategy, 1..=30),
+    )
+        .prop_flat_map(|(num_validators, steps)| {
             let step_count = steps.len();
             (
                 Just(num_validators),
                 Just(steps),
                 prop::collection::vec(0usize..step_count, 0..=6),
             )
-        },
-    ).prop_map(|(num_validators, steps, equivocation_clones)| DagSpec {
-        num_validators,
-        steps,
-        equivocation_clones,
-    })
+        })
+        .prop_map(|(num_validators, steps, equivocation_clones)| DagSpec {
+            num_validators,
+            steps,
+            equivocation_clones,
+        })
 }
 
 /// Materialize a [`DagSpec`] into an actual [`Blocklace`]. Each step's
