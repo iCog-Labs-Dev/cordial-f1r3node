@@ -1784,13 +1784,19 @@ fn build_block_candidate_with_mode_strict_excludes_equivocator_branches() {
     assert!(candidate.predecessors.contains(&tip_v4.identity));
 }
 
-/// **S4** — Finality/ordering exclusion is orthogonal to predecessor-selection mode.
+/// **S4** — Tip-map equivocator exclusion is applied before, and independently of,
+/// predecessor-selection mode.
 ///
-/// `validator_visible_tips` (used by both modes) already excludes equivocators from the
-/// tip map. This confirms the tip-map exclusion holds regardless of which
-/// `PredecessorSelectionMode` is later applied to that map.
+/// `validator_visible_tips` already strips equivocating validators from the tip map
+/// before either `select_predecessors` (compat) or `select_predecessors_strict` (strict)
+/// is applied. This test confirms that equivocators never re-appear as direct
+/// predecessors in either mode, i.e. the exclusion is truly mode-independent.
+///
+/// Note: this test exercises `validator_visible_tips` and the two predecessor-selection
+/// mode functions. Tests for the actual finality and ordering exclusion APIs live in
+/// `test_finality.rs` and `test_ordering.rs`.
 #[test]
-fn finality_exclusion_is_independent_of_predecessor_selection_mode() {
+fn tip_map_equivocator_exclusion_is_independent_of_predecessor_selection_mode() {
     let mut blocklace = Blocklace::new();
     let mut bonds = HashMap::new();
 
@@ -1805,8 +1811,7 @@ fn finality_exclusion_is_independent_of_predecessor_selection_mode() {
     bonds.insert(node(1), 100);
     bonds.insert(node(2), 100);
 
-    // The tip map excludes the equivocator — this is the finality/ordering exclusion layer.
-    // It is computed before any mode decision and is mode-independent.
+    // The tip map excludes the equivocating validator (node 1) before any mode decision.
     let tips = validator_visible_tips(&blocklace, &bonds);
     assert!(
         !tips.contains_key(&node(1)),
@@ -1817,25 +1822,29 @@ fn finality_exclusion_is_independent_of_predecessor_selection_mode() {
         "honest validator must be present in the tip map"
     );
 
-    // Both modes start from the same (equivocator-free) tip map
+    // Both modes build from the same equivocator-free tip map.
     let strict_preds = select_predecessors_strict(&blocklace, &bonds);
     let compat_preds = select_predecessors(&blocklace, &bonds);
 
-    // Neither mode ever resurrects the equivocator as a direct tip-map entry
-    for id in [&e1.identity, &e2.identity] {
-        // strict: neither branch appears
-        assert!(!strict_preds.contains(id) || id == &e2.identity || id == &e1.identity);
-    }
+    // Strict mode: neither equivocator branch is ever a direct predecessor.
     assert!(
         !strict_preds.contains(&e1.identity),
-        "strict: e1 not a direct predecessor"
+        "strict: e1 must not be a direct predecessor"
     );
     assert!(
         !strict_preds.contains(&e2.identity),
-        "strict: e2 not a direct predecessor"
+        "strict: e2 must not be a direct predecessor"
     );
 
-    // Compat adds e2 (not yet observed), but honest tip is always present in both
+    // Compat mode: e2 was not yet transitively visible through honest tips, so it
+    // is re-added as a direct predecessor to preserve equivocation evidence on the
+    // network. e1 is already visible transitively via tip_v2 → e1.
+    assert!(
+        compat_preds.contains(&e2.identity),
+        "compat: unseen equivocator branch e2 must be included to preserve evidence"
+    );
+
+    // The honest tip is always reachable in both modes.
     assert!(compat_preds.contains(&tip_v2.identity));
     assert!(strict_preds.contains(&tip_v2.identity));
 }
