@@ -25,7 +25,7 @@
 //! |---|---|---|
 //! | Finality / ordering exclusion | `finality.rs`, `ordering.rs` | Equivocating validators' blocks are never elected leader and never appear in the committed output. This is always active. |
 //! | **Compatibility predecessor selection** | `select_predecessors` / [`PredecessorSelectionMode::Compatibility`] | An honest node re-adds any equivocator branch that is **not yet transitively visible** through the current honest tips, so the network never loses track of the equivocation evidence. This is the default and preserves inter-node compatibility. |
-//! | **Strict predecessor selection** | `select_predecessors_strict` / [`PredecessorSelectionMode::Strict`] | An honest node never directly points to an equivocator branch. It relies solely on transitive acknowledgement through other honest tips. This is the paper-native excommunication behaviour (§6.1): correct miners "ignore Byzantine miners" by not including direct pointers to their blocks after detecting an equivocation. |
+//! | **Strict predecessor selection** | `select_predecessors_strict` / [`PredecessorSelectionMode::Strict`] | An honest node never directly points to an equivocator branch. It relies solely on transitive acknowledgement through other honest tips. This is the paper-native excommunication behaviour (§6.1): correct miners "ignore Byzantine miners" by not including direct pointers to their blocks after detecting an equivocation. Before proposing, [`next_block_predecessors_with_mode`] verifies that the honest-tip closure already covers every known equivocation branch; if not, the proposal is rejected with [`ProposalError::InsufficientEquivocationAcknowledgement`]. |
 //!
 //! Choose **`Strict`** for paper-faithful proposer behaviour. Use **`Compatibility`** when the
 //! adapter or snapshot path must remain interoperable with observers that may not yet have
@@ -102,6 +102,14 @@ pub enum PredecessorSelectionMode {
     /// The proposer relies solely on transitive acknowledgement through other honest tips.
     /// This is the preferred mode for proposer-side use when the network is operating in
     /// fully protocol-faithful (paper-native) configuration.
+    ///
+    /// **Safety invariant**: when building a proposal via [`next_block_predecessors_with_mode`]
+    /// the system additionally verifies (via
+    /// [`predecessors_acknowledge_all_equivocation_branches`]) that every known equivocation
+    /// branch is already transitively reachable through the selected honest tips. If any branch
+    /// is missing the proposal is rejected with
+    /// [`ProposalError::InsufficientEquivocationAcknowledgement`], preventing the node from
+    /// producing a block that would fail strict cordial validation downstream.
     Strict,
 }
 
@@ -327,6 +335,74 @@ pub enum ProposalError {
 
     /// No predecessors could be selected from the current local view.
     NoPredecessorsAvailable,
+
+    /// Strict mode only: the honest-tip closure does not transitively cover all
+    /// known equivocation branches.
+    ///
+    /// In strict mode the proposer never adds equivocator branches as direct
+    /// predecessors (§6.1). Before accepting the proposal the system checks that
+    /// all known branches are already reachable through the selected honest tips.
+    /// If any branch is missing, proposing would produce a block that hides
+    /// equivocation evidence and would fail strict cordial validation downstream.
+    ///
+    /// The node should wait until the missing branches arrive via gossip and are
+    /// transitively acknowledged by at least one honest tip before proposing again.
+    InsufficientEquivocationAcknowledgement {
+        /// Identities of the equivocation branches not yet covered by the tip closure.
+        missing: Vec<BlockIdentity>,
+    },
+}
+
+/// Return the equivocation branches that are **not** transitively reachable through `predecessors`.
+///
+/// Computes the union of all blocks reachable from the given predecessor set (via
+/// [`Blocklace::observe`]) and then collects any equivocation branch identity not present in
+/// that set. An empty result means all known equivocation evidence is already covered.
+///
+/// This is the core check used by [`next_block_predecessors_with_mode`] in strict mode.
+fn missing_equivocation_branches(
+    blocklace: &Blocklace,
+    predecessors: &HashSet<BlockIdentity>,
+) -> Vec<BlockIdentity> {
+    // Build the transitive closure of everything already observable through the tip set.
+    let observed: HashSet<BlockIdentity> = predecessors
+        .iter()
+        .flat_map(|pred_id| blocklace.observe(pred_id).into_iter())
+        .collect();
+
+    // Collect any equivocation branch not covered by that closure.
+    let mut missing = Vec::new();
+    for equivocation in all_equivocations(blocklace) {
+        for branch in equivocation.blocks {
+            if !observed.contains(&branch) {
+                missing.push(branch);
+            }
+        }
+    }
+    missing.sort();
+    missing
+}
+
+/// Check whether a candidate predecessor set transitively covers all known equivocation branches.
+///
+/// Returns `true` when every equivocation branch currently present in the blocklace is
+/// reachable through the transitive closure of `predecessors`. Returns `false` if any branch
+/// would be hidden, in which case a strict-mode proposal should be deferred.
+///
+/// This is exposed as a public API so callers can inspect coverage independently of
+/// [`next_block_predecessors_with_mode`], e.g. to decide whether to switch modes or log a warning.
+///
+/// # Arguments
+/// * `blocklace` - The local blocklace DAG view
+/// * `predecessors` - The candidate predecessor set to check
+///
+/// # Returns
+/// `true` if all known equivocation branches are transitively observable; `false` otherwise.
+pub fn predecessors_acknowledge_all_equivocation_branches(
+    blocklace: &Blocklace,
+    predecessors: &HashSet<BlockIdentity>,
+) -> bool {
+    missing_equivocation_branches(blocklace, predecessors).is_empty()
 }
 
 /// Select the predecessor set for the next locally proposed block (compatibility mode).
@@ -378,6 +454,19 @@ pub fn next_block_predecessors_with_mode(
     let predecessors = select_predecessors_with_mode(blocklace, bonds, mode);
     if predecessors.is_empty() {
         return Err(ProposalError::NoPredecessorsAvailable);
+    }
+
+    // Strict-mode safety check: verify that every known equivocation branch is
+    // already transitively reachable through the selected honest tips. Without
+    // this, a strict-mode proposer could silently produce a block that hides
+    // equivocation evidence, causing it to fail strict cordial validation
+    // downstream (see `hidden_equivocations`). This check runs before the
+    // acknowledgement threshold so the caller gets a precise, actionable error.
+    if mode == PredecessorSelectionMode::Strict {
+        let missing = missing_equivocation_branches(blocklace, &predecessors);
+        if !missing.is_empty() {
+            return Err(ProposalError::InsufficientEquivocationAcknowledgement { missing });
+        }
     }
 
     let observed = validator_visible_tips(blocklace, bonds).len();
