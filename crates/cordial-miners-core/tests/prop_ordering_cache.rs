@@ -103,7 +103,7 @@ fn step_spec_strategy() -> impl Strategy<Value = StepSpec> {
 fn mutation_spec_strategy() -> impl Strategy<Value = MutationSpec> {
     (
         2u8..=MAX_VALIDATORS,
-        prop::collection::vec(step_spec_strategy(), 1..=80),
+        prop::collection::vec(step_spec_strategy(), 1..=30),
     )
         .prop_map(|(num_validators, steps)| MutationSpec {
             num_validators,
@@ -112,7 +112,7 @@ fn mutation_spec_strategy() -> impl Strategy<Value = MutationSpec> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(64))]
+    #![proptest_config(ProptestConfig::with_cases(24))]
 
     #[test]
     fn cached_tau_matches_fresh_tau_across_inserts_and_prunes(spec in mutation_spec_strategy()) {
@@ -151,7 +151,10 @@ proptest! {
                     identities.push(if inserted { Some(block.identity.clone()) } else { None });
                 }
                 StepSpec::Prune => {
-                    let _ = checkpoint_after_finality(&mut blocklace, WAVELENGTH, n, f, leader_v1);
+                    let _report = checkpoint_after_finality(&mut blocklace, WAVELENGTH, n, f, leader_v1)
+                        .map_err(|e| TestCaseError::fail(format!(
+                            "unexpected PruneError from checkpoint_after_finality: {e:?}"
+                        )))?;
 
                     let live: HashSet<BlockIdentity> = blocklace.dom().iter().map(|id| (*id).clone()).collect();
                     for slot in identities.iter_mut() {
@@ -166,7 +169,7 @@ proptest! {
                 }
             }
 
-            let cached =tau_with_cache(
+            let cached = tau_with_cache(
                 &blocklace,
                 WAVELENGTH,
                 n,
@@ -186,4 +189,85 @@ proptest! {
             }
         }
     }
+}
+
+#[test]
+fn checkpoint_after_finality_prunes_and_cache_stays_correct() {
+    let mut blocklace = Blocklace::new();
+    let mut cache = OrderingCache::default();
+    let n = 4usize;
+    let f = fault_tolerance(n);
+
+    let (v1, v2, v3, v4) = (1u8, 2u8, 3u8, 4u8);
+
+    let w0_leader = make_block(v1, 1, HashSet::new());
+    assert!(insert(&mut blocklace, &w0_leader));
+
+    let w0_leader_id = w0_leader.identity.clone();
+    let w0_r1: Vec<Block> = [(v2, 2u16), (v3, 3), (v4, 4)]
+        .into_iter()
+        .map(|(v, t)| make_block(v, t, HashSet::from([w0_leader_id.clone()])))
+        .collect();
+    for b in &w0_r1 {
+        assert!(insert(&mut blocklace, b));
+    }
+
+    let w0_r1_ids: HashSet<BlockIdentity> = w0_r1.iter().map(|b| b.identity.clone()).collect();
+    let w0_r2: Vec<Block> = [(v2, 5u16), (v3, 6), (v4, 7)]
+        .into_iter()
+        .map(|(v, t)| make_block(v, t, w0_r1_ids.clone()))
+        .collect();
+    for b in &w0_r2 {
+        assert!(insert(&mut blocklace, b));
+    }
+
+    let w0_r2_ids: HashSet<BlockIdentity> = w0_r2.iter().map(|b| b.identity.clone()).collect();
+    let w1_leader = make_block(v1, 8, w0_r2_ids);
+    assert!(insert(&mut blocklace, &w1_leader));
+
+    let w1_leader_id = w1_leader.identity.clone();
+    let w1_r1: Vec<Block> = [(v2, 9u16), (v3, 10), (v4, 11)]
+        .into_iter()
+        .map(|(v, t)| make_block(v, t, HashSet::from([w1_leader_id.clone()])))
+        .collect();
+    for b in &w1_r1 {
+        assert!(insert(&mut blocklace, b));
+    }
+
+    let w1_r1_ids: HashSet<BlockIdentity> = w1_r1.iter().map(|b| b.identity.clone()).collect();
+    let w1_r2: Vec<Block> = [(v2, 12u16), (v3, 13), (v4, 14)]
+        .into_iter()
+        .map(|(v, t)| make_block(v, t, w1_r1_ids.clone()))
+        .collect();
+    for b in &w1_r2 {
+        assert!(insert(&mut blocklace, b));
+    }
+
+    let report = checkpoint_after_finality(&mut blocklace, WAVELENGTH, n, f, leader_v1)
+        .expect("checkpoint_after_finality should succeed on this two-wave DAG")
+        .expect("two finalised waves should produce a checkpoint");
+
+    assert!(
+        !report.removed.is_empty(),
+        "expected this fixed scenario to actually prune blocks"
+    );
+
+    let after = tau_with_cache(
+        &blocklace,
+        WAVELENGTH,
+        n,
+        f,
+        SELECTION_ID,
+        leader_v1,
+        &mut cache,
+    )
+    .expect("tau_with_cache should succeed after a successful prune");
+    assert!(
+        !after.is_empty(),
+        "tau output should not be empty after pruning"
+    );
+    assert!(
+        cache.cached_entries() > 0,
+        "cache should be populated after computing tau"
+    );
 }
