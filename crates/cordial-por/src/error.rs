@@ -10,6 +10,7 @@ pub enum PorError {
     RatingAboveMaximum,
     MissingRatingSignature,
     DuplicateRating,
+    DuplicateMatrixEntry,
 }
 
 impl fmt::Display for PorError {
@@ -28,6 +29,10 @@ impl fmt::Display for PorError {
             Self::DuplicateRating => write!(
                 f,
                 "duplicate rating for the same round, rater, and recipient"
+            ),
+            Self::DuplicateMatrixEntry => write!(
+                f,
+                "duplicate matrix entry for the same round, rater, and recipient"
             ),
         }
     }
