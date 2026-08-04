@@ -4,10 +4,22 @@ This document records the first paper-aligned data model for `cordial-por`.
 It is a guide for the next implementation issue; it should not introduce
 reputation algorithms or Cordial Miners consensus behavior by itself.
 
-This stage is intentionally limited to accepting and validating `RatingRecord`
-instances before they are assigned to a single-round `RatingBatch`. The module
-`src/ratings.rs` owns that validation and deterministic batching logic; it does
-not compute reputation states, matrices, or Liquid Rank updates.
+The current pipeline is intentionally narrow:
+
+```text
+rating transactions
+  -> validated round batch
+  -> rating matrix
+```
+
+This stage validates `RatingRecord` instances and assembles a single-round
+`RatingBatch`. The module `src/ratings.rs` owns that validation and
+batch-ordering logic. The new `src/matrix.rs` module now owns deterministic
+construction of a `RatingMatrix` from a validated `RatingBatch`.
+
+`RatingMatrix` creation is still data preparation only. It does not normalize
+ratings, compute Liquid Rank, update reputation values, or materialize a dense
+matrix. Reputation values must not be updated in this issue.
 
 ## Paper Reference
 
@@ -24,10 +36,11 @@ Relevant sections:
 - Section 4.1.3, "Block Publication"
 - Section 4.2, "Reputation System"
 
-The strict paper-first flow is:
+The strict paper-first flow remains:
 
 ```text
 rating transactions
+  -> validated round batch
   -> rating matrix S
   -> previous reputation vector R
   -> liquid-rank reputation contribution P
@@ -35,6 +48,10 @@ rating transactions
   -> reputation list
   -> reputation block
 ```
+
+For this issue, only the first two steps are in scope. Normalization and Liquid
+Rank remain future work.
+
 
 ## File-Level Plan
 
@@ -66,6 +83,10 @@ Rules:
 - Do not use `f32` or `f64` in consensus-relevant data.
 - Keep entries ordered or orderable by `NodeId` for deterministic hashing and
   audit replay.
+- For `RatingMatrix`, the canonical deterministic ordering is by `(recipient, rater)`,
+  not insertion order.
+- RatingMatrix is the canonical, deterministic representation of the paper's ratings matrix. It is intentionally stored as an ordered list of rating entries at this stage; dense matrix construction for numerical operations is deferred to the reputation/Liquid Rank implementation.
+- A duplicate means the triple `(round, rater, recipient)`, not recipient-only duplication.
 
 ### `src/config.rs`
 
