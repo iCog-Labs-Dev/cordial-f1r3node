@@ -316,6 +316,10 @@ pub enum BufferOutcome {
     BufferedEvicting(BlockIdentity),
     /// Refused: this creator already holds `max_entries_per_creator` slots.
     RejectedCreatorQuota { creator: NodeId },
+    /// Refused: the policy has `max_entries == 0`, so the buffer admits
+    /// nothing. Without this outcome the eviction path would admit the first
+    /// block anyway, because a full-but-empty buffer has no victim to evict.
+    RejectedZeroCapacity,
 }
 
 /// Observability counters for buffer pressure.
@@ -422,6 +426,10 @@ impl PendingBlockBuffer {
     /// and a full buffer evicts its oldest entry to make room. The return value
     /// says which happened; callers that do not care may ignore it.
     pub fn buffer_block_with_missing_predecessors(&mut self, block: Block) -> BufferOutcome {
+        if self.policy.max_entries == 0 {
+            return BufferOutcome::RejectedZeroCapacity;
+        }
+
         let id = block.identity.clone();
 
         // Re-arrival of something already held: refresh the block but neither
@@ -495,6 +503,13 @@ impl PendingBlockBuffer {
     /// `BlockIdentity` order rather than `HashMap` iteration order, so every
     /// node that buffered the same conflicting blocks resolves them the same
     /// way. Local state stays a deterministic function of messages received.
+    ///
+    /// Identity order is used rather than the buffer's arrival order on
+    /// purpose: arrival order is a property of the local delivery schedule,
+    /// not of the message set, so two nodes receiving the same conflicting
+    /// blocks in different orders would admit different branches. Arrival
+    /// order is therefore reserved for eviction, where cross-node agreement
+    /// does not matter.
     ///
     /// Blocks whose identity is already present in the blocklace are dropped
     /// from the buffer without revalidation.
