@@ -1342,6 +1342,72 @@ fn resolvable_block_is_inserted_rather_than_aged_out() {
     assert_eq!(buffer.stats().evicted_for_capacity, 0);
 }
 
+/// A `max_entries: 0` policy admits nothing. Without an explicit rejection the
+/// eviction path would admit the first block anyway: the buffer is "full" but
+/// holds no oldest entry to evict.
+#[test]
+fn zero_capacity_policy_admits_nothing() {
+    let mut buffer = PendingBlockBuffer::with_policy(BufferPolicy {
+        max_entries: 0,
+        max_entries_per_creator: 2,
+        max_retry_passes: 2,
+    });
+
+    let missing = create_mock_block(9, 9, HashSet::new()).identity;
+    let block = create_mock_block(1, 1, HashSet::from([missing]));
+
+    assert_eq!(
+        buffer.buffer_block_with_missing_predecessors(block),
+        BufferOutcome::RejectedZeroCapacity
+    );
+    assert!(buffer.buffered_blocks.is_empty());
+    assert_eq!(buffer.stats().buffered, 0);
+}
+
+/// Which of two conflicting buffered blocks survives replay must not depend on
+/// the order they arrived in, otherwise two nodes receiving the same blocks in
+/// different orders would admit different branches. Replay resolves by
+/// `BlockIdentity` order; arrival order only drives eviction.
+#[test]
+fn conflicting_buffered_blocks_resolve_the_same_regardless_of_arrival_order() {
+    let survivor_after = |first: &cordial_miners_core::Block,
+                          second: &cordial_miners_core::Block|
+     -> BlockIdentity {
+        let mut blocklace = Blocklace::new();
+        let mut buffer = PendingBlockBuffer::new();
+        let config = dissemination_test_config();
+        let mut bonds = HashMap::new();
+        bonds.insert(node(1), 100);
+
+        let round0 = create_mock_block(1, 1, HashSet::new());
+        let round1 = create_mock_block(1, 2, HashSet::from([round0.identity.clone()]));
+        insert(&mut blocklace, &round0);
+
+        buffer.buffer_block_with_missing_predecessors(first.clone());
+        buffer.buffer_block_with_missing_predecessors(second.clone());
+        insert(&mut blocklace, &round1);
+        buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
+
+        [first, second]
+            .into_iter()
+            .find(|b| blocklace.content(&b.identity).is_some())
+            .expect("exactly one branch must be admitted")
+            .identity
+            .clone()
+    };
+
+    let round0 = create_mock_block(1, 1, HashSet::new());
+    let round1 = create_mock_block(1, 2, HashSet::from([round0.identity.clone()]));
+    let branch_a = create_mock_block(1, 3, HashSet::from([round1.identity.clone()]));
+    let branch_b = create_mock_block(1, 4, HashSet::from([round1.identity.clone()]));
+
+    assert_eq!(
+        survivor_after(&branch_a, &branch_b),
+        survivor_after(&branch_b, &branch_a),
+        "the survivor must be a function of the block set, not of arrival order"
+    );
+}
+
 #[test]
 fn pending_buffer_handles_out_of_order_arrival() {
     let mut blocklace = Blocklace::new();
