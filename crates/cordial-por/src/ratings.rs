@@ -42,8 +42,11 @@ pub fn validate_rating(rating: &RatingRecord, config: &PorConfig) -> Result<(), 
 
 /// Build a validated rating batch for a single reputation round.
 ///
-/// The output is deterministically ordered by `(rater, recipient)` and rejects
-/// invalid, duplicate, or mismatched-round ratings before returning the batch.
+/// The output is deterministically ordered by `(recipient, rater)` to match the
+/// matrix stage and the paper's `S = [s_ij]` layout (row = recipient,
+/// column = rater). This keeps the batch ordering identical to the later
+/// matrix ordering for pipeline consistency and rejects invalid, duplicate, or
+/// mismatched-round ratings before returning the batch.
 pub fn build_rating_batch(
     round: ReputationRound,
     ratings: Vec<RatingRecord>,
@@ -67,7 +70,7 @@ pub fn build_rating_batch(
         validated.push(rating);
     }
 
-    validated.sort_by_key(|rating| (rating.rater.clone(), rating.recipient.clone()));
+    validated.sort_by_key(|rating| (rating.recipient.clone(), rating.rater.clone()));
 
     Ok(RatingBatch {
         round,

@@ -86,6 +86,7 @@ Rules:
 - For `RatingMatrix`, the canonical deterministic ordering is by `(recipient, rater)`,
   not insertion order.
 - RatingMatrix is the canonical, deterministic representation of the paper's ratings matrix. It is intentionally stored as an ordered list of rating entries at this stage; dense matrix construction for numerical operations is deferred to the reputation/Liquid Rank implementation.
+- The ordered list is deliberately kept as `(recipient, rater)` so it matches the paper's `S = [s_ij]` convention: rows index recipients and columns index raters, which is the layout later used by the liquid-rank update `P <- S · r`. The output preserves the batch round and the deterministic matrix ordering.
 - A duplicate means the triple `(round, rater, recipient)`, not recipient-only duplication.
 
 ### `src/config.rs`
