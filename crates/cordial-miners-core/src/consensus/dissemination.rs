@@ -491,6 +491,14 @@ impl PendingBlockBuffer {
     /// predecessors are now available. Continues as long as progress is made
     /// (e.g., a block is inserted which then satisfies another block's dependencies).
     ///
+    /// Replay is deterministic: each pass visits buffered blocks in
+    /// `BlockIdentity` order rather than `HashMap` iteration order, so every
+    /// node that buffered the same conflicting blocks resolves them the same
+    /// way. Local state stays a deterministic function of messages received.
+    ///
+    /// Blocks whose identity is already present in the blocklace are dropped
+    /// from the buffer without revalidation.
+    ///
     /// Buffered replay uses the same consensus validation path as normal
     /// ingestion via `validated_insert`, so dependency resolution does not
     /// weaken admission rules.
@@ -519,7 +527,18 @@ impl PendingBlockBuffer {
             progress = false;
             let mut resolved = Vec::new();
 
-            for (id, block) in self.buffered_blocks.iter() {
+            let mut pending: Vec<BlockIdentity> = self.buffered_blocks.keys().cloned().collect();
+            pending.sort();
+
+            for id in pending {
+                // Already known: remove the entry without revalidating.
+                if blocklace.content(&id).is_some() {
+                    resolved.push(id);
+                    continue;
+                }
+
+                let block = &self.buffered_blocks[&id];
+
                 // Check if all predecessors are in the blocklace
                 let ready = block
                     .content
@@ -530,13 +549,12 @@ impl PendingBlockBuffer {
                 if ready {
                     match validated_insert(block.clone(), blocklace, bonds, config) {
                         crate::consensus::validation::ValidationResult::Valid => {
-                            resolved.push(id.clone());
+                            resolved.push(id);
                             progress = true;
                         }
                         crate::consensus::validation::ValidationResult::Invalid(errors) => {
                             if !should_keep_buffered_after_validation(&errors) {
-                                resolved.push(id.clone());
-                                rejected.push((block.clone(), errors));
+                                resolved.push(id);
                             }
                         }
                     }

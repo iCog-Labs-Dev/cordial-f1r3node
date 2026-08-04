@@ -1100,6 +1100,8 @@ fn duplicate_buffered_block_is_stored_and_inserted_once() {
     );
 
     // Retrying again, and re-buffering an already-known block, must be no-ops.
+    // The known block is removed by the identity short-circuit, without going
+    // through `validated_insert` again.
     buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
     buffer.buffer_block_with_missing_predecessors(round2.clone());
     buffer.retry_buffered_blocks(&mut blocklace, &bonds, &config);
@@ -1108,13 +1110,13 @@ fn duplicate_buffered_block_is_stored_and_inserted_once() {
 }
 
 /// Two incompatible future blocks by the same creator, both buffered before
-/// their shared history arrives: exactly one may survive.
+/// their shared history arrives: exactly one may survive, and *which* one is
+/// deterministic.
 ///
-/// Note the survivor is *not* asserted, because it is not deterministic.
-/// `retry_buffered_blocks` iterates `buffered_blocks`, a `HashMap`, so whichever
-/// branch the hash order happens to visit first is the one inserted; the other
-/// then conflicts and is dropped. Both outcomes occur across runs. The chain
-/// axiom is upheld either way, which is what this pins.
+/// `retry_buffered_blocks` replays buffered blocks in `BlockIdentity` order,
+/// not `HashMap` iteration order, so the branch with the smaller identity is
+/// inserted first on every node; the other then conflicts and is dropped.
+/// Local state therefore stays a deterministic function of messages received.
 #[test]
 fn conflicting_buffered_blocks_from_same_creator_admit_exactly_one() {
     let mut blocklace = Blocklace::new();
@@ -1143,6 +1145,20 @@ fn conflicting_buffered_blocks_from_same_creator_admit_exactly_one() {
         inserted_a ^ inserted_b,
         "exactly one branch may be admitted, got a={inserted_a} b={inserted_b}"
     );
+
+    // Replay visits buffered blocks in identity order, so the smaller
+    // identity is admitted first and the other conflicts — on every node.
+    let mut ordered = [branch_a.identity.clone(), branch_b.identity.clone()];
+    ordered.sort();
+    assert!(
+        blocklace.content(&ordered[0]).is_some(),
+        "the branch with the smaller identity must be the survivor"
+    );
+    assert!(
+        blocklace.content(&ordered[1]).is_none(),
+        "the branch with the larger identity must be rejected"
+    );
+
     assert!(
         blocklace.satisfies_chain_axiom(&node(1)),
         "admitting both would break the chain axiom for the creator"
