@@ -16,14 +16,17 @@ use crate::{
 
 /// Convert a validated `RatingBatch` into a canonical matrix representation.
 ///
-/// The output preserves the batch round and sorts the ratings by
-/// `(recipient, rater)` to keep the matrix order deterministic and paper-aligned.
+
 pub fn build_rating_matrix(batch: &RatingBatch) -> Result<RatingMatrix, PorError> {
     let mut seen: HashSet<(ReputationRound, NodeId, NodeId)> =
         HashSet::with_capacity(batch.ratings.len());
     let mut ordered = batch.ratings.clone();
 
     for rating in &ordered {
+        if rating.round != batch.round {
+            return Err(PorError::InvalidRatingRound);
+        }
+
         let key = (rating.round, rating.rater.clone(), rating.recipient.clone());
         if !seen.insert(key) {
             return Err(PorError::DuplicateMatrixEntry);
