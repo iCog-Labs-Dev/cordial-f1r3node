@@ -94,12 +94,20 @@ impl SimNode {
     }
 
     /// Retry any buffered blocks against the current local view.
+    ///
+    /// A block buffered as `MissingPredecessors` can turn out to be an
+    /// equivocation once its history arrives, and this replay is where that
+    /// rejection happens — so proof is captured here too, exactly as in
+    /// `receive_block`, before the rejected block is dropped.
     pub fn retry_buffered_blocks(&mut self) {
-        self.pending.retry_buffered_blocks(
+        let rejected = self.pending.retry_buffered_blocks(
             &mut self.blocklace,
             &self.bonds,
             &self.validation_config,
         );
+        for (block, errors) in rejected {
+            record_rejected_equivocation(&block, &errors, &self.blocklace, &mut self.evidence);
+        }
     }
 
     pub fn knows_block(&self, id: &BlockIdentity) -> bool {

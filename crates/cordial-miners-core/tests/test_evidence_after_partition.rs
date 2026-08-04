@@ -111,6 +111,77 @@ fn rejecting_a_conflicting_branch_retains_the_proof() {
     assert!(blocklace.satisfies_chain_axiom(&equivocator));
 }
 
+/// Evidence survives the buffered path too: a block that arrives as
+/// `MissingPredecessors` and only becomes a provable equivocation once its
+/// history lands is rejected during buffered replay, not during delivery —
+/// and the proof must be captured there all the same.
+#[test]
+fn equivocation_discovered_on_buffered_retry_retains_the_proof() {
+    let mut network = AdversarialNetwork::equal_stake(4);
+    let mut factory = BlockFactory::new();
+    let equivocator = node(1);
+    let observer = node(2);
+    let other = node(3);
+
+    // The observer holds v1's honest round-0 block.
+    let honest = factory.block(&equivocator, HashSet::new());
+    network.send_to(&honest, std::slice::from_ref(&observer));
+    network.settle();
+
+    // A second v1 block hanging off v3's round-0 block, which the observer
+    // has not seen: a real chain-axiom conflict, but undecidable on arrival,
+    // so it is buffered rather than rejected.
+    let unseen = factory.block(&other, HashSet::new());
+    let conflicting = factory.block(&equivocator, HashSet::from([unseen.identity.clone()]));
+
+    network.send_to(&conflicting, std::slice::from_ref(&observer));
+    assert_eq!(
+        network.deliver_ready(),
+        vec![(observer.clone(), DeliveryOutcome::Buffered)]
+    );
+    assert!(
+        !network
+            .node(&observer)
+            .expect("observer exists")
+            .has_evidence_against(&equivocator),
+        "nothing is provable while the history is missing"
+    );
+
+    // The missing history arrives; buffered replay now rejects the conflict.
+    network.send_to(&unseen, std::slice::from_ref(&observer));
+    network.settle();
+
+    let node_ref = network.node(&observer).expect("observer exists");
+    assert_eq!(
+        node_ref.pending_len(),
+        0,
+        "the buffer must not retry forever"
+    );
+    assert!(
+        node_ref.has_evidence_against(&equivocator),
+        "proof discovered during buffered replay must be retained"
+    );
+
+    let evidence = node_ref.evidence_for(&equivocator);
+    assert_eq!(evidence.len(), 1);
+    let ids: HashSet<BlockIdentity> = evidence[0]
+        .blocks
+        .iter()
+        .map(|b| b.identity.clone())
+        .collect();
+    assert_eq!(
+        ids,
+        HashSet::from([honest.identity.clone(), conflicting.identity.clone()]),
+        "evidence must hold both conflicting blocks"
+    );
+
+    // The rejected branch is absent, which is why capture had to happen at
+    // the moment of rejection inside the replay.
+    let blocklace = network.blocklace(&observer).expect("observer exists");
+    assert!(blocklace.content(&conflicting.identity).is_none());
+    assert!(blocklace.satisfies_chain_axiom(&equivocator));
+}
+
 /// Split-brain: each half sees one branch, so neither holds proof until the
 /// partition heals and the second branch arrives.
 #[test]
