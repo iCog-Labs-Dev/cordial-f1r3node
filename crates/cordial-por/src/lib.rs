@@ -19,7 +19,7 @@ pub use ratings::{build_rating_batch, validate_rating};
 pub use state::ReputationState;
 
 pub use types::{
-    EquivocationPenalty, InactivityPenalty, RatingBatch, RatingRecord, RatingScore,
+    EquivocationPenalty, InactivityPenalty, RatingBatch, RatingMatrix, RatingRecord, RatingScore,
     ReputationBlock, ReputationBlockHeader, ReputationEntry, ReputationList, ReputationRound,
     ReputationVector, ReputationWeight,
 };
