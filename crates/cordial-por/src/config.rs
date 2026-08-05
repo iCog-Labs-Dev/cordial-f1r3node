@@ -40,16 +40,6 @@ impl PorConfig {
 
 impl Default for PorConfig {
     fn default() -> Self {
-        Self {
-            scale: Self::DEFAULT_SCALE,
-
-            initial_reputation: Self::DEFAULT_INITIAL_REPUTATION,
-
-            liquid_rank_alpha: 600_000_000,
-
-            minimum_rating: 0,
-
-            maximum_rating: Self::DEFAULT_SCALE,
-        }
+        Self::new(Self::DEFAULT_SCALE, Self::DEFAULT_INITIAL_REPUTATION)
     }
 }

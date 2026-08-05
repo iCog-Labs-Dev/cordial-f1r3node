@@ -146,6 +146,19 @@ fn invariant_violation_duplicate_after_validation_is_caught_defensively() {
 }
 
 #[test]
+fn invariant_violation_round_mismatch_is_caught_defensively() {
+    let mismatched_batch = RatingBatch {
+        round: 14,
+        ratings: vec![rating(15, 1, 2, 50, vec![1])],
+    };
+
+    assert!(matches!(
+        build_rating_matrix(&mismatched_batch),
+        Err(PorError::InvalidRatingRound)
+    ));
+}
+
+#[test]
 fn empty_signatures_are_not_confused_with_empty_batches() {
     let invalid_batch = build_rating_batch(13, vec![rating(13, 1, 2, 50, vec![])], &cfg());
     assert!(invalid_batch.is_err());

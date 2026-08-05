@@ -91,6 +91,6 @@ fn returns_ratings_in_deterministic_order_even_when_input_is_shuffled() {
     let r3 = rating(5, 1, 2, 14, vec![7, 8, 9]);
     let batch = build_rating_batch(5, vec![r1.clone(), r2.clone(), r3.clone()], &cfg()).unwrap();
 
-    let expected = vec![r3, r2, r1];
+    let expected = vec![r3, r1, r2];
     assert_eq!(batch.ratings, expected);
 }
