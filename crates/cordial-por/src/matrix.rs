@@ -15,7 +15,6 @@ use crate::{
 };
 
 /// Convert a validated `RatingBatch` into a canonical matrix representation.
-
 pub fn build_rating_matrix(batch: &RatingBatch) -> Result<RatingMatrix, PorError> {
     let mut seen: HashSet<(ReputationRound, NodeId, NodeId)> =
         HashSet::with_capacity(batch.ratings.len());
