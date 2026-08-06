@@ -10,16 +10,19 @@ The current pipeline is intentionally narrow:
 rating transactions
   -> validated round batch
   -> rating matrix
+  -> normalized rating matrix
 ```
 
 This stage validates `RatingRecord` instances and assembles a single-round
 `RatingBatch`. The module `src/ratings.rs` owns that validation and
 batch-ordering logic. The new `src/matrix.rs` module now owns deterministic
-construction of a `RatingMatrix` from a validated `RatingBatch`.
+construction of a `RatingMatrix` from a validated `RatingBatch`. The module
+`src/normalization.rs` owns paper-guided fixed-point normalization of matrix
+values grouped by recipient.
 
-`RatingMatrix` creation is still data preparation only. It does not normalize
-ratings, compute Liquid Rank, update reputation values, or materialize a dense
-matrix. Reputation values must not be updated in this issue.
+Rating matrix construction and normalization are still data preparation only.
+They do not compute Liquid Rank, update reputation values, or materialize a
+dense matrix. Reputation values must not be updated in this stage.
 
 ## Paper Reference
 
@@ -42,6 +45,7 @@ The strict paper-first flow remains:
 rating transactions
   -> validated round batch
   -> rating matrix S
+  -> normalized rating matrix S'
   -> previous reputation vector R
   -> liquid-rank reputation contribution P
   -> next reputation vector
@@ -49,9 +53,8 @@ rating transactions
   -> reputation block
 ```
 
-For this issue, only the first two steps are in scope. Normalization and Liquid
-Rank remain future work.
-
+The current implementation is in scope through normalized rating matrix
+construction. Liquid Rank and reputation updates remain future work.
 
 ## File-Level Plan
 
@@ -69,6 +72,8 @@ Planned types:
 - `ReputationEntry`
 - `ReputationList`
 - `RatingMatrix`
+- `NormalizedRatingEntry`
+- `NormalizedRatingMatrix`
 - `ReputationVector`
 - `ReputationBlockHeader`
 - `ReputationBlock`
@@ -88,6 +93,10 @@ Rules:
 - RatingMatrix is the canonical, deterministic representation of the paper's ratings matrix. It is intentionally stored as an ordered list of rating entries at this stage; dense matrix construction for numerical operations is deferred to the reputation/Liquid Rank implementation.
 - The ordered list is deliberately kept as `(recipient, rater)` so it matches the paper's `S = [s_ij]` convention: rows index recipients and columns index raters, which is the layout later used by the liquid-rank update `P <- S · r`. The output preserves the batch round and the deterministic matrix ordering.
 - A duplicate means the triple `(round, rater, recipient)`, not recipient-only duplication.
+- Normalized rating values use fixed-point integers with `PorConfig::scale`; do
+  not use `f32` or `f64` for consensus-relevant normalized values.
+- Normalization is grouped by recipient because the paper defines the set of
+  ratings received by recipient `i` as `{s_i1, ..., s_in}`.
 
 ### `src/config.rs`
 
@@ -133,11 +142,13 @@ This file should not implement ratification, finality, or tau ordering.
 ### Current and Future Files
 
 The current implementation includes `src/ratings.rs`, which is responsible for
-validation + deterministic round batching.
+validation + deterministic round batching, `src/matrix.rs`, which builds the
+canonical rating matrix, and `src/normalization.rs`, which applies the
+paper-guided modified normalization formula.
 
 Future work remains:
 
-- `src/liquid_rank.rs`: normalization and liquid-rank calculation
+- `src/liquid_rank.rs`: liquid-rank calculation
 - `src/block.rs`: reputation block construction helpers
 - `src/audit.rs`: replay and transition verification
 - `src/committee.rs`: consensus group selection
@@ -145,8 +156,8 @@ Future work remains:
 
 `EquivocationPenalty` and `InactivityPenalty` remain intentionally as Cordial
 integration extensions and are not part of the first reputation calculation
-step. Liquid Rank, rating matrix calculation, reputation updates, and all later
-consensus-selection logic remain future work.
+step. Liquid Rank, reputation updates, and all later consensus-selection logic
+remain future work.
 
 ## Paper-Aligned Structures
 
@@ -213,6 +224,33 @@ src/types.rs
 ```
 
 This may be a derived/internal structure rather than persisted chain data.
+
+### Normalized Rating Matrix
+
+Paper concept:
+
+```text
+Values s_i are normalized before the ratings matrix S = [s_ij] is used with the
+previous-round rater reputation vector R.
+```
+
+Implementation target:
+
+```text
+src/types.rs
+src/normalization.rs
+```
+
+The implementation uses the paper's modified normalization formula to avoid
+null values. In fixed-point form, the paper's `+1` is represented by
+`PorConfig::scale`:
+
+```text
+normalized = (((score - min) + scale) * scale) / ((max - min) + scale)
+```
+
+Normalization is performed per recipient row and preserves the canonical
+`(recipient, rater)` ordering produced by `build_rating_matrix`.
 
 ### Reputation Vector
 
@@ -330,14 +368,14 @@ should later implement deterministic leader selection policy.
 
 ## Explicit Non-Goals
 
-Do not include these in the first data-structure issue:
+Do not include these in the current normalization stage:
 
 - Liquid-rank calculation implementation
-- Rating normalization implementation
 - Reputation clamping implementation
 - Committee selection implementation
 - Leader selection implementation
 - Cordial Miners approval, ratification, finality, or tau ordering
-- Cordial-specific equivocation slashing data
+- Cordial-specific penalty or slashing behavior implementation
 
-Cordial-specific extensions should come after the paper-native PoR data model.
+Cordial-specific penalty behavior should come after the paper-guided reputation
+calculation path is implemented.

@@ -154,6 +154,13 @@ where
         else {
             continue;
         };
+        // Issue #170: the checkpoint records a leader already proven final.
+        // After pruning, `observe()` stops at the checkpoint boundary, so
+        // re-deriving via `super_ratifies` undercounts approving creators and
+        // can regress finality. Trust the checkpoint instead of re-verifying it.
+        if blocklace.checkpoint() == Some(&leader.identity) {
+            return Some(leader.identity);
+        }
 
         let Some(candidate_round) = depths.get(&leader.identity).copied() else {
             continue;
@@ -287,6 +294,12 @@ where
         else {
             continue;
         };
+        // Issue #170: same checkpoint-trust reasoning as latest_final_leader —
+        // re-deriving against post-pruning collapsed evidence can regress the
+        // weighted final leader below its own checkpoint.
+        if blocklace.checkpoint() == Some(&leader.identity) {
+            return Some(leader.identity);
+        }
 
         let Some(candidate_round) = depths.get(&leader.identity).copied() else {
             continue;
