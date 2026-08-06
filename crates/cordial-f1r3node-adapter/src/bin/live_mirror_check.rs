@@ -1,9 +1,10 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use cordial_f1r3node_adapter::deploy_trace::{DeployTraceState, DeployTracer, TraceIngressSource};
 use cordial_f1r3node_adapter::grpc_ingest::BlocklaceAdapter;
 use cordial_f1r3node_adapter::http_observer::HttpObserver;
 use cordial_f1r3node_adapter::live_grpc::{
@@ -85,6 +86,21 @@ struct Args {
 
     #[arg(long)]
     compare_ordered_file: Option<PathBuf>,
+
+    /// Print a deploy lifecycle trace report at the end of the run.
+    ///
+    /// The tracer is always active (every block's deploys are indexed);
+    /// this flag controls whether the summary is printed.
+    #[arg(long, default_value_t = false)]
+    show_deploy_trace: bool,
+
+    /// Hex-encoded deploy signature(s) to pin-watch in the trace report.
+    ///
+    /// When provided, only these signatures are highlighted in the report
+    /// (all others are still tracked but omitted from output).
+    /// Pass multiple times for multiple signatures.
+    #[arg(long = "trace-deploy-sig")]
+    trace_deploy_sigs: Vec<String>,
 }
 
 struct PassthroughAdapter;
@@ -137,8 +153,10 @@ async fn main() -> Result<()> {
         ..CasperShardConf::default()
     };
 
+    let tracer = DeployTracer::new();
     let mut ingress =
-        LiveIngress::with_consensus_view(PassthroughAdapter, bonds, shard_conf, &args.shard_id);
+        LiveIngress::with_consensus_view(PassthroughAdapter, bonds, shard_conf, &args.shard_id)
+            .with_deploy_tracer(tracer.clone());
 
     let mut decoded_messages = 0usize;
     let mut height_bootstrapped = 0usize;
@@ -168,6 +186,7 @@ async fn main() -> Result<()> {
                 trusted_window_boundary: args.trusted_window_boundary,
             },
             &mut decoded_messages,
+            &tracer,
         )
         .await?;
     } else {
@@ -194,6 +213,7 @@ async fn main() -> Result<()> {
             args.max_backfill_rounds,
             args.max_backfill_blocks,
             args.parents_only_bootstrap,
+            &tracer,
         )
         .await?
     } else {
@@ -261,9 +281,6 @@ async fn main() -> Result<()> {
         Some(if args.window_ordering_fragment {
             window_ordering_fragment(&ingress)?
         } else if args.ordering_fragment_only {
-            // Use the stable ordered_output export seam instead of
-            // recomputing ordering (approved_blocks_for_leader + xsort)
-            // directly against the mirrored blocklace.
             let output = ingress.latest_finalized_ordered_output(3).map_err(|err| {
                 anyhow::anyhow!("failed to compute latest ordered output: {err:?}")
             })?;
@@ -271,9 +288,17 @@ async fn main() -> Result<()> {
             ordered_output = Some(output);
             hashes
         } else {
-            ingress.ordered_finalized_blocks().map_err(|err| {
+            // Use the full ordered list and also run finalized-output
+            // correlation so that BlockIncluded traces advance to FinalizedOrdered.
+            let blocks = ingress.ordered_finalized_blocks().map_err(|err| {
                 anyhow::anyhow!("failed to compute ordered finalized blocks: {err:?}")
-            })?
+            })?;
+            // Correlate finalized output against tracer: compute anchor from mirror LFB.
+            if let Ok(Some(anchor)) = ingress.last_finalized_block_hash() {
+                let finalized_hashes: Vec<String> = blocks.iter().map(hex::encode).collect();
+                tracer.correlate_finalized_output(&finalized_hashes, &anchor);
+            }
+            blocks
         })
     };
     let ordered_count = ordered_blocks.as_ref().map_or(0, Vec::len);
@@ -460,6 +485,80 @@ async fn main() -> Result<()> {
     {
         println!("Last finalized block mismatch detected.");
     }
+
+    // ── Per-sig gRPC finality lookup ──────────────────────────────────────────
+    // The LightBlockInfo returned by the height-bootstrap path doesn't carry
+    // deploy bodies, so block-scanning traces will always show zero. Instead
+    // we use the node's FindDeploy RPC to directly resolve each pinned sig to
+    // its containing block, then cross-check against the mirror's ordered set.
+    if !args.trace_deploy_sigs.is_empty() {
+        println!("Deploy sig lookup (gRPC FindDeploy):");
+        let ordered_hex_set: HashSet<String> = ordered_blocks
+            .as_ref()
+            .map(|blocks| blocks.iter().map(hex::encode).collect())
+            .unwrap_or_default();
+        let mirror_lfb_hex = mirror_last_finalized.clone().unwrap_or_default();
+
+        for raw_sig in &args.trace_deploy_sigs {
+            let sig_hex = raw_sig.trim_start_matches("0x").to_lowercase();
+            let sig_bytes = match StringOps::decode_hex(sig_hex.clone()) {
+                Some(b) => b,
+                None => {
+                    println!(
+                        "  sig=0x{}…  ERROR: invalid hex",
+                        &sig_hex[..sig_hex.len().min(16)]
+                    );
+                    continue;
+                }
+            };
+
+            match grpc.find_deploy(sig_bytes.clone()).await {
+                Ok(Some(block_info)) => {
+                    let block_hex = block_info.block_hash.to_lowercase();
+                    let block_hex_norm = block_hex.trim_start_matches("0x");
+                    let in_ordered = ordered_hex_set.contains(block_hex_norm);
+                    let is_lfb = block_hex_norm == mirror_lfb_hex.trim_start_matches("0x");
+                    println!(
+                        "  sig=0x{}…  FOUND  block=0x{}  height={}  in_finalized_ordered={}{}",
+                        &sig_hex[..sig_hex.len().min(16)],
+                        &block_hex_norm[..block_hex_norm.len().min(16)],
+                        block_info.block_number,
+                        in_ordered,
+                        if is_lfb { "  (mirror LFB)" } else { "" },
+                    );
+
+                    // Register into tracer so the Deploy Trace summary reflects this deploy.
+                    tracer.record_observed(&sig_bytes, TraceIngressSource::Grpc);
+                    tracer.record_accepted(&sig_bytes);
+                    let block_bytes =
+                        StringOps::decode_hex(block_hex_norm.to_string()).unwrap_or_default();
+                    tracer.correlate_block(
+                        vec![sig_bytes.as_slice()].into_iter(),
+                        &block_bytes,
+                        block_info.block_number,
+                    );
+                    if in_ordered && let Ok(Some(anchor)) = ingress.last_finalized_block_hash() {
+                        tracer.correlate_finalized_output(&[block_hex_norm.to_string()], &anchor);
+                    }
+                }
+                Ok(None) => {
+                    println!(
+                        "  sig=0x{}…  NOT FOUND  (not yet included or unknown to node)",
+                        &sig_hex[..sig_hex.len().min(16)]
+                    );
+                }
+                Err(err) => {
+                    println!(
+                        "  sig=0x{}…  ERROR: {err}",
+                        &sig_hex[..sig_hex.len().min(16)]
+                    );
+                }
+            }
+        }
+    }
+
+    // ── Deploy trace report ───────────────────────────────────────────────────
+    print_deploy_trace_report(&tracer, &args.trace_deploy_sigs, args.show_deploy_trace);
 
     Ok(())
 }
@@ -821,6 +920,7 @@ async fn bootstrap_by_heights(
     ingress: &mut LiveIngress<PassthroughAdapter>,
     config: HeightBootstrapConfig,
     decoded_messages: &mut usize,
+    tracer: &DeployTracer,
 ) -> Result<usize> {
     let mut start = config.start_height.max(0);
     let mut bootstrapped = 0usize;
@@ -847,7 +947,10 @@ async fn bootstrap_by_heights(
         );
 
         for info in &blocks {
-            let _ = light_block_info_to_block_message(info)
+            // Decode the full BlockMessage — it carries body.deploys with real
+            // deploy signatures. We use it for deploy correlation, then ingest
+            // the trusted block (which has correct predecessor links).
+            let block_msg = light_block_info_to_block_message(info)
                 .with_context(|| format!("failed to decode live block {}", info.block_hash))?;
             *decoded_messages += 1;
 
@@ -870,6 +973,24 @@ async fn bootstrap_by_heights(
                     .ingest_trusted_block(block)
                     .with_context(|| format!("failed to mirror live block {}", info.block_hash))?;
             }
+
+            // Correlate deploy signatures from the full block message body.
+            // The trusted block path doesn't carry CordialBlockPayload format,
+            // so we must scan signatures directly from the BlockMessage here.
+            let sigs: Vec<&[u8]> = block_msg
+                .body
+                .deploys
+                .iter()
+                .map(|pd| pd.deploy.sig.as_slice())
+                .collect();
+            if !sigs.is_empty() {
+                tracer.correlate_block(
+                    sigs.into_iter(),
+                    &block_msg.block_hash,
+                    block_msg.body.state.block_number,
+                );
+            }
+
             bootstrapped += 1;
         }
 
@@ -893,6 +1014,7 @@ async fn backfill_missing_predecessors(
     max_rounds: usize,
     max_blocks: usize,
     parents_only_bootstrap: bool,
+    tracer: &DeployTracer,
 ) -> Result<usize> {
     let mut attempted = HashSet::new();
     let mut backfilled = 0usize;
@@ -945,6 +1067,8 @@ async fn backfill_missing_predecessors(
                 .await
                 .with_context(|| format!("failed to backfill missing predecessor {hash}"))?;
 
+            let block_msg = light_block_info_to_block_message(&info)
+                .with_context(|| format!("failed to decode backfilled block {}", info.block_hash));
             let block =
                 trusted_block_from_light_block_info_with_options(&info, !parents_only_bootstrap)
                     .with_context(|| {
@@ -953,6 +1077,22 @@ async fn backfill_missing_predecessors(
             ingress.ingest_trusted_block(block).with_context(|| {
                 format!("failed to ingest backfilled block {}", info.block_hash)
             })?;
+            // Correlate deploy sigs from the full block message if available.
+            if let Ok(bm) = block_msg {
+                let sigs: Vec<&[u8]> = bm
+                    .body
+                    .deploys
+                    .iter()
+                    .map(|pd| pd.deploy.sig.as_slice())
+                    .collect();
+                if !sigs.is_empty() {
+                    tracer.correlate_block(
+                        sigs.into_iter(),
+                        &bm.block_hash,
+                        bm.body.state.block_number,
+                    );
+                }
+            }
             backfilled += 1;
             fetched_this_round += 1;
 
@@ -1009,4 +1149,89 @@ fn unresolved_predecessor_hashes(ingress: &LiveIngress<PassthroughAdapter>) -> B
     }
 
     missing
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Deploy trace report
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Print a deploy lifecycle trace report.
+///
+/// - When `show_all` is true, every traced deploy is printed.
+/// - When `pinned_sigs` is non-empty, only those signatures are printed
+///   (regardless of `show_all`).
+/// - A summary line (counts by state) is always printed.
+fn print_deploy_trace_report(tracer: &DeployTracer, pinned_sigs: &[String], show_all: bool) {
+    let mut all = tracer.list_active_traces();
+    // Sort by observed_at then signature for stable output.
+    all.sort_by(|a, b| {
+        a.observed_at_secs
+            .cmp(&b.observed_at_secs)
+            .then(a.signature_hex.cmp(&b.signature_hex))
+    });
+
+    // Count by state.
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for report in &all {
+        *counts.entry(report.state.to_string()).or_insert(0) += 1;
+    }
+
+    let total = all.len();
+    let finalized = all.iter().filter(|r| r.is_finalized()).count();
+    let block_included = all
+        .iter()
+        .filter(|r| r.state == DeployTraceState::BlockIncluded)
+        .count();
+    let accepted = all
+        .iter()
+        .filter(|r| r.state == DeployTraceState::Accepted)
+        .count();
+    let observed_only = all
+        .iter()
+        .filter(|r| r.state == DeployTraceState::Observed)
+        .count();
+
+    println!("Deploy trace:");
+    println!("  Total traced:       {total}");
+    println!("  Observed:           {observed_only}");
+    println!("  Accepted:           {accepted}");
+    println!("  BlockIncluded:      {block_included}");
+    println!("  FinalizedOrdered:   {finalized}");
+
+    if total == 0 {
+        println!("  (no deploys seen in mirrored blocks)");
+        return;
+    }
+
+    // Decide which reports to print in detail.
+    let to_print: Vec<_> = if !pinned_sigs.is_empty() {
+        // Normalise pinned sigs to lowercase hex without 0x prefix.
+        let normalised: HashSet<String> = pinned_sigs
+            .iter()
+            .map(|s| s.trim_start_matches("0x").to_lowercase())
+            .collect();
+        all.iter()
+            .filter(|r| normalised.contains(r.signature_hex.as_str()))
+            .collect()
+    } else if show_all {
+        all.iter().collect()
+    } else {
+        vec![]
+    };
+
+    if !to_print.is_empty() {
+        println!("  Detail:");
+        for report in to_print {
+            println!("    {}", report.summary_line());
+            if let Some(bh) = &report.block_hash_hex {
+                println!("      block_hash=0x{}", &bh[..bh.len().min(16)]);
+            }
+            if let Some(anchor) = &report.finalized_anchor_hex {
+                println!("      anchor=0x{}", &anchor[..anchor.len().min(16)]);
+            }
+        }
+    } else if !show_all && pinned_sigs.is_empty() {
+        println!("  (use --show-deploy-trace to print per-deploy detail)");
+        println!("  (use --trace-deploy-sig <hex> to pin-watch a specific signature)");
+    }
 }
