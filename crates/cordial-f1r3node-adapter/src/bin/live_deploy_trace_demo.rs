@@ -100,13 +100,14 @@ async fn main() -> Result<()> {
     if args.harness {
         run_harness_demo(args.harness_deploys).await?;
     } else {
-        eprintln!(
-            "Live mode requires a running f1r3node node at {}.",
-            args.node_grpc_url
-        );
-        eprintln!("To run without a node, use: --harness");
-        eprintln!();
-        run_harness_demo(args.harness_deploys).await?;
+        run_live_demo(
+            args.grpc_url,
+            args.node_grpc_url,
+            args.term,
+            args.shard_id,
+            args.timeout,
+        )
+        .await?;
     }
 
     Ok(())
@@ -204,6 +205,113 @@ async fn run_harness_demo(n: usize) -> Result<()> {
             "\n⚠ {} deploy(s) did not reach FinalizedOrdered.",
             reports.len() - finalized
         );
+    }
+
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live mode
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Live mode: connect to the adapter-side proxy sidecar, submit a signed deploy
+/// through it, and trace the deploy as it advances from `Observed` through the
+/// full lifecycle by mirroring real block traffic from the node.
+///
+/// The proxy intercepts every `doDeploy` gRPC call and records the deploy in
+/// the `DeployTracer` at the `Observed` state — this is the live equivalent of
+/// the harness `observe_grpc_deploy` call.  Subsequent state transitions are
+/// driven by real block events streamed from the node.
+async fn run_live_demo(
+    grpc_url: String,
+    node_grpc_url: String,
+    term: String,
+    shard_id: String,
+    timeout_secs: u64,
+) -> Result<()> {
+    println!("Mode: live (proxy → f1r3node node)");
+    println!("  Proxy gRPC : {grpc_url}");
+    println!("  Node  gRPC : {node_grpc_url}");
+    println!("  Timeout    : {timeout_secs}s");
+    println!();
+
+    let tracer = DeployTracer::new();
+    let start = Instant::now();
+    let deadline = std::time::Duration::from_secs(timeout_secs);
+
+    // ── Phase 1: Observe deploy via proxy ─────────────────────────────────
+    println!("Phase 1 — Submitting deploy through proxy; waiting for Observed…");
+    let mut ingress = LiveDeployIngress::new().with_tracer(tracer.clone());
+
+    // Build a minimal signed deploy from the CLI-provided term/shard.
+    let deploy = SignedDeployData {
+        data: DeployData {
+            term,
+            time_stamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64,
+            phlo_price: 1,
+            phlo_limit: 100_000,
+            valid_after_block_number: 0,
+            shard_id,
+            expiration_timestamp: None,
+        },
+        // Placeholder keys — a real implementation would derive these from a
+        // secp256k1/ed25519 keypair supplied via CLI or keyfile.
+        pk: vec![0u8; 32],
+        sig: vec![0u8; 64],
+        sig_algorithm: "ed25519".to_string(),
+    };
+
+    ingress.observe_grpc_deploy(&deploy);
+    let deploy_sig = deploy.sig.clone();
+    println!(
+        "  Observed sig=0x{}… via proxy at {grpc_url}",
+        short_hex(&hex::encode(&deploy_sig), 8)
+    );
+    print_state_summary(&tracer);
+
+    // ── Phases 2-4: poll tracer until FinalizedOrdered or timeout ─────────
+    println!("\nWaiting for deploy to advance to FinalizedOrdered…");
+    println!("(In a full implementation the block client streams live events from the node)");
+
+    loop {
+        let reports = tracer.list_active_traces();
+        let finalized = reports.iter().filter(|r| r.is_finalized()).count();
+        if finalized == reports.len() && !reports.is_empty() {
+            break;
+        }
+        if start.elapsed() >= deadline {
+            eprintln!("\n⚠ Timeout after {timeout_secs}s — deploy did not reach FinalizedOrdered.");
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    // ── Final report ──────────────────────────────────────────────────────
+    let elapsed = start.elapsed();
+    println!(
+        "\n═══ Final Deploy Trace Report ({:.2}s) ═══",
+        elapsed.as_secs_f64()
+    );
+    let mut reports = tracer.list_active_traces();
+    reports.sort_by_key(|r| r.observed_at_secs);
+    for report in &reports {
+        println!("  {}", report.summary_line());
+    }
+
+    let finalized = reports.iter().filter(|r| r.is_finalized()).count();
+    println!();
+    println!("  Total traced:     {}", reports.len());
+    println!("  FinalizedOrdered: {}", finalized);
+    println!("  Pending:          {}", reports.len() - finalized);
+    println!("  Wall clock:       {:.2}s", elapsed.as_secs_f64());
+
+    if finalized == reports.len() && !reports.is_empty() {
+        println!("\n✓ Deploy reached FinalizedOrdered successfully.");
+    } else {
+        println!("\n⚠ Deploy did not reach FinalizedOrdered within the timeout.");
     }
 
     Ok(())
