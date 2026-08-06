@@ -81,6 +81,7 @@ flowchart TD
         Ingest["Rating ingestion"]
         Validate["Validation"]
         Aggregate["Round aggregation"]
+        Matrix["Rating matrix"]
         Normalize["Normalization"]
         Liquid["Liquid Rank"]
         Penalty["Penalties / Slashing"]
@@ -112,7 +113,8 @@ flowchart TD
     Ratings -.-> Ingest
     Ingest -.-> Validate
     Validate -.-> Aggregate
-    Aggregate -.-> Normalize
+    Aggregate -.-> Matrix
+    Matrix -.-> Normalize
     Normalize -.-> Liquid
     Liquid -.-> Penalty
     Penalty -.-> Clamp
@@ -132,14 +134,14 @@ flowchart TD
     Weighted --> Tau
 ```
 
-### Future PoR Stages
+### Implemented And Future PoR Stages
 
 > **Implementation Note:**  
-> The stages shown with dotted edges in the architecture above are part of the intended PoR architecture described in the paper (arXiv:2108.03542 and related Liquid-Rank literature) but are **not yet implemented** in the current codebase.
+> The stages shown with dotted edges in the architecture above are part of the intended PoR architecture described in the paper (arXiv:2108.03542 and related Liquid-Rank literature). The current crate implements the data-preparation path through normalized rating matrices; reputation calculation remains future work.
 
-- Rating ingestion & validation
-- Round aggregation
-- Normalization
+- Rating validation and deterministic round batching
+- Rating matrix construction
+- Paper-guided rating normalization
 - Liquid-Rank calculation
 - Penalties / slashing
 - Clamping / fixed-point conversion (beyond the scale constant already present)
@@ -152,19 +154,23 @@ flowchart TD
 | Module | Responsibility | Inputs | Outputs | Dependencies | Public interfaces |
 |--------|----------------|--------|---------|--------------|-------------------|
 | `config` | Holds fixed-point scale and initial reputation | scale, initial value | `PorConfig` | none | `PorConfig::{new, default}` |
-| `types` | Minimal type aliases and entry struct | — | `ReputationRound`, `ReputationWeight`, `ReputationEntry` | `cordial-miners-core::NodeId` | re-exported types |
+| `types` | Deterministic PoR data model | — | ratings, matrices, reputation entries, blocks | `cordial-miners-core::NodeId` | re-exported types |
+| `ratings` | Validate signed rating records and build deterministic round batches | `RatingRecord`, `PorConfig` | `RatingBatch` | `config`, `types`, `error` | `validate_rating`, `build_rating_batch` |
+| `matrix` | Build canonical matrix representation from validated batches | `RatingBatch` | `RatingMatrix` | `types`, `error` | `build_rating_matrix` |
+| `normalization` | Apply Section 4.2 modified normalization per recipient row | `RatingMatrix`, `PorConfig` | `NormalizedRatingMatrix` | `config`, `types`, `error` | `normalize_rating_matrix` |
 | `state` | In-memory reputation map keyed by `NodeId` | round, validator → weight | `ReputationState` | `types` | `new`, `round`, `reputations`, `reputation_of`, `set_reputation` |
 | `weights` | Export current reputation map for the weighted path | `&ReputationState` | `HashMap<NodeId, ReputationWeight>` | `state`, `cordial-miners-core::NodeId` | `reputation_weights` |
-| `error` | Placeholder error type for future validation | — | `PorError` | none | `PorError::InvalidConfiguration` |
-| `lib` | Crate root, re-exports | — | public API surface | all of the above | `PorConfig`, `PorError`, `ReputationState`, types, `reputation_weights` |
+| `error` | PoR validation, matrix, and normalization errors | — | `PorError` | none | `PorError` variants |
+| `lib` | Crate root, re-exports | — | public API surface | all of the above | `PorConfig`, `PorError`, `ReputationState`, rating/matrix APIs, types, `reputation_weights` |
 
 ## Data Flow
 
 1. A `PorConfig` is created (defaults: scale = `1_000_000_000`, initial_reputation = `200_000_000`).
-2. A `ReputationState` is instantiated for a given `ReputationRound`.
-3. Callers (or future ingestion logic) populate the state via `set_reputation`.
-4. `reputation_weights(&state)` produces a `HashMap<NodeId, ReputationWeight>` that is handed to the weighted APIs of `cordial-miners-core`.
-5. No further processing (finality, τ, approval) occurs inside `cordial-por`.
+2. Rating records are validated and batched with `build_rating_batch`.
+3. A deterministic `RatingMatrix` is built with `build_rating_matrix`.
+4. The matrix is normalized per recipient with `normalize_rating_matrix`.
+5. A `ReputationState` can still be instantiated and exported through `reputation_weights(&state)` for Cordial Miners weighted APIs.
+6. No further processing (finality, τ, approval) occurs inside `cordial-por`.
 
 ## Ownership Boundaries
 
@@ -172,6 +178,7 @@ flowchart TD
 
 - Reputation state representation (`ReputationState`).
 - Fixed-point scale and initial-reputation configuration.
+- Rating validation, deterministic matrix construction, and paper-guided rating normalization.
 - Conversion of the current reputation map into the weight map expected by Cordial Miners.
 - Future PoR algorithms (Liquid Rank, penalties, reputation blocks) once implemented.
 
@@ -248,7 +255,6 @@ All of the above remain the exclusive responsibility of `cordial-miners-core`. T
 
 Logical extension points that do not yet exist:
 
-- Rating ingestion pipeline (signed ratings, validation, round aggregation).
 - Liquid Rank iterative computation (weighted liquid democracy formula).
 - Penalty / slashing application that mutates `ReputationState`.
 - Reputation-block construction and audit trail.

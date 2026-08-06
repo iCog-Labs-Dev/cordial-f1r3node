@@ -2,7 +2,7 @@
 //!
 //! Covers:
 //! - P1.1: pruning does not rewrite the already-finalized tau prefix.
-//!   (`#[ignore]`d see issue #170)
+//!   (regression fixed in issue #170; test now enforced)
 //! - P1.2: late blocks referencing pruned history are classified cleanly.
 //! - P1.3: checkpoint order prefixes are not replayed or lost across
 //!   repeated/successive prunes.
@@ -21,11 +21,13 @@
 //! shared history, so nothing is ever actually removable. A genuine
 //! single-chain structure is required to exercise real removal.
 //!
-//! P1.1 found a real regression, tracked separately as issue #170: `tau()`
-//! re-derives finality from scratch on every call rather than trusting
-//! `blocklace.checkpoint()`, and that re-derivation can lose approving
+//! P1.1 originally found a real regression, tracked as issue #170: `tau()`
+//! re-derived finality from scratch on every call rather than trusting
+//! `blocklace.checkpoint()`, and that re-derivation could lose approving
 //! evidence collapsed by pruning, causing it to regress to an earlier
-//! leader than the checkpoint it just established.
+//! leader than the checkpoint it just established. Fixed in #170 by
+//! short-circuiting `latest_final_leader` / `latest_weighted_final_leader`
+//! to the recorded checkpoint; this test now runs to guard the fix.
 
 #[path = "mod.rs"]
 #[allow(dead_code)]
@@ -386,7 +388,6 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
     #[test]
-    #[ignore = "known regression, see issue #170: tau() can regress finality after pruning"]
     fn pruning_preserves_finalized_tau_prefix(spec in dag_spec_strategy()) {
         let mut dag = build_dag(&spec);
         let n = spec.validators.len();
