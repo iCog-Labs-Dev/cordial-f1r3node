@@ -5,10 +5,11 @@ use cordial_miners_core::execution::{BlockState, Bond, CordialBlockPayload};
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 use models::casper::v1::{
     block_info_response, block_response, deploy_service_client::DeployServiceClient,
-    last_finalized_block_response,
+    find_deploy_response, last_finalized_block_response,
 };
 use models::casper::{
-    BlockQuery, BlocksQuery, BlocksQueryByHeight, LastFinalizedBlockQuery, LightBlockInfo,
+    BlockQuery, BlocksQuery, BlocksQueryByHeight, FindDeployQuery, LastFinalizedBlockQuery,
+    LightBlockInfo,
 };
 use models::rust::string_ops::StringOps;
 use tonic::transport::{Channel, Endpoint};
@@ -181,6 +182,30 @@ impl LiveGrpcBlockClient {
             None => Err(LiveGrpcError::MissingPayload(
                 "last_finalized_block.message",
             )),
+        }
+    }
+
+    /// Look up which block contains a given deploy by its signature (DeployId).
+    ///
+    /// Returns `Some(LightBlockInfo)` for the block that included the deploy,
+    /// or `None` if the node has no record of it (not yet included or unknown).
+    pub async fn find_deploy(
+        &mut self,
+        deploy_sig: Vec<u8>,
+    ) -> Result<Option<LightBlockInfo>, LiveGrpcError> {
+        let response = self
+            .client
+            .find_deploy(FindDeployQuery {
+                deploy_id: deploy_sig.into(),
+            })
+            .await
+            .map_err(LiveGrpcError::Status)?
+            .into_inner();
+
+        match response.message {
+            Some(find_deploy_response::Message::BlockInfo(block_info)) => Ok(Some(block_info)),
+            Some(find_deploy_response::Message::Error(_)) => Ok(None),
+            None => Ok(None),
         }
     }
 
