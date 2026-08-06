@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::block_translation::{DeployData, SignedDeployData};
 use crate::casper_adapter::{CasperError, CordialCasper, DeployError, DeployId};
+use crate::deploy_trace::{DeployTracer, TraceIngressSource};
 use cordial_miners_core::crypto::CryptoVerifier;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -90,6 +91,9 @@ impl std::error::Error for HttpDeployConversionError {}
 pub struct LiveDeployIngress {
     staged: HashMap<Vec<u8>, ObservedDeploy>,
     observed_order: Vec<Vec<u8>>,
+    /// Optional deploy lifecycle tracer. When `Some`, every observation
+    /// and admission automatically advances the trace state machine.
+    tracer: Option<DeployTracer>,
 }
 
 impl Default for LiveDeployIngress {
@@ -103,7 +107,24 @@ impl LiveDeployIngress {
         Self {
             staged: HashMap::new(),
             observed_order: Vec::new(),
+            tracer: None,
         }
+    }
+
+    /// Attach a [`DeployTracer`] so that observations and admissions
+    /// automatically advance the deploy lifecycle state machine.
+    ///
+    /// The same `DeployTracer` instance can be shared (cloned) with other
+    /// components (e.g. the block mirror and the ordered-output consumer)
+    /// so that all four lifecycle states are updated from a single object.
+    pub fn with_tracer(mut self, tracer: DeployTracer) -> Self {
+        self.tracer = Some(tracer);
+        self
+    }
+
+    /// Return a clone of the attached tracer, if one was set.
+    pub fn tracer(&self) -> Option<&DeployTracer> {
+        self.tracer.as_ref()
     }
 
     pub fn observe_grpc_deploy(&mut self, deploy: &SignedDeployData) -> ObservedDeploy {
@@ -147,6 +168,14 @@ impl LiveDeployIngress {
         if !entry.sources.contains(&source) {
             entry.observe_again(source);
         }
+        // Advance tracer to Observed (idempotent on repeat calls).
+        if let Some(tracer) = &self.tracer {
+            let trace_source = match source {
+                DeployIngressSource::Grpc => TraceIngressSource::Grpc,
+                DeployIngressSource::Http => TraceIngressSource::Http,
+            };
+            tracer.record_observed(&signature, trace_source);
+        }
         entry.clone()
     }
 
@@ -160,7 +189,12 @@ impl LiveDeployIngress {
         V: CryptoVerifier + Send + Sync,
     {
         let observed = self.observe_deploy(source, &deploy);
+        let sig = deploy.sig.clone();
         let admission = adapter.deploy(deploy)?;
+        // Advance tracer to Accepted when f1r3node returned a DeployId.
+        if let (Some(tracer), Either::Right(_)) = (&self.tracer, &admission) {
+            tracer.record_accepted(&sig);
+        }
         Ok(DeployObservationResult {
             observed,
             admission,
