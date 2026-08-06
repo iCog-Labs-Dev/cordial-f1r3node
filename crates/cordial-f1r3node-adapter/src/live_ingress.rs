@@ -37,6 +37,7 @@ use cordial_miners_core::types::BlockIdentity;
 use cordial_miners_core::types::{BlockContent, NodeId};
 
 use crate::block_translation::BlockMessage;
+use crate::deploy_trace::DeployTracer;
 use crate::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
 use crate::ordered_output::OrderedFinalizedOutput;
 use crate::shard_conf::CasperShardConf;
@@ -300,6 +301,9 @@ pub struct LiveIngress<A> {
     bonds: HashMap<NodeId, u64>,
     shard_conf: CasperShardConf,
     shard_id: String,
+    /// Optional deploy tracer. When set, block ingestion and finalized-output
+    /// computation automatically advance the deploy lifecycle state machine.
+    deploy_tracer: Option<DeployTracer>,
 }
 
 impl<A> LiveIngress<A> {
@@ -315,6 +319,7 @@ impl<A> LiveIngress<A> {
             bonds: HashMap::new(),
             shard_conf: CasperShardConf::default(),
             shard_id: String::from("root"),
+            deploy_tracer: None,
         }
     }
 
@@ -335,7 +340,24 @@ impl<A> LiveIngress<A> {
             bonds,
             shard_conf,
             shard_id: shard_id.into(),
+            deploy_tracer: None,
         }
+    }
+
+    /// Attach a [`DeployTracer`] so that block ingestion and finalized-output
+    /// computation automatically advance the deploy lifecycle state machine.
+    ///
+    /// Typically the same `DeployTracer` instance is shared (cloned) between
+    /// the live ingress and the `LiveDeployIngress` observer so that all four
+    /// lifecycle states are updated from a single object.
+    pub fn with_deploy_tracer(mut self, tracer: DeployTracer) -> Self {
+        self.deploy_tracer = Some(tracer);
+        self
+    }
+
+    /// Return the attached deploy tracer, if any.
+    pub fn deploy_tracer(&self) -> Option<&DeployTracer> {
+        self.deploy_tracer.as_ref()
     }
 
     /// Return the current runtime phase of the live ingress component.
@@ -469,6 +491,15 @@ impl<A> LiveIngress<A> {
             total_mirrored_blocks,
         );
 
+        // Advance deploy traces to FinalizedOrdered for blocks in this output.
+        if let Some(tracer) = &self.deploy_tracer {
+            let finalized_hashes: Vec<String> =
+                output.block_hashes().into_iter().map(hex::encode).collect();
+            if let Some(anchor_id) = &output.anchor {
+                tracer.correlate_finalized_output(&finalized_hashes, &anchor_id.content_hash);
+            }
+        }
+
         self.shared_ordered_output
             .update(output.clone())
             .map_err(|_| SnapshotError::OrderedOutputPrefixViolation)?;
@@ -487,8 +518,12 @@ impl<A> LiveIngress<A> {
             .map_err(LiveIngressError::Adapter)?;
         let update = self
             .mirror
-            .ingest(block)
+            .ingest(block.clone())
             .map_err(LiveIngressError::Mirror)?;
+        // Correlate any traced deploys found in this block's payload.
+        if let Some(tracer) = &self.deploy_tracer {
+            correlate_block_payload(tracer, &block);
+        }
         self.phase = LiveIngressPhase::Connected;
         Ok(update)
     }
@@ -512,8 +547,12 @@ impl<A> LiveIngress<A> {
             .map_err(LiveIngressError::Adapter)?;
         let update = self
             .mirror
-            .ingest_with_trusted_boundary(block)
+            .ingest_with_trusted_boundary(block.clone())
             .map_err(LiveIngressError::Mirror)?;
+        // Correlate any traced deploys found in this block's payload.
+        if let Some(tracer) = &self.deploy_tracer {
+            correlate_block_payload(tracer, &block);
+        }
         self.phase = LiveIngressPhase::Connected;
         Ok(update)
     }
@@ -543,8 +582,51 @@ where
             .ingest(block.clone())
             .map_err(|err| LiveIngressError::Adapter(anyhow::anyhow!(err)))?;
 
+        // Correlate traced deploy signatures found in the block body.
+        if let Some(tracer) = &self.deploy_tracer {
+            let block_hash = &block_msg.block_hash;
+            let height = block_msg.body.state.block_number;
+            let sigs: Vec<&[u8]> = block_msg
+                .body
+                .deploys
+                .iter()
+                .map(|pd| pd.deploy.sig.as_slice())
+                .collect();
+            tracer.correlate_block(sigs.into_iter(), block_hash, height);
+        }
+
         self.phase = LiveIngressPhase::Connected;
 
         Ok(block)
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Private helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Scan a core [`Block`]'s payload for deploy signatures and advance any
+/// matching traces to `BlockIncluded`.
+///
+/// The block payload is decoded as [`CordialBlockPayload`]. If decoding fails
+/// (e.g. the block has no payload) the function silently no-ops.
+fn correlate_block_payload(tracer: &crate::deploy_trace::DeployTracer, block: &Block) {
+    use cordial_miners_core::execution::CordialBlockPayload;
+
+    let payload: CordialBlockPayload = match bincode::deserialize(&block.content.payload) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
+    let block_hash = block.identity.content_hash.as_slice();
+    // height is not directly available in the core Block type; use 0 as a
+    // sentinel — callers using ingest_block_message get the real height.
+    let height = 0i64;
+
+    let sigs: Vec<&[u8]> = payload
+        .deploys
+        .iter()
+        .map(|pd| pd.deploy.signature.as_slice())
+        .collect();
+    tracer.correlate_block(sigs.into_iter(), block_hash, height);
 }
