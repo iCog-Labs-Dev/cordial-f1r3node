@@ -43,12 +43,25 @@ async fn main() -> Result<()> {
         .with_context(|| format!("failed to connect to {}", args.grpc_url))?;
     let mut client = DeployServiceClient::new(channel);
 
+    let mut valid_after_block_number = args.valid_after_block_number;
+    if valid_after_block_number == 0
+        && let Ok(lfb_resp) = client
+            .last_finalized_block(models::casper::LastFinalizedBlockQuery {})
+            .await
+        && let inner = lfb_resp.into_inner()
+        && let Some(models::casper::v1::last_finalized_block_response::Message::BlockInfo(bi)) =
+            inner.message
+        && let Some(light) = bi.block_info
+    {
+        valid_after_block_number = light.block_number;
+    }
+
     let signed = construct_deploy::source_deploy_now_full(
         args.term,
         Some(args.phlo_limit),
         Some(args.phlo_price),
         None,
-        Some(args.valid_after_block_number),
+        Some(valid_after_block_number),
         Some(args.shard_id.clone()),
     )
     .context("failed to construct valid secp256k1-signed deploy")?;
@@ -59,6 +72,7 @@ async fn main() -> Result<()> {
     println!("gRPC URL:    {}", args.grpc_url);
     println!("timestamp:   {}", request.timestamp);
     println!("shard id:    {}", request.shard_id);
+    println!("valid after: {}", valid_after_block_number);
     println!("term:        {}", request.term);
     println!("sig algo:    {}", request.sig_algorithm);
     println!("language:    {}", args.language);
