@@ -22,6 +22,7 @@
 pub mod block_translation;
 pub mod casper_adapter;
 pub mod crypto_bridge;
+pub mod deploy_trace;
 pub mod grpc_deploy_ingress;
 pub mod grpc_ingest;
 pub mod http_deploy_ingress;
