@@ -168,6 +168,7 @@ impl From<TranslationError> for CasperError {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Local mirror of f1r3node's `Casper` trait.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait CordialCasper<V: CryptoVerifier + Send + Sync> {
     async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError>;
@@ -220,6 +221,7 @@ pub trait CordialCasper<V: CryptoVerifier + Send + Sync> {
 /// intentionally omitted — they belong to the future RSpace adapter
 /// crate (Phase 3 deferred work) since the standalone adapter has no
 /// RSpace runtime to expose.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait CordialMultiParentCasper<V: CryptoVerifier + Send + Sync>:
     CordialCasper<V> + Send + Sync
