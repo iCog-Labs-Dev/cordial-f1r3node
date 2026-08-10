@@ -5,10 +5,6 @@
 //! deterministic ordering. It does not compute reputation, Liquid Rank, or any
 //! future consensus-state transitions.
 
-use std::collections::HashSet;
-
-use cordial_miners_core::NodeId;
-
 use crate::{
     config::PorConfig,
     error::PorError,
@@ -52,7 +48,6 @@ pub fn build_rating_batch(
     ratings: Vec<RatingRecord>,
     config: &PorConfig,
 ) -> Result<RatingBatch, PorError> {
-    let mut seen: HashSet<(ReputationRound, NodeId, NodeId)> = HashSet::new();
     let mut validated = Vec::with_capacity(ratings.len());
 
     for rating in ratings {
@@ -61,16 +56,23 @@ pub fn build_rating_batch(
         }
 
         validate_rating(&rating, config)?;
-
-        let key = (rating.round, rating.rater.clone(), rating.recipient.clone());
-        if !seen.insert(key) {
-            return Err(PorError::DuplicateRating);
-        }
-
         validated.push(rating);
     }
 
-    validated.sort_by_key(|rating| (rating.recipient.clone(), rating.rater.clone()));
+    validated.sort_by(|a, b| {
+        a.recipient
+            .cmp(&b.recipient)
+            .then_with(|| a.rater.cmp(&b.rater))
+    });
+
+    for window in validated.windows(2) {
+        let previous = &window[0];
+        let current = &window[1];
+
+        if previous.recipient == current.recipient && previous.rater == current.rater {
+            return Err(PorError::DuplicateRating);
+        }
+    }
 
     Ok(RatingBatch {
         round,
