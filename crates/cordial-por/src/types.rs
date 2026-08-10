@@ -4,7 +4,7 @@
 //! ratings, reputation snapshots, penalties, and reputation blocks.
 //!
 //! No reputation calculation logic exists here.
-//! Liquid-rank, committee selection, and leader selection are implemented in future modules.
+//! Committee selection and leader selection are implemented in future modules.
 
 use cordial_miners_core::NodeId;
 
@@ -106,6 +106,7 @@ pub struct ReputationList {
 ///
 /// This is a paper-aligned structure only.
 /// No calculation is performed here.
+/// Values are expected in canonical `NodeId` order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReputationVector {
     pub round: ReputationRound,
@@ -191,8 +192,8 @@ pub struct NormalizedRatingEntry {
 
 /// Rating matrix with normalized fixed-point scores.
 ///
-/// This is prepared for future Liquid Rank calculation.
-/// It does not contain reputation updates.
+/// This is prepared for Liquid-Rank contribution calculation.
+/// It does not contain final reputation updates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedRatingMatrix {
     pub round: ReputationRound,

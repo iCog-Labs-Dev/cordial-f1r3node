@@ -12,7 +12,7 @@ Cordial Miners approval, ratification, finality, τ-ordering and blocklace conse
 - Keep reputation state and weight export behind a clean crate boundary.
 - Supply `HashMap<NodeId, u64>` (aliased as `ReputationWeight`) that the existing weighted APIs of `cordial-miners-core` can consume without modification.
 - Remain a pure library; no networking, no block production, no finality logic.
-- Provide a stable scaffold that later PoR stages (Liquid Rank, penalties, reputation blocks, etc.) can be added to without changing the integration contract.
+- Provide a stable scaffold that later PoR stages (alpha blending, penalties, reputation blocks, etc.) can be added to without changing the integration contract.
 
 ## High-Level Architecture
 
@@ -83,7 +83,7 @@ flowchart TD
         Aggregate["Round aggregation"]
         Matrix["Rating matrix"]
         Normalize["Normalization"]
-        Liquid["Liquid Rank"]
+        Liquid["Liquid Rank<br/>P = S * R"]
         Penalty["Penalties / Slashing"]
         Clamp["Clamp / Fixed-point conversion"]
         Transition["Reputation state transition"]
@@ -137,12 +137,12 @@ flowchart TD
 ### Implemented And Future PoR Stages
 
 > **Implementation Note:**  
-> The stages shown with dotted edges in the architecture above are part of the intended PoR architecture described in the paper (arXiv:2108.03542 and related Liquid-Rank literature). The current crate implements the data-preparation path through normalized rating matrices; reputation calculation remains future work.
+> The stages shown with dotted edges in the architecture above are part of the intended PoR architecture described in the paper (arXiv:2108.03542 and related Liquid-Rank literature). The current crate implements the data-preparation path through normalized rating matrices plus the first Liquid-Rank contribution calculation `P = S * R`; alpha blending and reputation-state updates remain future work.
 
 - Rating validation and deterministic round batching
 - Rating matrix construction
 - Paper-guided rating normalization
-- Liquid-Rank calculation
+- Liquid-Rank contribution calculation
 - Penalties / slashing
 - Clamping / fixed-point conversion (beyond the scale constant already present)
 - Reputation state transition
@@ -158,9 +158,10 @@ flowchart TD
 | `ratings` | Validate signed rating records and build deterministic round batches | `RatingRecord`, `PorConfig` | `RatingBatch` | `config`, `types`, `error` | `validate_rating`, `build_rating_batch` |
 | `matrix` | Build canonical matrix representation from validated batches | `RatingBatch` | `RatingMatrix` | `types`, `error` | `build_rating_matrix` |
 | `normalization` | Apply Section 4.2 modified normalization per recipient row | `RatingMatrix`, `PorConfig` | `NormalizedRatingMatrix` | `config`, `types`, `error` | `normalize_rating_matrix` |
+| `liquid_rank` | Compute paper-guided contribution vector `P = S * R` | `NormalizedRatingMatrix`, previous `ReputationVector`, `PorConfig` | contribution `ReputationVector` | `config`, `types`, `error` | `compute_liquid_rank_contribution` |
 | `state` | In-memory reputation map keyed by `NodeId` | round, validator → weight | `ReputationState` | `types` | `new`, `round`, `reputations`, `reputation_of`, `set_reputation` |
 | `weights` | Export current reputation map for the weighted path | `&ReputationState` | `HashMap<NodeId, ReputationWeight>` | `state`, `cordial-miners-core::NodeId` | `reputation_weights` |
-| `error` | PoR validation, matrix, and normalization errors | — | `PorError` | none | `PorError` variants |
+| `error` | PoR validation, matrix, normalization, and calculation errors | — | `PorError` | none | `PorError` variants |
 | `lib` | Crate root, re-exports | — | public API surface | all of the above | `PorConfig`, `PorError`, `ReputationState`, rating/matrix APIs, types, `reputation_weights` |
 
 ## Data Flow
@@ -169,8 +170,9 @@ flowchart TD
 2. Rating records are validated and batched with `build_rating_batch`.
 3. A deterministic `RatingMatrix` is built with `build_rating_matrix`.
 4. The matrix is normalized per recipient with `normalize_rating_matrix`.
-5. A `ReputationState` can still be instantiated and exported through `reputation_weights(&state)` for Cordial Miners weighted APIs.
-6. No further processing (finality, τ, approval) occurs inside `cordial-por`.
+5. The Liquid-Rank contribution vector is computed with `compute_liquid_rank_contribution`.
+6. A `ReputationState` can still be instantiated and exported through `reputation_weights(&state)` for Cordial Miners weighted APIs.
+7. No further processing (finality, τ, approval) occurs inside `cordial-por`.
 
 ## Ownership Boundaries
 
@@ -178,9 +180,9 @@ flowchart TD
 
 - Reputation state representation (`ReputationState`).
 - Fixed-point scale and initial-reputation configuration.
-- Rating validation, deterministic matrix construction, and paper-guided rating normalization.
+- Rating validation, deterministic matrix construction, paper-guided rating normalization, and Liquid-Rank contribution calculation.
 - Conversion of the current reputation map into the weight map expected by Cordial Miners.
-- Future PoR algorithms (Liquid Rank, penalties, reputation blocks) once implemented.
+- Future PoR algorithms (alpha blending, penalties, reputation blocks) once implemented.
 
 ### cordial-por does NOT own
 
@@ -243,7 +245,7 @@ All of the above remain the exclusive responsibility of `cordial-miners-core`. T
 
 - **Current implementation:** `PorConfig::DEFAULT_SCALE = 1_000_000_000`.
 - **Paper design:** Liquid Rank produces real-valued ranks that must be scaled for integer arithmetic.
-- **Future work:** Confirm scale, clamping rules and overflow behaviour once Liquid Rank is implemented.
+- **Future work:** Confirm clamping rules and overflow behaviour for the final reputation transition.
 
 ### Reputation sidechain vs payload references
 
@@ -255,7 +257,7 @@ All of the above remain the exclusive responsibility of `cordial-miners-core`. T
 
 Logical extension points that do not yet exist:
 
-- Liquid Rank iterative computation (weighted liquid democracy formula).
+- Alpha blending and final reputation transition after the `P = S * R` contribution step.
 - Penalty / slashing application that mutates `ReputationState`.
 - Reputation-block construction and audit trail.
 - Committee selection policy that filters the exported weight map.
