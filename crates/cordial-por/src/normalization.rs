@@ -24,25 +24,13 @@ pub fn normalize_rating_matrix(
         return Err(PorError::InvalidNormalizationScale);
     }
 
-    let ordered = &matrix.ratings;
-    let mut normalized = Vec::with_capacity(ordered.len());
-    let mut group_start = 0;
+    let mut normalized = Vec::with_capacity(matrix.ratings.len());
 
-    while group_start < ordered.len() {
-        let recipient = &ordered[group_start].recipient;
-        let mut group_end = group_start + 1;
-
-        while group_end < ordered.len() && ordered[group_end].recipient == *recipient {
-            group_end += 1;
-        }
-
-        normalize_recipient_group(
-            &ordered[group_start..group_end],
-            config.scale,
-            &mut normalized,
-        )?;
-
-        group_start = group_end;
+    for group in matrix
+        .ratings
+        .chunk_by(|left, right| left.recipient == right.recipient)
+    {
+        normalize_recipient_group(group, config.scale, &mut normalized)?;
     }
 
     Ok(NormalizedRatingMatrix {
@@ -56,21 +44,27 @@ fn normalize_recipient_group(
     scale: u64,
     output: &mut Vec<NormalizedRatingEntry>,
 ) -> Result<(), PorError> {
-    let min = group
+    let Some(first) = group.first() else {
+        return Ok(());
+    };
+
+    let (min, max) = group
         .iter()
-        .map(|rating| rating.score)
-        .min()
-        .ok_or(PorError::InvalidNormalizationScale)?;
-    let max = group
-        .iter()
-        .map(|rating| rating.score)
-        .max()
-        .ok_or(PorError::InvalidNormalizationScale)?;
+        .skip(1)
+        .fold((first.score, first.score), |(min, max), rating| {
+            (min.min(rating.score), max.max(rating.score))
+        });
     let range = max - min;
+    let scale_u128 = u128::from(scale);
+    let denominator = u128::from(range) + scale_u128;
+
+    if denominator > u128::MAX / scale_u128 {
+        return Err(PorError::NormalizationOverflow);
+    }
 
     for rating in group {
         let score_delta = rating.score - min;
-        let normalized_score = normalize_score(score_delta, range, scale)?;
+        let normalized_score = normalize_score(score_delta, scale_u128, denominator);
 
         output.push(NormalizedRatingEntry {
             rater: rating.rater.clone(),
@@ -83,13 +77,11 @@ fn normalize_recipient_group(
     Ok(())
 }
 
-fn normalize_score(score_delta: u64, range: u64, scale: u64) -> Result<u64, PorError> {
-    let numerator_base = u128::from(score_delta) + u128::from(scale);
-    let denominator = u128::from(range) + u128::from(scale);
-    let numerator = numerator_base
-        .checked_mul(u128::from(scale))
-        .ok_or(PorError::NormalizationOverflow)?;
+fn normalize_score(score_delta: u64, scale: u128, denominator: u128) -> u64 {
+    let numerator_base = u128::from(score_delta) + scale;
+    let numerator = numerator_base * scale;
     let normalized = numerator / denominator;
 
-    u64::try_from(normalized).map_err(|_| PorError::NormalizationOverflow)
+    debug_assert!(normalized <= scale);
+    normalized as u64
 }

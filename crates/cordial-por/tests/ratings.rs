@@ -85,6 +85,17 @@ fn rejects_duplicate_round_rater_recipient_ratings() {
 }
 
 #[test]
+fn rejects_duplicate_ratings_after_sorting() {
+    let r1 = rating(7, 1, 2, 10, vec![1, 2, 3]);
+    let r2 = rating(7, 3, 9, 12, vec![4, 5, 6]);
+    let r3 = rating(7, 1, 2, 14, vec![7, 8, 9]);
+
+    let result = build_rating_batch(7, vec![r1, r2, r3], &cfg());
+
+    assert!(matches!(result, Err(PorError::DuplicateRating)));
+}
+
+#[test]
 fn returns_ratings_in_deterministic_order_even_when_input_is_shuffled() {
     let r1 = rating(5, 2, 3, 10, vec![1, 2, 3]);
     let r2 = rating(5, 1, 4, 12, vec![4, 5, 6]);
