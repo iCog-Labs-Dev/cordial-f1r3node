@@ -11,6 +11,8 @@ pub enum PorError {
     MissingRatingSignature,
     DuplicateRating,
     DuplicateMatrixEntry,
+    InvalidNormalizationScale,
+    NormalizationOverflow,
 }
 
 impl fmt::Display for PorError {
@@ -34,6 +36,10 @@ impl fmt::Display for PorError {
                 f,
                 "duplicate matrix entry for the same round, rater, and recipient"
             ),
+            Self::InvalidNormalizationScale => {
+                write!(f, "normalization scale must be greater than zero")
+            }
+            Self::NormalizationOverflow => write!(f, "normalization arithmetic overflowed"),
         }
     }
 }
