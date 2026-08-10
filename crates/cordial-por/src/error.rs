@@ -1,6 +1,6 @@
 use std::fmt;
 
-/// Errors for the initial Proof-of-Reputation validation and batching stage.
+/// Errors for Proof-of-Reputation validation and calculation stages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PorError {
     InvalidConfiguration(String),
@@ -13,6 +13,11 @@ pub enum PorError {
     DuplicateMatrixEntry,
     InvalidNormalizationScale,
     NormalizationOverflow,
+    InvalidLiquidRankScale,
+    MissingRaterReputation,
+    DuplicateReputationEntry,
+    UnsortedReputationVector,
+    LiquidRankOverflow,
 }
 
 impl fmt::Display for PorError {
@@ -40,6 +45,19 @@ impl fmt::Display for PorError {
                 write!(f, "normalization scale must be greater than zero")
             }
             Self::NormalizationOverflow => write!(f, "normalization arithmetic overflowed"),
+            Self::InvalidLiquidRankScale => {
+                write!(f, "liquid-rank scale must be greater than zero")
+            }
+            Self::MissingRaterReputation => {
+                write!(f, "previous reputation vector is missing a rater")
+            }
+            Self::DuplicateReputationEntry => {
+                write!(f, "duplicate reputation entry for the same node")
+            }
+            Self::UnsortedReputationVector => {
+                write!(f, "reputation vector entries must be sorted by node id")
+            }
+            Self::LiquidRankOverflow => write!(f, "liquid-rank arithmetic overflowed"),
         }
     }
 }

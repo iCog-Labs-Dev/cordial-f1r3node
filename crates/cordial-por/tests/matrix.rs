@@ -146,6 +146,23 @@ fn invariant_violation_duplicate_after_validation_is_caught_defensively() {
 }
 
 #[test]
+fn invariant_violation_duplicate_is_caught_after_sorting() {
+    let duplicate_batch = RatingBatch {
+        round: 12,
+        ratings: vec![
+            rating(12, 1, 2, 50, vec![1]),
+            rating(12, 3, 9, 70, vec![3]),
+            rating(12, 1, 2, 60, vec![2]),
+        ],
+    };
+
+    assert!(matches!(
+        build_rating_matrix(&duplicate_batch),
+        Err(PorError::DuplicateMatrixEntry)
+    ));
+}
+
+#[test]
 fn invariant_violation_round_mismatch_is_caught_defensively() {
     let mismatched_batch = RatingBatch {
         round: 14,
