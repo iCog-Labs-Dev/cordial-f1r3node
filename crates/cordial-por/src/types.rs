@@ -176,6 +176,28 @@ pub struct RatingMatrix {
     pub round: ReputationRound,
     pub ratings: Vec<RatingRecord>,
 }
+
+/// A rating matrix entry after paper-guided normalization.
+///
+/// `score` preserves the original fixed-point rating value.
+/// `normalized_score` stores the fixed-point normalized value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedRatingEntry {
+    pub rater: NodeId,
+    pub recipient: NodeId,
+    pub score: RatingScore,
+    pub normalized_score: RatingScore,
+}
+
+/// Rating matrix with normalized fixed-point scores.
+///
+/// This is prepared for future Liquid Rank calculation.
+/// It does not contain reputation updates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedRatingMatrix {
+    pub round: ReputationRound,
+    pub ratings: Vec<NormalizedRatingEntry>,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LeaderSelection {
     pub round: ReputationRound,
