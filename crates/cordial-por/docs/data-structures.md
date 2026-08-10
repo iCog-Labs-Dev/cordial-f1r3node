@@ -11,6 +11,7 @@ rating transactions
   -> validated round batch
   -> rating matrix
   -> normalized rating matrix
+  -> liquid-rank contribution vector
 ```
 
 This stage validates `RatingRecord` instances and assembles a single-round
@@ -18,11 +19,14 @@ This stage validates `RatingRecord` instances and assembles a single-round
 batch-ordering logic. The new `src/matrix.rs` module now owns deterministic
 construction of a `RatingMatrix` from a validated `RatingBatch`. The module
 `src/normalization.rs` owns paper-guided fixed-point normalization of matrix
-values grouped by recipient.
+values grouped by recipient. The module `src/liquid_rank.rs` owns the
+paper-guided `P = S * R` contribution calculation from a normalized matrix and
+previous reputation vector.
 
 Rating matrix construction and normalization are still data preparation only.
-They do not compute Liquid Rank, update reputation values, or materialize a
-dense matrix. Reputation values must not be updated in this stage.
+The liquid-rank contribution calculation is the first calculation stage, but it
+does not alpha-blend, clamp, update reputation values, or materialize a dense
+matrix. Reputation values must not be updated in this stage.
 
 ## Paper Reference
 
@@ -54,7 +58,8 @@ rating transactions
 ```
 
 The current implementation is in scope through normalized rating matrix
-construction. Liquid Rank and reputation updates remain future work.
+construction and liquid-rank contribution calculation. Alpha blending,
+clamping, and reputation updates remain future work.
 
 ## File-Level Plan
 
@@ -88,9 +93,12 @@ Rules:
 - Do not use `f32` or `f64` in consensus-relevant data.
 - Keep entries ordered or orderable by `NodeId` for deterministic hashing and
   audit replay.
+- `ReputationVector` values are expected in canonical `NodeId` order so the
+  liquid-rank contribution step can use deterministic binary-search lookups
+  without allocating an index.
 - For `RatingMatrix`, the canonical deterministic ordering is by `(recipient, rater)`,
   not insertion order.
-- RatingMatrix is the canonical, deterministic representation of the paper's ratings matrix. It is intentionally stored as an ordered list of rating entries at this stage; dense matrix construction for numerical operations is deferred to the reputation/Liquid Rank implementation.
+- RatingMatrix is the canonical, deterministic representation of the paper's ratings matrix. It is intentionally stored as an ordered list of rating entries; the current contribution calculation consumes that sparse ordered form directly.
 - The ordered list is deliberately kept as `(recipient, rater)` so it matches the paper's `S = [s_ij]` convention: rows index recipients and columns index raters, which is the layout later used by the liquid-rank update `P <- S · r`. The output preserves the batch round and the deterministic matrix ordering.
 - A duplicate means the triple `(round, rater, recipient)`, not recipient-only duplication.
 - Normalized rating values use fixed-point integers with `PorConfig::scale`; do
@@ -144,11 +152,13 @@ This file should not implement ratification, finality, or tau ordering.
 The current implementation includes `src/ratings.rs`, which is responsible for
 validation + deterministic round batching, `src/matrix.rs`, which builds the
 canonical rating matrix, and `src/normalization.rs`, which applies the
-paper-guided modified normalization formula.
+paper-guided modified normalization formula. The implementation now also
+includes `src/liquid_rank.rs`, which computes the `P = S * R` contribution
+vector without mutating reputation state.
 
 Future work remains:
 
-- `src/liquid_rank.rs`: liquid-rank calculation
+- alpha blending and final reputation-state transition
 - `src/block.rs`: reputation block construction helpers
 - `src/audit.rs`: replay and transition verification
 - `src/committee.rs`: consensus group selection
@@ -156,8 +166,8 @@ Future work remains:
 
 `EquivocationPenalty` and `InactivityPenalty` remain intentionally as Cordial
 integration extensions and are not part of the first reputation calculation
-step. Liquid Rank, reputation updates, and all later consensus-selection logic
-remain future work.
+step. Alpha blending, clamping, reputation updates, and all later
+consensus-selection logic remain future work.
 
 ## Paper-Aligned Structures
 
