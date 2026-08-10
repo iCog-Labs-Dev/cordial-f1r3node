@@ -61,21 +61,19 @@ impl ReputationState {
     }
 
     pub fn set_reputation(&mut self, node_id: NodeId, reputation: ReputationWeight) {
-        if let Some(entry) = self
+        match self
             .reputation_list
             .entries
-            .iter_mut()
-            .find(|entry| entry.node_id == node_id)
+            .binary_search_by(|entry| entry.node_id.cmp(&node_id))
         {
-            entry.reputation = reputation;
-        } else {
-            self.reputation_list
-                .entries
-                .push(ReputationEntry::new(node_id, reputation));
-
-            self.reputation_list
-                .entries
-                .sort_by(|a, b| a.node_id.cmp(&b.node_id));
+            Ok(index) => {
+                self.reputation_list.entries[index].reputation = reputation;
+            }
+            Err(index) => {
+                self.reputation_list
+                    .entries
+                    .insert(index, ReputationEntry::new(node_id, reputation));
+            }
         }
     }
 }
