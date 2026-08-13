@@ -1,8 +1,8 @@
 # Proof-of-Reputation Data Structures
 
-This document records the first paper-aligned data model for `cordial-por`.
-It is a guide for the next implementation issue; it should not introduce
-reputation algorithms or Cordial Miners consensus behavior by itself.
+This document records the paper-aligned data model and implemented reputation
+calculation pipeline for `cordial-por`. It does not introduce Cordial Miners
+consensus behavior.
 
 The current pipeline is intentionally narrow:
 
@@ -12,6 +12,7 @@ rating transactions
   -> rating matrix
   -> normalized rating matrix
   -> liquid-rank contribution vector
+  -> alpha-blended next reputation vector
 ```
 
 This stage validates `RatingRecord` instances and assembles a single-round
@@ -23,10 +24,14 @@ values grouped by recipient. The module `src/liquid_rank.rs` owns the
 paper-guided `P = S * R` contribution calculation from a normalized matrix and
 previous reputation vector.
 
+The module `src/transition.rs` blends that contribution with the previous
+reputation using `PorConfig::liquid_rank_alpha` and the fixed-point scale. It
+returns a new deterministic vector and does not mutate `ReputationState`.
+
 Rating matrix construction and normalization are still data preparation only.
 The liquid-rank contribution calculation is the first calculation stage, but it
-does not alpha-blend, clamp, update reputation values, or materialize a dense
-matrix. Reputation values must not be updated in this stage.
+does not clamp, mutate reputation state, or materialize a dense matrix. The
+transition stage computes a new vector but does not commit it to state.
 
 ## Paper Reference
 
@@ -52,14 +57,14 @@ rating transactions
   -> normalized rating matrix S'
   -> previous reputation vector R
   -> liquid-rank reputation contribution P
-  -> next reputation vector
+  -> alpha-blended next reputation vector
   -> reputation list
   -> reputation block
 ```
 
 The current implementation is in scope through normalized rating matrix
-construction and liquid-rank contribution calculation. Alpha blending,
-clamping, and reputation updates remain future work.
+construction, liquid-rank contribution calculation, and pure alpha blending.
+Clamping, reputation-state mutation, and publication remain future work.
 
 ## File-Level Plan
 
@@ -133,7 +138,8 @@ Planned state:
 - latest accepted `ReputationBlock`
 
 This file should not implement liquid-rank math. It should expose state access
-and later delegate transitions to a dedicated calculation module.
+and later delegate transitions to dedicated calculation modules. It does not
+apply the transition result to reputation state.
 
 ### `src/weights.rs`
 
@@ -156,9 +162,29 @@ paper-guided modified normalization formula. The implementation now also
 includes `src/liquid_rank.rs`, which computes the `P = S * R` contribution
 vector without mutating reputation state.
 
+The `src/transition.rs` module computes the next vector with:
+
+```text
+R_next_i = (alpha * P_i + (scale - alpha) * R_k_i) / scale
+```
+
+It requires both vectors to contain the same node set in canonical `NodeId`
+order and requires the contribution round to immediately follow the previous
+reputation round. The calculation rejects invalid scale or alpha values and
+uses checked `u128` fixed-point intermediates before converting each result
+back to `ReputationWeight`. The contribution vector supplies the output order
+and round.
+
+This transition uses a strict node-set policy: the contribution and previous
+reputation vectors must contain the same canonical `NodeId` set. A round with
+missing contribution entries is rejected; no fallback or no-rating reputation
+policy is introduced here. Full contribution coverage is an upstream
+requirement.
+
 Future work remains:
 
-- alpha blending and final reputation-state transition
+- applying the calculated vector to `ReputationState`
+- sigmoid clamping and policy-specific bounds
 - `src/block.rs`: reputation block construction helpers
 - `src/audit.rs`: replay and transition verification
 - `src/committee.rs`: consensus group selection
@@ -166,8 +192,8 @@ Future work remains:
 
 `EquivocationPenalty` and `InactivityPenalty` remain intentionally as Cordial
 integration extensions and are not part of the first reputation calculation
-step. Alpha blending, clamping, reputation updates, and all later
-consensus-selection logic remain future work.
+step. Clamping, reputation updates, and all later consensus-selection logic
+remain future work.
 
 ## Paper-Aligned Structures
 

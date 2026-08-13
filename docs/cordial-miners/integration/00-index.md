@@ -64,6 +64,9 @@ and easy to extend as new implementation notes are added.
     - Documents what can be pruned after finalized ordered output is exported
     - Explains structural closure preservation and `OrderingCache` invalidation triggers
     - Covers the equivocation-evidence / cache interaction: why evidence recording does not flush the cache
+19. [17-persistence-and-restart-semantics.md](./17-persistence-and-restart-semantics.md)
+    - Wires `RSpaceBlocklaceRepository` into `LiveIngress` via `with_persistent_store`, `ingest_and_persist`, and `persist_finalized_cursor`
+    - Documents exactly what survives a restart and what is recomputed, plus the startup lifecycle callers should follow
 
 ## Scope Of This Track
 
@@ -78,7 +81,6 @@ The integration notes in this folder focus on:
 
 Future notes in this folder are expected to cover:
 
-- persistence and restart semantics: wiring LMDB repository into `LiveIngress`
 - transport wiring for ordered output (gRPC / IPC serving of `OrderedFinalizedOutput`)
 - push / notification delivery for ordered output consumers
 - proposer-facing integration only after the consumer boundary is validated
