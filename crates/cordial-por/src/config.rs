@@ -1,6 +1,6 @@
 use crate::types::{RatingScore, ReputationWeight};
 
-/// Configuration parameters for future PoR transitions.
+/// Configuration parameters for PoR calculations and transitions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PorConfig {
     /// Fixed point scale.
@@ -9,7 +9,8 @@ pub struct PorConfig {
     /// Initial reputation.
     pub initial_reputation: ReputationWeight,
 
-    /// Future liquid-rank alpha parameter.
+    /// Fixed-point alpha used to blend Liquid-Rank contribution with prior
+    /// reputation.
     pub liquid_rank_alpha: ReputationWeight,
 
     /// Minimum accepted rating.

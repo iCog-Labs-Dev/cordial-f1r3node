@@ -8,13 +8,16 @@ Architectural layout of the experiment series.
 ## Table of Contents
 
 1. [Global Architecture](#1-global-architecture)
-2. [Experiment 1 – Blocklace Validation & Equivocation](#2-experiment-1--blocklace-validation--equivocation)
-3. [Experiment 2 – Final-Leader Certificates](#3-experiment-2--final-leader-certificates)
-4. [Experiment 3 – Deterministic τord and Prefix Proofs](#4-experiment-3--deterministic-τord-and-prefix-proofs)
-5. [Experiment 4 – Dissemination & Priority Dissemination](#5-experiment-4--dissemination--priority-dissemination)
-6. [Experiment 5 – Fair Multi-Wave Scheduler](#6-experiment-5--fair-multi-wave-scheduler)
-7. [Experiment 6 – Integrated System](#7-experiment-6--integrated-system)
-8. [Experiment Summary Table](#experiment-summary-table)
+2. [Experiment 0 – Weighted Quorum & Threshold Foundations](#2-experiment-0--weighted-quorum--threshold-foundations)
+3. [Experiment 1 – Blocklace Validation & Equivocation](#3-experiment-1--blocklace-validation--equivocation)
+4. [Experiment 2 – Final-Leader Certificates](#4-experiment-2--final-leader-certificates)
+5. [Experiment 3 – Deterministic τord and Prefix Proofs](#5-experiment-3--deterministic-τord-and-prefix-proofs)
+6. [Experiment 4 – Dissemination & Priority Dissemination](#6-experiment-4--dissemination--priority-dissemination)
+7. [Experiment 5 – Fair Multi-Wave Scheduler](#7-experiment-5--fair-multi-wave-scheduler)
+8. [Experiment 6 – Integrated System](#8-experiment-6--integrated-system)
+9. [Proof-to-Implementation Mapping (KR5)](#9-proof-to-implementation-mapping-kr5)
+10. [Experiment Summary Table](#experiment-summary-table)
+11. [Architecture Diagram](#11-architecture-diagram)
 
 
 ---
@@ -36,6 +39,33 @@ CMRef (executable algorithms)
 
 ---
 
+## 2. Experiment 0 – Weighted Quorum & Threshold Foundations
+
+### CMSpec (relational)
+
+**Purpose.** Establishes the trust-model foundations that every later certificate, leader-safety, and integration theorem is stated relative to.
+
+**Scope.** The experiment should define:
+
+- the validator set and a weight function over validators;
+- the assumed Byzantine fault threshold (bound on adversarial weight);
+- weighted quorum thresholds (e.g. the weight fraction required for a valid quorum);
+- weighted approval as a predicate over sets of validator signatures/votes.
+
+**Theorem family:**
+
+- `byzantine_threshold_assumption`
+- `quorum_intersection`
+- `weighted_quorum_nonempty`
+- `quorum_weight_monotone`
+- `weighted_approval_implies_quorum`
+
+### CMRef (executable)
+
+- Reference validator/weight registry.
+- Functions: `validatorWeight`, `totalWeight`, `isQuorum`, `quorumIntersect`, `checkByzantineBound`, `weightedApproval`.
+
+---
 
 ## 3. Experiment 1 – Blocklace Validation & Equivocation
 
@@ -45,10 +75,10 @@ CMRef (executable algorithms)
 
 **Scope.** The experiment should define:
 
-- block records with creator, round, wave, parent hashes, payloads, hash, and signature;
+- validator identities and block records with creator, round, wave, parent hashes, payloads, hash, and signature;
 - a finite accepted blocklace for each node;
 - a buffer for blocks whose parents are missing;
-- observation `ObservesL(b, c)` as reachability through parent pointers;
+- observation `ObservesL(b, c)` as the transitive closure of predecessor/parent links;
 - block conflict for same creator and same slot with different hash;
 - equivocation evidence and exclusion/slashing facts.
 
@@ -61,6 +91,8 @@ CMRef (executable algorithms)
 - `resolve_buffer_sound`
 - `equivocation_evidence_sound`
 - `exclusion_persistent`
+- `honest_chain_linear_order`
+- `equivocator_exclusion_sound`
 
 ### CMRef (executable)
 
@@ -88,6 +120,8 @@ CMRef (executable algorithms)
 - `fl_cert_sound`
 - `fl_cert_persistent_under_extension`
 - `fl_cert_uses_fixed_snapshot`
+- `fl_cert_no_conflicting_finalization`
+- `fl_cert_monotone_append_only` 
 - `Leader_equivocation_detected`
 - `supermajority_intersection_for_leaders`
 
@@ -215,6 +249,7 @@ Priority dissemination should add:
 
 **Composition of previous module contracts.** Integration depends only on the **CMSpec interfaces** of:
 
+- **Experiment 0** — validator weights, Byzantine threshold assumption, quorum intersection.
 - **Experiment 1** — blocklace validity, observation, equivocation/exclusion facts.
 - **Experiment 2** — leader selection, block approval, `RatCert` / `SuperRatCert` / `FLCert`.
 - **Experiment 3** — deterministic τord and prefix-validity guarantees.
@@ -237,16 +272,91 @@ Priority dissemination should add:
 
 ---
 
+## 9. Proof-to-Implementation Mapping
+
+**Purpose.** Connect Proofs to Executable Checks. This is a cross-cutting layer, not a numbered experiment: for every Lean theorem above, it records which Rust module the corresponding executable logic lives in and which test concept is expected to exercise it. This keeps the formal statements aligned with the implementation as both evolve.
+
+**Scope.**
+
+- A mapping from each CMSpec theorem (or theorem family) to the Rust implementation file(s) it constrains.
+- A proof-to-test checklist: for every safety property proved in Lean, a named Rust test concept that a reviewer can check exists and passes.
+- A process for flagging drift (a Lean theorem changes but the mapped Rust file/test doesn't, or vice versa).
+
+**Indicative mapping:**
+
+| CMSpec theorem family | Implementation file | Rust test concept |
+|---|---|---|
+| `insert_preserves_parent_closure`, `insert_preserves_acyclicity`, `equivocation_evidence_sound`, `exclusion_persistent`, `honest_chain_linear_order`, `equivocator_exclusion_sound` | `cordiality.rs` | equivocation-detection and DAG-closure tests |
+| `byzantine_threshold_assumption`, `quorum_intersection`, `weighted_quorum_nonempty` | shared/quorum module referenced by `finality.rs` | quorum-intersection and threshold-bound tests |
+| `rat_cert_sound`, `super_rat_cert_sound`, `fl_cert_sound`, `fl_cert_no_conflicting_finalization`, `fl_cert_monotone_append_only` | `finality.rs` | leader-finality-safety and certificate-escalation tests |
+| `tau_ord_deterministic`, `xsort_topological`, `tau_ord_output_valid`, `tau_ord_prefix_consistency` | `ordering.rs` | deterministic-ordering and prefix-consistency tests |
+| `dissemination_preserves_blocklace_validity`, `fair_lane_block_non_starvation`, `bounded_fair_lane_delay` | dissemination module | non-starvation and bounded-delay tests |
+| `wave_non_starvation`, `output_prefix_safety`, `scheduler_refines_tfine` | scheduler module | fairness and prefix-safety tests |
+| `integrated_safety`, `integrated_prefix_consistency`, `integrated_threshold_finality_safety` | integration/top-level module | end-to-end safety regression tests |
+
+### CMRef / tooling
+
+- A machine-checkable checklist (one row per CMSpec theorem) linking Lean predicate name → implementation file → test identifier.
+- Deliverable: a standalone **proof-to-implementation mapping document**, kept alongside the Lean project and updated whenever a theorem or its corresponding Rust file changes.
+
+---
+
 ## Experiment Summary Table
 
 | # | Experiment | Theorems | Conditional | Key CMRef Functions |
 |---|---|---|---|---|
-| 1 | Blocklace Validation & Equivocation | 7 | 0 | `insertBlock`, `detectConflict`, `observes` |
-| 2 | Final-Leader Certificates | 7 | 0 | `selectLeader`, `emitFLCert` |
+| 0 | Weighted Quorum & Threshold Foundations | 5 | 1 | `isQuorum`, `quorumIntersect`, `checkByzantineBound` |
+| 1 | Blocklace Validation & Equivocation | 9 | 0 | `insertBlock`, `detectConflict`, `observes` |
+| 2 | Final-Leader Certificates | 9 | 0 | `selectLeader`, `emitFLCert` |
 | 3 | Deterministic τord & Prefix Proofs | 9 | 2 | `xsort`, `tauOrdPure`, `tauOrdCached` |
 | 4 | Dissemination & Priority Dissemination | 7 | 0 | `buildPackage`, `fairLaneSelect` |
 | 5 | Fair Multi-Wave Scheduler | 9 | 0 | `schedulerStep`, `selectNextTask` |
 | 6 | Integrated System | 5 | 5 (all) | `integratedStep`, `checkSafetyInvariants` |
+| — | Proof-to-Implementation Mapping | n/a (checklist) | n/a | mapping/checklist document |
 
 ---
 
+
+
+## 11. Architecture Diagram
+
+Dependency flow across the experiment series: Experiment 0 grounds Experiment 1, which splits into Experiment 2 and Experiment 4, each feeding one downstream layer (Experiment 3 and Experiment 5 respectively), both of which converge into Experiment 6. The Proof-to-Implementation Mapping (KR5) is cross-cutting and applies to every experiment above it rather than sitting in the dependency chain.
+
+```mermaid
+graph TD
+    E0["Exp 0<br/>Quorum foundations"]
+    E1["Exp 1<br/>Blocklace core"]
+    E2["Exp 2<br/>Final-leader certs"]
+    E4["Exp 4<br/>Dissemination"]
+    E3["Exp 3<br/>τord & prefixes"]
+    E5["Exp 5<br/>Fair scheduler"]
+    E6["Exp 6<br/>Integrated system"]
+    KR5[["KR5 — Proof-to-implementation mapping<br/>(cross-cutting: cordiality.rs, finality.rs, ordering.rs, ...)"]]
+
+    E0 --> E1
+    E1 --> E2
+    E1 --> E4
+    E2 --> E3
+    E4 --> E5
+    E3 --> E6
+    E5 --> E6
+
+    E0 -.-> KR5
+    E1 -.-> KR5
+    E2 -.-> KR5
+    E3 -.-> KR5
+    E4 -.-> KR5
+    E5 -.-> KR5
+    E6 -.-> KR5
+```
+
+**Legend.**
+
+- Solid arrows — CMSpec dependency (later experiment consumes only the CMSpec interface of the earlier one).
+- Dashed arrows — coverage by the cross-cutting KR5 proof-to-implementation mapping, which applies to every experiment.
+- Experiment 0 (foundation): validator weights, Byzantine threshold, quorum intersection.
+- Experiments 1–3 (core protocol correctness): blocklace validity, leader certification, deterministic ordering.
+- Experiments 4–5 (networking and scheduling): dissemination fairness, scheduler fairness.
+- Experiment 6 (integration): conditional end-to-end theorems composing all of the above.
+
+---

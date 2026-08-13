@@ -18,6 +18,12 @@ pub enum PorError {
     DuplicateReputationEntry,
     UnsortedReputationVector,
     LiquidRankOverflow,
+    InvalidTransitionScale,
+    InvalidLiquidRankAlpha,
+    MissingPreviousReputation,
+    ReputationTransitionOverflow,
+    MissingContributionEntry,
+    InvalidTransitionRound,
 }
 
 impl fmt::Display for PorError {
@@ -58,6 +64,33 @@ impl fmt::Display for PorError {
                 write!(f, "reputation vector entries must be sorted by node id")
             }
             Self::LiquidRankOverflow => write!(f, "liquid-rank arithmetic overflowed"),
+            Self::InvalidTransitionScale => {
+                write!(f, "reputation transition scale must be greater than zero")
+            }
+            Self::InvalidLiquidRankAlpha => {
+                write!(f, "liquid-rank alpha must not exceed the fixed-point scale")
+            }
+            Self::MissingPreviousReputation => {
+                write!(
+                    f,
+                    "previous reputation vector is missing a contribution node"
+                )
+            }
+            Self::ReputationTransitionOverflow => {
+                write!(f, "reputation transition arithmetic overflowed")
+            }
+            Self::MissingContributionEntry => {
+                write!(
+                    f,
+                    "contribution vector is missing a previous reputation node"
+                )
+            }
+            Self::InvalidTransitionRound => {
+                write!(
+                    f,
+                    "contribution round must immediately follow the previous reputation round"
+                )
+            }
         }
     }
 }

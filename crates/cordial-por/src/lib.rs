@@ -11,6 +11,7 @@ pub mod matrix;
 pub mod normalization;
 pub mod ratings;
 pub mod state;
+pub mod transition;
 pub mod types;
 pub mod weights;
 
@@ -28,4 +29,5 @@ pub use types::{
     ReputationEntry, ReputationList, ReputationRound, ReputationVector, ReputationWeight,
 };
 
+pub use transition::blend_reputation_transition;
 pub use weights::reputation_weights;

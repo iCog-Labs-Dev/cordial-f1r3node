@@ -40,8 +40,9 @@ use crate::block_translation::BlockMessage;
 use crate::deploy_trace::DeployTracer;
 use crate::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
 use crate::ordered_output::OrderedFinalizedOutput;
+use crate::repository::{BlocklaceRepository, RSpaceBlocklaceRepository, RepoError};
 use crate::shard_conf::CasperShardConf;
-use crate::shared_ordered_output::SharedOrderedOutput;
+use crate::shared_ordered_output::{ReadOrderedOutput, SharedOrderedOutput};
 use crate::snapshot::{
     CasperSnapshot, SnapshotError, build_snapshot, latest_finalized_block_id,
     ordered_block_identities_with_cache, ordered_finalized_block_hashes_with_cache,
@@ -72,6 +73,8 @@ pub enum LiveIngressError {
     Mapping(anyhow::Error),
     Adapter(anyhow::Error),
     Mirror(String),
+    /// Persisting a block or the finalized cursor to the LMDB store failed.
+    Persistence(RepoError),
 }
 
 impl std::fmt::Display for LiveIngressError {
@@ -80,6 +83,7 @@ impl std::fmt::Display for LiveIngressError {
             Self::Mapping(err) => write!(f, "failed to map live BlockMessage: {err}"),
             Self::Adapter(err) => write!(f, "adapter rejected live block: {err}"),
             Self::Mirror(err) => write!(f, "failed to mirror live block: {err}"),
+            Self::Persistence(err) => write!(f, "failed to persist live block: {err}"),
         }
     }
 }
@@ -344,6 +348,51 @@ impl<A> LiveIngress<A> {
         }
     }
 
+    /// Create a live ingress instance pre-hydrated from a persistent block store.
+    ///
+    /// Called once at startup. Replays all blocks from `repo` into the in-memory
+    /// mirror before accepting any new blocks from the live gRPC stream.
+    ///
+    /// Returns the finalized cursor read from the store (if any) so callers can
+    /// log the resume point or skip already-finalized ranges.
+    pub fn with_persistent_store<V>(
+        adapter: A,
+        bonds: HashMap<NodeId, u64>,
+        shard_conf: CasperShardConf,
+        shard_id: impl Into<String>,
+        repo: &RSpaceBlocklaceRepository,
+        verifier: &V,
+    ) -> Result<(Self, Option<BlockIdentity>), RepoError>
+    where
+        V: CryptoVerifier,
+    {
+        let mut mirror = LiveBlocklaceMirror::default();
+        let cursor = repo.recover_into_engine(&mut mirror.blocklace, verifier)?;
+
+        // A store that already held blocks means this process is resuming
+        // live traffic, not starting fresh — reflect that in the phase.
+        let phase = if mirror.blocklace.dom().is_empty() {
+            LiveIngressPhase::Defined
+        } else {
+            LiveIngressPhase::Connected
+        };
+
+        let ingress = Self {
+            phase,
+            adapter,
+            mapper: GrpcBlockMapper::new(),
+            mirror,
+            ordering_cache: OrderingCache::default(),
+            shared_ordered_output: SharedOrderedOutput::new(),
+            bonds,
+            shard_conf,
+            shard_id: shard_id.into(),
+            deploy_tracer: None,
+        };
+
+        Ok((ingress, cursor))
+    }
+
     /// Attach a [`DeployTracer`] so that block ingestion and finalized-output
     /// computation automatically advance the deploy lifecycle state machine.
     ///
@@ -404,6 +453,24 @@ impl<A> LiveIngress<A> {
     /// live ingress instance.
     pub fn ordered_output_reader(&self) -> &SharedOrderedOutput {
         &self.shared_ordered_output
+    }
+
+    /// Persist the current finalized cursor to LMDB.
+    ///
+    /// Should be called after `latest_finalized_ordered_output` returns a
+    /// non-empty anchor.
+    pub fn persist_finalized_cursor(
+        &self,
+        repo: &RSpaceBlocklaceRepository,
+    ) -> Result<(), RepoError> {
+        if let Some(anchor) = self
+            .shared_ordered_output
+            .latest()
+            .and_then(|output| output.anchor.as_ref())
+        {
+            repo.put_finalized_cursor(anchor)?;
+        }
+        Ok(())
     }
 
     /// Replace the bonded validator set used for finality and ordering views.
@@ -505,6 +572,24 @@ impl<A> LiveIngress<A> {
             .map_err(|_| SnapshotError::OrderedOutputPrefixViolation)?;
 
         Ok(output)
+    }
+
+    /// Ingest and persist a trusted block.
+    ///
+    /// Writes to the LMDB store before inserting into the in-memory mirror.
+    /// Crash-safe: a crash between the two leaves the block durable and
+    /// recoverable on next boot.
+    pub fn ingest_and_persist(
+        &mut self,
+        block: Block,
+        repo: &RSpaceBlocklaceRepository,
+    ) -> Result<MirrorUpdate, LiveIngressError>
+    where
+        A: BlocklaceAdapter<BlockIdentity>,
+    {
+        repo.put_block(&block)
+            .map_err(LiveIngressError::Persistence)?;
+        self.ingest_trusted_block(block)
     }
 
     /// Ingest a trusted block that was reconstructed from a live node-facing
