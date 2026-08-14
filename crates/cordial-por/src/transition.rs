@@ -1,10 +1,9 @@
-// Alpha-blended reputation transition.
-//
-// This module blends the current round's Liquid-Rank contribution with the
-// previous reputation vector. It does not clamp values, mutate reputation
-// state, or construct a reputation block.
-
-use cordial_miners_core::NodeId;
+//! Alpha-blended reputation transition.
+//!
+//! This module blends the current round's Liquid-Rank contribution with the
+//! previous reputation vector. Inputs must cover the same canonical node set;
+//! no no-rating fallback is applied. It does not clamp values, mutate
+//! reputation state, or construct a reputation block.
 
 use crate::{
     config::PorConfig,
@@ -12,14 +11,16 @@ use crate::{
     types::{ReputationEntry, ReputationVector, ReputationWeight},
 };
 
-// Blend a Liquid-Rank contribution with the previous reputation vector.
-//
-// For every contribution entry, this computes:
-//
-// `R_next = (alpha * contribution + (scale - alpha) * previous) / scale`
-//
-// Output entries preserve the contribution vector's canonical `NodeId`
-// ordering, and the output round is the contribution round.
+/// Blend a Liquid-Rank contribution with the previous reputation vector.
+///
+/// For every contribution entry, this computes:
+///
+/// `R_next = (alpha * contribution + (scale - alpha) * previous) / scale`
+///
+/// Both vectors must contain the same canonically ordered node set, and the
+/// contribution round must immediately follow the previous reputation round.
+/// The caller must pass the same previous vector used to compute the Liquid-Rank
+/// contribution because that provenance is not encoded in `ReputationVector`.
 pub fn blend_reputation_transition(
     contribution: &ReputationVector,
     previous_reputation: &ReputationVector,
@@ -33,26 +34,35 @@ pub fn blend_reputation_transition(
         return Err(PorError::InvalidLiquidRankAlpha);
     }
 
+    if previous_reputation.round.checked_add(1) != Some(contribution.round) {
+        return Err(PorError::InvalidTransitionRound);
+    }
+
     validate_reputation_order(contribution)?;
     validate_reputation_order(previous_reputation)?;
+    validate_matching_node_sets(contribution, previous_reputation)?;
 
-    let alpha = config.liquid_rank_alpha;
-    let previous_weight = config.scale - config.liquid_rank_alpha;
+    let alpha = u128::from(config.liquid_rank_alpha);
+    let previous_weight = u128::from(config.scale - config.liquid_rank_alpha);
+    let scale = u128::from(config.scale);
     let mut values = Vec::with_capacity(contribution.values.len());
 
-    for contribution_entry in &contribution.values {
-        let previous = reputation_of(previous_reputation, &contribution_entry.node_id)?;
-
+    for (contribution_entry, previous_entry) in
+        contribution.values.iter().zip(&previous_reputation.values)
+    {
         let contribution_term = alpha
-            .checked_mul(contribution_entry.reputation)
+            .checked_mul(u128::from(contribution_entry.reputation))
             .ok_or(PorError::ReputationTransitionOverflow)?;
         let previous_term = previous_weight
-            .checked_mul(previous)
+            .checked_mul(u128::from(previous_entry.reputation))
             .ok_or(PorError::ReputationTransitionOverflow)?;
-        let reputation = contribution_term
+        let blended = contribution_term
             .checked_add(previous_term)
             .ok_or(PorError::ReputationTransitionOverflow)?
-            / config.scale;
+            / scale;
+
+        let reputation = ReputationWeight::try_from(blended)
+            .map_err(|_| PorError::ReputationTransitionOverflow)?;
 
         values.push(ReputationEntry::new(
             contribution_entry.node_id.clone(),
@@ -78,14 +88,28 @@ fn validate_reputation_order(vector: &ReputationVector) -> Result<(), PorError> 
     Ok(())
 }
 
-fn reputation_of(
+fn validate_matching_node_sets(
+    contribution: &ReputationVector,
     previous_reputation: &ReputationVector,
-    node_id: &NodeId,
-) -> Result<ReputationWeight, PorError> {
-    let index = previous_reputation
-        .values
-        .binary_search_by(|entry| entry.node_id.cmp(node_id))
-        .map_err(|_| PorError::MissingPreviousReputation)?;
+) -> Result<(), PorError> {
+    let mut contribution_entries = contribution.values.iter().peekable();
+    let mut previous_entries = previous_reputation.values.iter().peekable();
 
-    Ok(previous_reputation.values[index].reputation)
+    loop {
+        match (contribution_entries.peek(), previous_entries.peek()) {
+            (Some(contribution_entry), Some(previous_entry)) => {
+                match contribution_entry.node_id.cmp(&previous_entry.node_id) {
+                    std::cmp::Ordering::Less => return Err(PorError::MissingPreviousReputation),
+                    std::cmp::Ordering::Equal => {
+                        contribution_entries.next();
+                        previous_entries.next();
+                    }
+                    std::cmp::Ordering::Greater => return Err(PorError::MissingContributionEntry),
+                }
+            }
+            (Some(_), None) => return Err(PorError::MissingPreviousReputation),
+            (None, Some(_)) => return Err(PorError::MissingContributionEntry),
+            (None, None) => return Ok(()),
+        }
+    }
 }

@@ -139,7 +139,7 @@ flowchart TD
 ### Implemented And Future PoR Stages
 
 > **Implementation Note:**  
-> The stages shown with dotted edges in the architecture above are part of the intended PoR architecture described in the paper (arXiv:2108.03542 and related Liquid-Rank literature). The current crate implements the data-preparation path, Liquid-Rank contribution `P = S * R`, and the pure fixed-point alpha-blend transition. The transition does not mutate `ReputationState`, clamp values, or publish blocks.
+> The stages shown with dotted edges in the architecture above are part of the intended PoR architecture described in the paper (arXiv:2108.03542 and related Liquid-Rank literature). The current crate implements the data-preparation path, Liquid-Rank contribution `P = S * R`, and the pure fixed-point alpha-blend transition. The transition requires matching canonical node sets and consecutive rounds. It does not apply a no-rating fallback, mutate `ReputationState`, clamp values, or publish blocks.
 
 - Rating validation and deterministic round batching
 - Rating matrix construction
@@ -162,7 +162,7 @@ flowchart TD
 | `matrix` | Build canonical matrix representation from validated batches | `RatingBatch` | `RatingMatrix` | `types`, `error` | `build_rating_matrix` |
 | `normalization` | Apply Section 4.2 modified normalization per recipient row | `RatingMatrix`, `PorConfig` | `NormalizedRatingMatrix` | `config`, `types`, `error` | `normalize_rating_matrix` |
 | `liquid_rank` | Compute paper-guided contribution vector `P = S * R` | `NormalizedRatingMatrix`, previous `ReputationVector`, `PorConfig` | contribution `ReputationVector` | `config`, `types`, `error` | `compute_liquid_rank_contribution` |
-| `transition` | Blend contribution with previous reputation using checked fixed-point arithmetic | contribution `ReputationVector`, previous `ReputationVector`, `PorConfig` | next-round `ReputationVector` | `config`, `types`, `error` | `blend_reputation_transition` |
+| `transition` | Blend contribution with previous reputation using checked fixed-point arithmetic, matching node sets, and consecutive rounds | contribution `ReputationVector`, previous `ReputationVector`, `PorConfig` | next-round `ReputationVector` | `config`, `types`, `error` | `blend_reputation_transition` |
 | `state` | In-memory reputation map keyed by `NodeId` | round, validator → weight | `ReputationState` | `types` | `new`, `round`, `reputations`, `reputation_of`, `set_reputation` |
 | `weights` | Export current reputation map for the weighted path | `&ReputationState` | `HashMap<NodeId, ReputationWeight>` | `state`, `cordial-miners-core::NodeId` | `reputation_weights` |
 | `error` | PoR validation, matrix, normalization, and calculation errors | — | `PorError` | none | `PorError` variants |
@@ -175,7 +175,7 @@ flowchart TD
 3. A deterministic `RatingMatrix` is built with `build_rating_matrix`.
 4. The matrix is normalized per recipient with `normalize_rating_matrix`.
 5. The Liquid-Rank contribution vector is computed with `compute_liquid_rank_contribution`.
-6. The next vector is computed with `blend_reputation_transition`; this is a pure calculation and does not mutate state.
+6. The next vector is computed with `blend_reputation_transition`, which requires matching canonical node sets and consecutive rounds; this is a pure calculation and does not mutate state.
 7. A `ReputationState` can still be instantiated and exported through `reputation_weights(&state)` for Cordial Miners weighted APIs.
 8. Sigmoid clamping, state mutation, block construction, audit/replay, and consensus selection remain future stages.
 

@@ -22,6 +22,8 @@ pub enum PorError {
     InvalidLiquidRankAlpha,
     MissingPreviousReputation,
     ReputationTransitionOverflow,
+    MissingContributionEntry,
+    InvalidTransitionRound,
 }
 
 impl fmt::Display for PorError {
@@ -76,6 +78,18 @@ impl fmt::Display for PorError {
             }
             Self::ReputationTransitionOverflow => {
                 write!(f, "reputation transition arithmetic overflowed")
+            }
+            Self::MissingContributionEntry => {
+                write!(
+                    f,
+                    "contribution vector is missing a previous reputation node"
+                )
+            }
+            Self::InvalidTransitionRound => {
+                write!(
+                    f,
+                    "contribution round must immediately follow the previous reputation round"
+                )
             }
         }
     }

@@ -1,8 +1,8 @@
 # Proof-of-Reputation Data Structures
 
-This document records the first paper-aligned data model for `cordial-por`.
-It is a guide for the next implementation issue; it should not introduce
-reputation algorithms or Cordial Miners consensus behavior by itself.
+This document records the paper-aligned data model and implemented reputation
+calculation pipeline for `cordial-por`. It does not introduce Cordial Miners
+consensus behavior.
 
 The current pipeline is intentionally narrow:
 
@@ -139,7 +139,7 @@ Planned state:
 
 This file should not implement liquid-rank math. It should expose state access
 and later delegate transitions to dedicated calculation modules. It does not
-apply the transition result in issue #192.
+apply the transition result to reputation state.
 
 ### `src/weights.rs`
 
@@ -168,10 +168,18 @@ The `src/transition.rs` module computes the next vector with:
 R_next_i = (alpha * P_i + (scale - alpha) * R_k_i) / scale
 ```
 
-It requires a previous entry for every contribution node, validates canonical
-`NodeId` ordering, rejects invalid scale or alpha values, and uses checked
-fixed-point arithmetic. The contribution vector supplies the output ordering
+It requires both vectors to contain the same node set in canonical `NodeId`
+order and requires the contribution round to immediately follow the previous
+reputation round. The calculation rejects invalid scale or alpha values and
+uses checked `u128` fixed-point intermediates before converting each result
+back to `ReputationWeight`. The contribution vector supplies the output order
 and round.
+
+This transition uses a strict node-set policy: the contribution and previous
+reputation vectors must contain the same canonical `NodeId` set. A round with
+missing contribution entries is rejected; no fallback or no-rating reputation
+policy is introduced here. Full contribution coverage is an upstream
+requirement.
 
 Future work remains:
 
@@ -184,8 +192,8 @@ Future work remains:
 
 `EquivocationPenalty` and `InactivityPenalty` remain intentionally as Cordial
 integration extensions and are not part of the first reputation calculation
-step. Alpha blending, clamping, reputation updates, and all later
-consensus-selection logic remain future work.
+step. Clamping, reputation updates, and all later consensus-selection logic
+remain future work.
 
 ## Paper-Aligned Structures
 
