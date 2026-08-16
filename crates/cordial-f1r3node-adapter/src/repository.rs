@@ -21,7 +21,7 @@ pub const PRODUCTION_MAP_SIZE: usize = 10 * 1024 * 1024 * 1024;
 /// ## Startup lifecycle
 ///
 /// 1. `let repo = open_block_store(&data_dir)?;`
-/// 2. `let (ingress, cursor) = LiveIngress::with_persistent_store(adapter, &repo, &verifier)?;`
+/// 2. `let (ingress, cursor) = LiveIngress::with_persistent_store(adapter, bonds, shard_conf, shard_id, &repo, &verifier)?;`
 /// 3. Log `cursor` — this is the last known finalized block identity.
 /// 4. Start accepting gRPC blocks via `ingress.ingest_and_persist(block, &repo)`.
 /// 5. After each ordered output advance, call `ingress.persist_finalized_cursor(&repo)`.
@@ -29,8 +29,9 @@ pub const PRODUCTION_MAP_SIZE: usize = 10 * 1024 * 1024 * 1024;
 /// # Example
 /// ```ignore
 /// let repo = open_block_store(&data_dir)?;
-/// repo.recover_into_engine(&mut engine, &verifier)?;
-/// // ... start accepting blocks ...
+/// let (ingress, cursor) = LiveIngress::with_persistent_store(
+///     adapter, bonds, shard_conf, shard_id, &repo, &verifier,
+/// )?;
 /// ```
 pub fn open_block_store(data_dir: &Path) -> Result<RSpaceBlocklaceRepository, RepoError> {
     RSpaceBlocklaceRepository::open(data_dir, PRODUCTION_MAP_SIZE)

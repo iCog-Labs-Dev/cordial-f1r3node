@@ -357,6 +357,9 @@ impl<A> LiveIngress<A> {
     /// log the resume point or skip already-finalized ranges.
     pub fn with_persistent_store<V>(
         adapter: A,
+        bonds: HashMap<NodeId, u64>,
+        shard_conf: CasperShardConf,
+        shard_id: impl Into<String>,
         repo: &RSpaceBlocklaceRepository,
         verifier: &V,
     ) -> Result<(Self, Option<BlockIdentity>), RepoError>
@@ -381,9 +384,9 @@ impl<A> LiveIngress<A> {
             mirror,
             ordering_cache: OrderingCache::default(),
             shared_ordered_output: SharedOrderedOutput::new(),
-            bonds: HashMap::new(),
-            shard_conf: CasperShardConf::default(),
-            shard_id: String::from("root"),
+            bonds,
+            shard_conf,
+            shard_id: shard_id.into(),
             deploy_tracer: None,
         };
 

@@ -20,6 +20,7 @@ use std::collections::{HashMap, HashSet};
 use cordial_f1r3node_adapter::grpc_ingest::BlocklaceAdapter;
 use cordial_f1r3node_adapter::live_ingress::{AlreadyValidatedVerifier, LiveIngress};
 use cordial_f1r3node_adapter::repository::{BlocklaceRepository, RSpaceBlocklaceRepository};
+use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 use cordial_miners_core::Block;
 use cordial_miners_core::crypto::hash_content;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
@@ -100,9 +101,15 @@ fn live_ingress_blocks_survive_restart() {
 
     {
         let repo = open_repo(dir.path());
-        let (mut ingress, cursor) =
-            LiveIngress::with_persistent_store(TestAdapter, &repo, &AlreadyValidatedVerifier)
-                .expect("fresh store should hydrate cleanly");
+        let (mut ingress, cursor) = LiveIngress::with_persistent_store(
+            TestAdapter,
+            HashMap::new(),
+            CasperShardConf::default(),
+            "root",
+            &repo,
+            &AlreadyValidatedVerifier,
+        )
+        .expect("fresh store should hydrate cleanly");
         assert_eq!(cursor, None, "fresh store must have no finalized cursor");
 
         for block in &blocks {
@@ -116,9 +123,15 @@ fn live_ingress_blocks_survive_restart() {
 
     {
         let repo = open_repo(dir.path());
-        let (ingress, _cursor) =
-            LiveIngress::with_persistent_store(TestAdapter, &repo, &AlreadyValidatedVerifier)
-                .expect("reopened store should hydrate from disk");
+        let (ingress, _cursor) = LiveIngress::with_persistent_store(
+            TestAdapter,
+            HashMap::new(),
+            CasperShardConf::default(),
+            "root",
+            &repo,
+            &AlreadyValidatedVerifier,
+        )
+        .expect("reopened store should hydrate from disk");
 
         let dom: HashSet<BlockIdentity> = ingress.blocklace().dom().into_iter().cloned().collect();
         for block in &blocks {
@@ -146,10 +159,15 @@ fn finalized_cursor_survives_restart() {
 
     let original_anchor = {
         let repo = open_repo(dir.path());
-        let (mut ingress, _cursor) =
-            LiveIngress::with_persistent_store(TestAdapter, &repo, &AlreadyValidatedVerifier)
-                .expect("fresh store should hydrate cleanly");
-        ingress.set_bonds(bonds.clone());
+        let (mut ingress, _cursor) = LiveIngress::with_persistent_store(
+            TestAdapter,
+            bonds.clone(),
+            CasperShardConf::default(),
+            "root",
+            &repo,
+            &AlreadyValidatedVerifier,
+        )
+        .expect("fresh store should hydrate cleanly");
 
         for block in &blocks {
             ingress
@@ -160,10 +178,16 @@ fn finalized_cursor_survives_restart() {
         let output = ingress
             .latest_finalized_ordered_output(WAVELENGTH)
             .expect("ordered output should be computable");
-        let anchor = output
-            .anchor
-            .clone()
-            .expect("three sequential blocks from one validator should finalize an anchor");
+        assert!(
+            output.anchor.is_some(),
+            "{} sequential blocks from one validator complete wave 0 (rounds 0..={}) \
+            at WAVELENGTH={}, which hits the deterministic single-validator fast path \
+            in snapshot.rs::single_validator_leader — not probabilistic self-ratification",
+            blocks.len(),
+            WAVELENGTH - 1,
+            WAVELENGTH
+        );
+        let anchor = output.anchor.clone().unwrap();
 
         ingress
             .persist_finalized_cursor(&repo)
@@ -174,9 +198,15 @@ fn finalized_cursor_survives_restart() {
     };
 
     let repo = open_repo(dir.path());
-    let (_ingress, cursor) =
-        LiveIngress::with_persistent_store(TestAdapter, &repo, &AlreadyValidatedVerifier)
-            .expect("reopened store should hydrate from disk");
+    let (_ingress, cursor) = LiveIngress::with_persistent_store(
+        TestAdapter,
+        bonds.clone(),
+        CasperShardConf::default(),
+        "root",
+        &repo,
+        &AlreadyValidatedVerifier,
+    )
+    .expect("reopened store should hydrate from disk");
 
     assert_eq!(
         cursor,
@@ -213,9 +243,15 @@ fn recovery_replays_in_topo_order_into_mirror() {
     }
 
     let repo = open_repo(dir.path());
-    let (ingress, _cursor) =
-        LiveIngress::with_persistent_store(TestAdapter, &repo, &AlreadyValidatedVerifier)
-            .expect("recovery should replay out-of-order blocks");
+    let (ingress, _cursor) = LiveIngress::with_persistent_store(
+        TestAdapter,
+        HashMap::new(),
+        CasperShardConf::default(),
+        "root",
+        &repo,
+        &AlreadyValidatedVerifier,
+    )
+    .expect("recovery should replay out-of-order blocks");
 
     for block in [&genesis, &block_a, &block_b, &block_c] {
         assert!(
@@ -284,9 +320,15 @@ fn recovery_skips_corrupt_lmdb_entries_without_panic() {
     }
 
     let repo = open_repo(dir.path());
-    let (mut ingress, cursor) =
-        LiveIngress::with_persistent_store(TestAdapter, &repo, &AlreadyValidatedVerifier)
-            .expect("recovery must not panic or error on corrupt entries");
+    let (mut ingress, cursor) = LiveIngress::with_persistent_store(
+        TestAdapter,
+        HashMap::new(),
+        CasperShardConf::default(),
+        "root",
+        &repo,
+        &AlreadyValidatedVerifier,
+    )
+    .expect("recovery must not panic or error on corrupt entries");
 
     assert_eq!(cursor, None);
     assert!(
