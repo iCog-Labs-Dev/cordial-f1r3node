@@ -199,9 +199,9 @@ fn recovery_replays_in_topo_order_into_mirror() {
     let creator = validator(3);
 
     let genesis = make_block(&creator, 0x00, &[]);
-    let block_a = make_block(&creator, 0x01, &[genesis.identity.clone()]);
-    let block_b = make_block(&creator, 0x02, &[genesis.identity.clone()]);
-    let block_c = make_block(&creator, 0x03, &[block_a.identity.clone()]);
+    let block_a = make_block(&creator, 0x01, std::slice::from_ref(&genesis.identity));
+    let block_b = make_block(&creator, 0x02, std::slice::from_ref(&genesis.identity));
+    let block_c = make_block(&creator, 0x03, std::slice::from_ref(&block_a.identity));
 
     {
         let repo = open_repo(dir.path());
@@ -296,7 +296,7 @@ fn recovery_skips_corrupt_lmdb_entries_without_panic() {
 
     // The instance must remain fully usable after a recovery that hit
     // corruption — prove it by ingesting a fresh block.
-    let next = make_block(&creator, 0x01, &[good.identity.clone()]);
+    let next = make_block(&creator, 0x01, std::slice::from_ref(&good.identity));
     ingress
         .ingest_and_persist(next.clone(), &repo)
         .expect("live ingress must stay usable after recovering past corrupt entries");
