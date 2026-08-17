@@ -145,7 +145,10 @@ mod tests {
         // independent regression constant for scale = 1_000_000_000:
         // expected approximate clamp(0.2) = 196_116_135
         let expected = 196_116_135u64;
-        assert_eq!(out, expected, "small-value clamp should match regression constant");
+        assert_eq!(
+            out, expected,
+            "small-value clamp should match regression constant"
+        );
     }
 
     #[test]
