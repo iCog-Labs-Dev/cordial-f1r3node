@@ -114,7 +114,7 @@ fn clamp_perfect_square_sum_behavior() {
 // Preserve the explicit overflow test (already present)
 #[test]
 fn overflow_on_intermediate_addition_returns_error() {
-    let big = std::u64::MAX;
+    let big = u64::MAX;
     // direct scalar clamp should return Err(PorError::ClampOverflow)
     match clamp_reputation_value(big, big) {
         Err(PorError::ClampOverflow) => {}

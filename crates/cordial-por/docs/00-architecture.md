@@ -139,15 +139,15 @@ flowchart TD
 ### Implemented And Future PoR Stages
 
 > **Implementation Note:**  
-> The stages shown with dotted edges in the architecture above are part of the intended PoR architecture described in the paper (arXiv:2108.03542 and related Liquid-Rank literature). The current crate implements the data-preparation path, Liquid-Rank contribution `P = S * R`, and the pure fixed-point alpha-blend transition. The transition requires matching canonical node sets and consecutive rounds. It does not apply a no-rating fallback, mutate `ReputationState`, clamp values, or publish blocks.
+> The stages shown with dotted edges in the architecture above are part of the intended PoR architecture described in the paper (arXiv:2108.03542 and related Liquid-Rank literature). The current crate implements the data-preparation path, Liquid-Rank contribution `P = S * R`, the pure fixed-point alpha-blend transition, and deterministic fixed-point sigmoid clamping. The transition requires matching canonical node sets and consecutive rounds. These stages do not apply a no-rating fallback, mutate `ReputationState`, or publish blocks.
 
 - Rating validation and deterministic round batching
 - Rating matrix construction
 - Paper-guided rating normalization
 - Liquid-Rank contribution calculation
 - Alpha-blended reputation transition
+- Deterministic sigmoid clamping
 - Penalties / slashing
-- Clamping / fixed-point conversion (beyond the scale constant already present)
 - Reputation state application
 - Reputation block / audit path
 - Committee selection
@@ -163,6 +163,7 @@ flowchart TD
 | `normalization` | Apply Section 4.2 modified normalization per recipient row | `RatingMatrix`, `PorConfig` | `NormalizedRatingMatrix` | `config`, `types`, `error` | `normalize_rating_matrix` |
 | `liquid_rank` | Compute paper-guided contribution vector `P = S * R` | `NormalizedRatingMatrix`, previous `ReputationVector`, `PorConfig` | contribution `ReputationVector` | `config`, `types`, `error` | `compute_liquid_rank_contribution` |
 | `transition` | Blend contribution with previous reputation using checked fixed-point arithmetic, matching node sets, and consecutive rounds | contribution `ReputationVector`, previous `ReputationVector`, `PorConfig` | next-round `ReputationVector` | `config`, `types`, `error` | `blend_reputation_transition` |
+| `clamp` | Apply deterministic fixed-point sigmoid clamp to reputation values | `ReputationVector`, `PorConfig` | clamped `ReputationVector` | `config`, `types`, `error` | `clamp_reputation_value`, `clamp_reputation_vector` |
 | `state` | In-memory reputation map keyed by `NodeId` | round, validator → weight | `ReputationState` | `types` | `new`, `round`, `reputations`, `reputation_of`, `set_reputation` |
 | `weights` | Export current reputation map for the weighted path | `&ReputationState` | `HashMap<NodeId, ReputationWeight>` | `state`, `cordial-miners-core::NodeId` | `reputation_weights` |
 | `error` | PoR validation, matrix, normalization, and calculation errors | — | `PorError` | none | `PorError` variants |
@@ -176,8 +177,9 @@ flowchart TD
 4. The matrix is normalized per recipient with `normalize_rating_matrix`.
 5. The Liquid-Rank contribution vector is computed with `compute_liquid_rank_contribution`.
 6. The next vector is computed with `blend_reputation_transition`, which requires matching canonical node sets and consecutive rounds; this is a pure calculation and does not mutate state.
-7. A `ReputationState` can still be instantiated and exported through `reputation_weights(&state)` for Cordial Miners weighted APIs.
-8. Sigmoid clamping, state mutation, block construction, audit/replay, and consensus selection remain future stages.
+7. The next vector can be clamped with `clamp_reputation_vector`; this is also a pure calculation and does not mutate state.
+8. A `ReputationState` can still be instantiated and exported through `reputation_weights(&state)` for Cordial Miners weighted APIs.
+9. State mutation, block construction, audit/replay, and consensus selection remain future stages.
 
 ## Ownership Boundaries
 
@@ -185,9 +187,9 @@ flowchart TD
 
 - Reputation state representation (`ReputationState`).
 - Fixed-point scale and initial-reputation configuration.
-- Rating validation, deterministic matrix construction, paper-guided rating normalization, Liquid-Rank contribution calculation, and pure alpha-blend transition calculation.
+- Rating validation, deterministic matrix construction, paper-guided rating normalization, Liquid-Rank contribution calculation, pure alpha-blend transition calculation, and deterministic sigmoid clamping.
 - Conversion of the current reputation map into the weight map expected by Cordial Miners.
-- Future PoR algorithms (penalties, clamping, reputation blocks, audit, and selection) once implemented.
+- Future PoR algorithms (penalties, reputation blocks, audit, and selection) once implemented.
 
 ### cordial-por does NOT own
 
@@ -250,7 +252,7 @@ All of the above remain the exclusive responsibility of `cordial-miners-core`. T
 
 - **Current implementation:** `PorConfig::DEFAULT_SCALE = 1_000_000_000`.
 - **Paper design:** Liquid Rank produces real-valued ranks that must be scaled for integer arithmetic.
-- **Future work:** Confirm clamping rules and overflow behaviour for reputation-state application after the pure transition calculation.
+- **Current clamp policy:** Deterministic fixed-point clamping uses integer square root, rejects zero scale, and reports checked arithmetic overflow as `PorError::ClampOverflow`.
 
 ### Reputation sidechain vs payload references
 
@@ -262,7 +264,7 @@ All of the above remain the exclusive responsibility of `cordial-miners-core`. T
 
 Logical extension points that do not yet exist:
 
-- Applying the alpha-blended vector to reputation state after the `P = S * R` contribution step.
+- Applying the clamped reputation vector to reputation state after the `P = S * R` contribution and transition steps.
 - Penalty / slashing application that mutates `ReputationState`.
 - Reputation-block construction and audit trail.
 - Committee selection policy that filters the exported weight map.

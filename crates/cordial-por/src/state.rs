@@ -1,8 +1,11 @@
 use cordial_miners_core::NodeId;
 
-use crate::types::{
-    RatingRecord, ReputationBlock, ReputationEntry, ReputationList, ReputationRound,
-    ReputationWeight,
+use crate::{
+    error::PorError,
+    types::{
+        RatingRecord, ReputationBlock, ReputationEntry, ReputationList, ReputationRound,
+        ReputationVector, ReputationWeight,
+    },
 };
 
 /// Local Proof-of-Reputation state.
@@ -76,10 +79,40 @@ impl ReputationState {
             }
         }
     }
+
+    /// Apply a finalized reputation vector as the current state snapshot.
+    ///
+    /// The vector is expected to be the already-computed output of the
+    /// calculation pipeline. This method validates canonical ordering and then
+    /// replaces the state's reputation list; it does not recompute ratings,
+    /// Liquid Rank, transition, or clamping.
+    pub fn apply_reputation_vector(&mut self, vector: &ReputationVector) -> Result<(), PorError> {
+        validate_reputation_vector(vector)?;
+
+        self.current_round = vector.round;
+        self.reputation_list = ReputationList {
+            round: vector.round,
+            entries: vector.values.clone(),
+        };
+
+        Ok(())
+    }
 }
 
 impl Default for ReputationState {
     fn default() -> Self {
         Self::new(0)
     }
+}
+
+fn validate_reputation_vector(vector: &ReputationVector) -> Result<(), PorError> {
+    for entries in vector.values.windows(2) {
+        match entries[0].node_id.cmp(&entries[1].node_id) {
+            std::cmp::Ordering::Less => {}
+            std::cmp::Ordering::Equal => return Err(PorError::DuplicateReputationEntry),
+            std::cmp::Ordering::Greater => return Err(PorError::UnsortedReputationVector),
+        }
+    }
+
+    Ok(())
 }
