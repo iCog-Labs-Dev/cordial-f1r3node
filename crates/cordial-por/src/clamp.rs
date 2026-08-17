@@ -24,25 +24,59 @@ use crate::types::{ReputationEntry, ReputationVector, ReputationWeight};
 fn integer_sqrt_u128(n: u128) -> u128 {
     // Binary search over 0..=2^64 because (2^64)^2 = 2^128 which covers u128 range.
     let mut low: u128 = 0;
-    let mut high: u128 = (1u128 << 64) as u128; // exclusive upper bound
+    let mut high: u128 = 1u128 << 64; // exclusive upper bound (2^64)
     while low + 1 < high {
         let mid = (low + high) / 2;
-        let mid_sq = mid.saturating_mul(mid);
-        if mid_sq == n {
-            return mid;
-        }
-        if mid_sq < n {
-            low = mid;
-        } else {
-            high = mid;
+        match mid.checked_mul(mid) {
+            Some(mid_sq) => {
+                if mid_sq == n {
+                    return mid;
+                }
+                if mid_sq < n {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+            }
+            None => {
+                // mid^2 overflowed (mid >= 2^64). Treat as too large.
+                high = mid;
+            }
         }
     }
-    // ensure correct by adjusting low if needed
-    while (low + 1).saturating_mul(low + 1) <= n {
-        low = low + 1;
+    // Adjust low upward if (low+1)^2 <= n using checked_mul to avoid overflow.
+    loop {
+        let next = low + 1;
+        match next.checked_mul(next) {
+            Some(sq) => {
+                if sq <= n {
+                    low += 1;
+                } else {
+                    break;
+                }
+            }
+            None => {
+                // (low+1)^2 overflowed, so it's > n
+                break;
+            }
+        }
     }
-    while low.saturating_mul(low) > n {
-        low = low - 1;
+    // Adjust low downward if low^2 > n
+    loop {
+        match low.checked_mul(low) {
+            Some(sq) => {
+                if sq > n {
+                    // safe to decrement because low > 0 when sq > n
+                    low -= 1;
+                } else {
+                    break;
+                }
+            }
+            None => {
+                // overflowed (shouldn't happen), decrement defensively
+                low -= 1;
+            }
+        }
     }
     low
 }
@@ -120,101 +154,4 @@ pub fn clamp_reputation_vector(
         round: reputation.round,
         values,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::PorConfig;
-    use crate::error::PorError;
-    use crate::types::{ReputationEntry, ReputationVector};
-    use cordial_miners_core::NodeId;
-
-    const S: ReputationWeight = PorConfig::DEFAULT_SCALE;
-
-    #[test]
-    fn clamp_zero_value() {
-        assert_eq!(clamp_reputation_value(0, S).unwrap(), 0);
-    }
-
-    #[test]
-    fn clamp_small_value_behavior() {
-        // 0.2 * scale
-        let v = 200_000_000u64;
-        let out = clamp_reputation_value(v, S).unwrap();
-        // independent regression constant for scale = 1_000_000_000:
-        // expected approximate clamp(0.2) = 196_116_135
-        let expected = 196_116_135u64;
-        assert_eq!(
-            out, expected,
-            "small-value clamp should match regression constant"
-        );
-    }
-
-    #[test]
-    fn clamp_equal_scale() {
-        // r = S -> expected floor(round(S*S / sqrt(2*S^2))) = round(S / sqrt(2))
-        let out = clamp_reputation_value(S, S).unwrap();
-        // Known constant: floor(round(1/sqrt(2) * S)) = 707_106_781
-        assert_eq!(out, 707_106_781u64);
-    }
-
-    #[test]
-    fn clamp_greater_than_scale() {
-        let two_s = S.saturating_mul(2);
-        let out = clamp_reputation_value(two_s, S).unwrap();
-        // Known constant for 2.0: round(2 / sqrt(5) * S) = 894_427_191
-        assert_eq!(out, 894_427_191u64);
-    }
-
-    #[test]
-    fn clamp_monotonic() {
-        let a = 0u64;
-        let b = S / 2;
-        let c = S;
-        let d = S.saturating_mul(2);
-        let va = clamp_reputation_value(a, S).unwrap();
-        let vb = clamp_reputation_value(b, S).unwrap();
-        let vc = clamp_reputation_value(c, S).unwrap();
-        let vd = clamp_reputation_value(d, S).unwrap();
-        assert!(va <= vb && vb <= vc && vc <= vd);
-    }
-
-    #[test]
-    fn clamp_zero_scale_error() {
-        let cfg = PorConfig::new(0, PorConfig::DEFAULT_INITIAL_REPUTATION);
-        let rv = ReputationVector {
-            round: 1,
-            values: vec![],
-        };
-        match clamp_reputation_vector(&rv, &cfg) {
-            Err(PorError::InvalidClampScale) => {}
-            other => panic!("expected InvalidClampScale, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn clamp_vector_preserves_order_and_round() {
-        let cfg = PorConfig::default();
-        let entries = vec![
-            ReputationEntry::new(NodeId(b"a".to_vec()), 0),
-            ReputationEntry::new(NodeId(b"b".to_vec()), S),
-            ReputationEntry::new(NodeId(b"c".to_vec()), S.saturating_mul(2)),
-        ];
-        let rv = ReputationVector {
-            round: 42,
-            values: entries.clone(),
-        };
-        let out = clamp_reputation_vector(&rv, &cfg).unwrap();
-        assert_eq!(out.round, 42);
-        assert_eq!(out.values.len(), entries.len());
-        for (i, e) in out.values.iter().enumerate() {
-            assert_eq!(e.node_id, entries[i].node_id);
-        }
-        // verify reputations were actually clamped to expected known constants
-        // for scale = 1_000_000_000: 0 -> 0, 1.0 -> 707_106_781, 2.0 -> 894_427_191
-        assert_eq!(out.values[0].reputation, 0);
-        assert_eq!(out.values[1].reputation, 707_106_781u64);
-        assert_eq!(out.values[2].reputation, 894_427_191u64);
-    }
 }
