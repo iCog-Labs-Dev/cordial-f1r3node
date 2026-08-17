@@ -17,3 +17,16 @@ serde_json.workspace = true
 
 [dev-dependencies]
 proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "leader_lookup"
+harness = false
+
+[[bench]]
+name = "tau_ordering"
+harness = false
+
+[[bench]]
+name = "height_bootstrap"
+harness = false
