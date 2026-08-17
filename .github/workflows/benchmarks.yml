@@ -2,7 +2,7 @@ name: Benchmarks
 
 on:
   push:
-    branches: ["master", "dev"]
+    branches: ["master"]
 
 env:
   CARGO_TERM_COLOR: always
