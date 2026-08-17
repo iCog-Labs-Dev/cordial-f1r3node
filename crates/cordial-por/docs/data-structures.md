@@ -13,6 +13,7 @@ rating transactions
   -> normalized rating matrix
   -> liquid-rank contribution vector
   -> alpha-blended next reputation vector
+  -> clamped reputation vector
 ```
 
 This stage validates `RatingRecord` instances and assembles a single-round
@@ -27,11 +28,13 @@ previous reputation vector.
 The module `src/transition.rs` blends that contribution with the previous
 reputation using `PorConfig::liquid_rank_alpha` and the fixed-point scale. It
 returns a new deterministic vector and does not mutate `ReputationState`.
+The module `src/clamp.rs` applies the paper-guided sigmoid clamp using
+deterministic fixed-point integer arithmetic.
 
 Rating matrix construction and normalization are still data preparation only.
-The liquid-rank contribution calculation is the first calculation stage, but it
-does not clamp, mutate reputation state, or materialize a dense matrix. The
-transition stage computes a new vector but does not commit it to state.
+The liquid-rank, transition, and clamp stages are pure calculation stages. They
+do not mutate reputation state or materialize a dense matrix. The calculated
+vectors are not committed to `ReputationState` in this stage.
 
 ## Paper Reference
 
@@ -58,13 +61,15 @@ rating transactions
   -> previous reputation vector R
   -> liquid-rank reputation contribution P
   -> alpha-blended next reputation vector
+  -> clamped reputation vector
   -> reputation list
   -> reputation block
 ```
 
 The current implementation is in scope through normalized rating matrix
-construction, liquid-rank contribution calculation, and pure alpha blending.
-Clamping, reputation-state mutation, and publication remain future work.
+construction, liquid-rank contribution calculation, pure alpha blending, and
+deterministic fixed-point clamping. Reputation-state mutation and publication
+remain future work.
 
 ## File-Level Plan
 
@@ -181,10 +186,25 @@ missing contribution entries is rejected; no fallback or no-rating reputation
 policy is introduced here. Full contribution coverage is an upstream
 requirement.
 
+The `src/clamp.rs` module applies the paper sigmoid-style clamp with:
+
+```text
+R_clamped = R / sqrt(1 + R^2)
+```
+
+Fixed-point form:
+
+```text
+clamp_fixed = round((r * scale) / sqrt(scale^2 + r^2))
+```
+
+It uses deterministic integer arithmetic only, rejects zero scale, reports
+checked arithmetic overflow as `PorError::ClampOverflow`, preserves vector
+round and ordering, and does not mutate `ReputationState`.
+
 Future work remains:
 
 - applying the calculated vector to `ReputationState`
-- sigmoid clamping and policy-specific bounds
 - `src/block.rs`: reputation block construction helpers
 - `src/audit.rs`: replay and transition verification
 - `src/committee.rs`: consensus group selection
@@ -192,8 +212,8 @@ Future work remains:
 
 `EquivocationPenalty` and `InactivityPenalty` remain intentionally as Cordial
 integration extensions and are not part of the first reputation calculation
-step. Clamping, reputation updates, and all later consensus-selection logic
-remain future work.
+step. Reputation updates and all later consensus-selection logic remain future
+work.
 
 ## Paper-Aligned Structures
 
@@ -407,7 +427,6 @@ should later implement deterministic leader selection policy.
 Do not include these in the current normalization stage:
 
 - Liquid-rank calculation implementation
-- Reputation clamping implementation
 - Committee selection implementation
 - Leader selection implementation
 - Cordial Miners approval, ratification, finality, or tau ordering
