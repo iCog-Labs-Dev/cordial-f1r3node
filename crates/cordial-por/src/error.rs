@@ -27,6 +27,10 @@ pub enum PorError {
     // Clamp-specific errors
     InvalidClampScale,
     ClampOverflow,
+    // Reputation-block-specific errors
+    InvalidReputationBlockRound,
+    MissingReputationBlockRatingsHash,
+    MissingReputationBlockRoot,
 }
 
 impl fmt::Display for PorError {
@@ -96,6 +100,16 @@ impl fmt::Display for PorError {
             }
             Self::InvalidClampScale => write!(f, "clamp scale must be greater than zero"),
             Self::ClampOverflow => write!(f, "clamp arithmetic overflowed"),
+            Self::InvalidReputationBlockRound => write!(
+                f,
+                "reputation block header round does not match the reputation list round"
+            ),
+            Self::MissingReputationBlockRatingsHash => {
+                write!(f, "reputation block ratings hash is empty")
+            }
+            Self::MissingReputationBlockRoot => {
+                write!(f, "reputation block root is empty")
+            }
         }
     }
 }
