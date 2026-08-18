@@ -52,3 +52,11 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bench]]
 name = "ordered_output"
 harness = false
+
+[[bench]]
+name = "block_translation"
+harness = false
+
+[[bench]]
+name = "lmdb_persistence"
+harness = false
