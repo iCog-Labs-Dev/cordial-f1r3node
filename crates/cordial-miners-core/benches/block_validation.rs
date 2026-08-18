@@ -112,7 +112,7 @@ fn bench_validate_block_default_config(c: &mut Criterion) {
 }
 
 fn bench_validate_block_strict_config(c: &mut Criterion) {
-    let sizes: &[usize] = &[100, 1_000, 5_000];
+    let sizes: &[usize] = &[50, 250, 1_000];
 
     let mut group = c.benchmark_group("block_validation/validate_strict");
     group.sample_size(20);
@@ -136,7 +136,7 @@ fn bench_validate_block_strict_config(c: &mut Criterion) {
 }
 
 fn bench_validated_insert(c: &mut Criterion) {
-    let sizes: &[usize] = &[100, 1_000, 5_000];
+    let sizes: &[usize] = &[50, 250, 1_000];
 
     let mut group = c.benchmark_group("block_validation/validated_insert");
     group.sample_size(20);
