@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
@@ -11,6 +11,10 @@ use cordial_miners_core::execution::{
     ExecutionResult, RuntimeError, RuntimeManager, SystemDeployRequest, compute_deploys_in_scope,
 };
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
+use models::casper::{ProcessedSystemDeployProto, system_deploy_data_proto::SystemDeploy};
+use prost::Message;
+
+use crate::slashing::SlashDeployFormatter;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProposeError {
@@ -19,6 +23,7 @@ pub enum ProposeError {
     Sign(String),
     Broadcast(String),
     PayloadDecode(String),
+    SlashFormat(String),
 }
 
 impl std::fmt::Display for ProposeError {
@@ -29,6 +34,7 @@ impl std::fmt::Display for ProposeError {
             Self::Sign(msg) => write!(f, "signing failed: {msg}"),
             Self::Broadcast(msg) => write!(f, "broadcast failed: {msg}"),
             Self::PayloadDecode(msg) => write!(f, "payload decode failed: {msg}"),
+            Self::SlashFormat(msg) => write!(f, "slash deploy formatting failed: {msg}"),
         }
     }
 }
@@ -41,6 +47,11 @@ pub trait TipSelector {
         blocklace: &Blocklace,
         bonds: &HashMap<NodeId, u64>,
     ) -> HashSet<BlockIdentity>;
+}
+
+/// Exposes equivocation evidence retained by the pure Cordial core.
+pub trait EvidenceSource {
+    fn pending_evidence(&mut self) -> Vec<CordialEquivocationEvidence>;
 }
 
 pub trait ExecutionEngine {
@@ -321,18 +332,79 @@ fn compare_identity(a: &BlockIdentity, b: &BlockIdentity) -> std::cmp::Ordering 
         .then_with(|| a.signature.cmp(&b.signature))
 }
 
-pub struct CordialProposer<TS, EE, BS, BC> {
+fn slash_system_deploys<ES, SF>(
+    evidence_source: &mut ES,
+    slash_formatter: &SF,
+) -> Result<Vec<SystemDeployRequest>, ProposeError>
+where
+    ES: EvidenceSource,
+    SF: SlashDeployFormatter<NodeId, Block, BlockIdentity>,
+{
+    let evidence = evidence_source.pending_evidence();
+    if evidence.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let formatted = slash_formatter
+        .to_slash_system_deploys(&evidence)
+        .map_err(|err| ProposeError::SlashFormat(err.to_string()))?;
+
+    if formatted.len() != evidence.len() {
+        return Err(ProposeError::SlashFormat(format!(
+            "formatter returned {} slash deploys for {} evidence records",
+            formatted.len(),
+            evidence.len()
+        )));
+    }
+
+    evidence
+        .iter()
+        .zip(formatted.iter())
+        .map(|(record, bytes)| decode_slash_system_deploy(record, bytes))
+        .collect()
+}
+
+fn decode_slash_system_deploy(
+    record: &CordialEquivocationEvidence,
+    bytes: &[u8],
+) -> Result<SystemDeployRequest, ProposeError> {
+    let proto = ProcessedSystemDeployProto::decode(bytes)
+        .map_err(|err| ProposeError::SlashFormat(err.to_string()))?;
+    let system_deploy = proto
+        .system_deploy
+        .and_then(|data| data.system_deploy)
+        .ok_or_else(|| ProposeError::SlashFormat("missing slash system deploy".to_string()))?;
+
+    let SystemDeploy::SlashSystemDeploy(slash) = system_deploy else {
+        return Err(ProposeError::SlashFormat(
+            "formatted system deploy is not a slash deploy".to_string(),
+        ));
+    };
+
+    let invalid_block_hash = slash.invalid_block_hash.to_vec();
+    SystemDeployRequest::validate_invalid_block_hash(&invalid_block_hash)
+        .map_err(ProposeError::SlashFormat)?;
+
+    Ok(SystemDeployRequest::Slash {
+        validator: record.validator.clone(),
+        invalid_block_hash,
+    })
+}
+
+pub struct CordialProposer<TS, EE, BS, BC, ES = NoEvidenceSource, SF = NoopSlashFormatter> {
     tip_selector: TS,
     execution: EE,
     signer: BS,
     broadcaster: BC,
+    evidence_source: ES,
+    slash_formatter: SF,
     creator: NodeId,
     bonds: HashMap<NodeId, u64>,
     deploy_pool_config: DeployPoolConfig,
     include_close_block: bool,
 }
 
-impl<TS, EE, BS, BC> CordialProposer<TS, EE, BS, BC> {
+impl<TS, EE, BS, BC> CordialProposer<TS, EE, BS, BC, NoEvidenceSource, NoopSlashFormatter> {
     pub fn new(
         tip_selector: TS,
         execution: EE,
@@ -347,10 +419,33 @@ impl<TS, EE, BS, BC> CordialProposer<TS, EE, BS, BC> {
             execution,
             signer,
             broadcaster,
+            evidence_source: NoEvidenceSource,
+            slash_formatter: NoopSlashFormatter,
             creator,
             bonds,
             deploy_pool_config,
             include_close_block: true,
+        }
+    }
+}
+
+impl<TS, EE, BS, BC, ES, SF> CordialProposer<TS, EE, BS, BC, ES, SF> {
+    pub fn with_slashing<NES, NSF>(
+        self,
+        evidence_source: NES,
+        slash_formatter: NSF,
+    ) -> CordialProposer<TS, EE, BS, BC, NES, NSF> {
+        CordialProposer {
+            tip_selector: self.tip_selector,
+            execution: self.execution,
+            signer: self.signer,
+            broadcaster: self.broadcaster,
+            evidence_source,
+            slash_formatter,
+            creator: self.creator,
+            bonds: self.bonds,
+            deploy_pool_config: self.deploy_pool_config,
+            include_close_block: self.include_close_block,
         }
     }
 
@@ -360,12 +455,14 @@ impl<TS, EE, BS, BC> CordialProposer<TS, EE, BS, BC> {
     }
 }
 
-impl<TS, EE, BS, BC> CordialProposer<TS, EE, BS, BC>
+impl<TS, EE, BS, BC, ES, SF> CordialProposer<TS, EE, BS, BC, ES, SF>
 where
     TS: TipSelector,
     EE: ExecutionEngine,
     BS: BlockSigner,
     BC: BlockBroadcaster,
+    ES: EvidenceSource,
+    SF: SlashDeployFormatter<NodeId, Block, BlockIdentity>,
 {
     pub fn propose(
         &mut self,
@@ -384,6 +481,12 @@ where
             derive_chain_head(blocklace, &predecessors)?
         };
 
+        let mut system_deploys =
+            slash_system_deploys(&mut self.evidence_source, &self.slash_formatter)?;
+        if self.include_close_block {
+            system_deploys.push(SystemDeployRequest::CloseBlock);
+        }
+
         let deploys_in_scope = compute_deploys_in_scope(
             blocklace,
             &predecessors,
@@ -392,11 +495,6 @@ where
         );
 
         let selected = deploy_pool.select_for_block(block_number, 0, &deploys_in_scope);
-
-        let mut system_deploys = Vec::new();
-        if self.include_close_block {
-            system_deploys.push(SystemDeployRequest::CloseBlock);
-        }
 
         let request = ExecutionRequest {
             pre_state_hash: pre_state_hash.clone(),

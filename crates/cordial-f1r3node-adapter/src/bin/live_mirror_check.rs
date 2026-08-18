@@ -270,10 +270,8 @@ async fn main() -> Result<()> {
     } else {
         println!(
             "[phase] computing {}",
-            if args.window_ordering_fragment {
-                "mirrored window ordering fragment"
-            } else if args.ordering_fragment_only {
-                "latest finalized ordering fragment"
+            if args.ordering_fragment_only {
+                "latest finalized ordered output"
             } else {
                 "ordered finalized blocks"
             }

@@ -1,20 +1,23 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::select_predecessors;
+use cordial_miners_core::consensus::{CordialEvidencePool, EvidencePool, select_predecessors};
 use cordial_miners_core::crypto::{CryptoVerifier, hash_content};
 use cordial_miners_core::execution::{
-    Bond, CordialBlockPayload, Deploy, DeployPool, DeployPoolConfig, ExecutionRequest, MockRuntime,
-    RuntimeManager, SignedDeploy, compute_deploys_in_scope,
+    Bond, CordialBlockPayload, Deploy, DeployPool, DeployPoolConfig, ExecutionRequest,
+    ExecutionResult, MockRuntime, ProcessedSystemDeploy, RuntimeError, RuntimeManager,
+    SignedDeploy, SystemDeployRequest, compute_deploys_in_scope,
 };
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
 use cordial_f1r3node_adapter::crypto_bridge::{F1r3flyCryptoAdapter, SigAlgorithm};
 use cordial_f1r3node_adapter::proposer::{
-    CordialProposer, DisseminationTipSelector, RecordingBroadcaster, RuntimeExecutionEngine,
-    Secp256k1BlockSigner,
+    CordialProposer, DisseminationTipSelector, EvidencePoolSource, ExecutionEngine,
+    RecordingBroadcaster, RuntimeExecutionEngine, Secp256k1BlockSigner,
 };
+use cordial_f1r3node_adapter::slashing::F1r3SlashDeployFormatter;
 
 struct MockVerifier;
 
@@ -147,6 +150,39 @@ fn build_proposer(
         DeployPoolConfig::default(),
     )
     .with_close_block(close_block)
+}
+
+#[derive(Clone)]
+struct CapturingExecution {
+    captured: Arc<Mutex<Option<ExecutionRequest>>>,
+}
+
+impl ExecutionEngine for CapturingExecution {
+    fn execute(&mut self, request: ExecutionRequest) -> Result<ExecutionResult, RuntimeError> {
+        *self.captured.lock().expect("capture lock") = Some(request.clone());
+
+        let system_deploys = request
+            .system_deploys
+            .iter()
+            .map(|system| match system {
+                SystemDeployRequest::Slash { validator, .. } => ProcessedSystemDeploy::Slash {
+                    validator: validator.clone(),
+                    succeeded: true,
+                },
+                SystemDeployRequest::CloseBlock => {
+                    ProcessedSystemDeploy::CloseBlock { succeeded: true }
+                }
+            })
+            .collect();
+
+        Ok(ExecutionResult {
+            post_state_hash: vec![0xEE; 32],
+            processed_deploys: vec![],
+            rejected_deploys: vec![],
+            system_deploys,
+            new_bonds: request.bonds,
+        })
+    }
 }
 
 #[test]
@@ -371,4 +407,86 @@ fn proposer_chain_head_tiebreak_is_deterministic() {
     let payload = CordialBlockPayload::from_bytes(&block.content.payload).expect("decode payload");
     assert_eq!(payload.state.pre_state_hash, expected_pre_state_hash);
     assert_eq!(payload.state.block_number, 1);
+}
+
+#[test]
+fn proposer_formats_evidence_and_prioritizes_slash_system_deploys() {
+    let validator = node(1);
+    let bond_map = bonds(&[(1, 100), (2, 100)]);
+
+    let mut blocklace = Blocklace::new();
+    let left = make_block(validator.clone(), simple_payload(0, 0x31), HashSet::new());
+    let right = make_block(validator.clone(), simple_payload(0, 0x32), HashSet::new());
+    insert(&mut blocklace, left.clone());
+    insert(
+        &mut blocklace,
+        make_block(node(2), simple_payload(0, 0x41), HashSet::new()),
+    );
+
+    let mut evidence_pool = CordialEvidencePool::new();
+    assert!(evidence_pool.record_equivocation(
+        validator.clone(),
+        0,
+        vec![left.clone(), right.clone()]
+    ));
+
+    let mut deploy_pool = DeployPool::new(DeployPoolConfig::default());
+    deploy_pool.add(make_deploy(12)).expect("add deploy");
+
+    let captured = Arc::new(Mutex::new(None));
+    let sk = test_signing_key(14);
+    let creator = NodeId(test_public_key(&sk));
+    let mut proposer = CordialProposer::new(
+        DisseminationTipSelector,
+        CapturingExecution {
+            captured: Arc::clone(&captured),
+        },
+        Secp256k1BlockSigner::new(sk),
+        RecordingBroadcaster::new(),
+        creator,
+        bond_map,
+        DeployPoolConfig::default(),
+    )
+    .with_slashing(
+        EvidencePoolSource::new(&evidence_pool, vec![validator.clone(), validator.clone()]),
+        F1r3SlashDeployFormatter::new(node(9).0),
+    );
+
+    let block = proposer.propose(&blocklace, &deploy_pool).expect("propose");
+    let payload = CordialBlockPayload::from_bytes(&block.content.payload).expect("decode payload");
+    assert!(matches!(
+        payload.system_deploys.first(),
+        Some(ProcessedSystemDeploy::Slash {
+            validator: slashed,
+            succeeded: true,
+        }) if *slashed == validator
+    ));
+
+    let request = captured
+        .lock()
+        .expect("capture lock")
+        .clone()
+        .expect("request captured");
+
+    assert_eq!(request.deploys.len(), 1, "user deploy still executes");
+    assert_eq!(request.system_deploys.len(), 2);
+
+    let mut expected_hashes = [left.identity.content_hash, right.identity.content_hash];
+    expected_hashes.sort();
+
+    match &request.system_deploys[0] {
+        SystemDeployRequest::Slash {
+            validator: slashed,
+            invalid_block_hash,
+        } => {
+            assert_eq!(slashed, &validator);
+            assert_eq!(invalid_block_hash, &expected_hashes[0].to_vec());
+        }
+        other => panic!("expected slash deploy first, got {other:?}"),
+    }
+
+    assert!(matches!(
+        request.system_deploys[1],
+        SystemDeployRequest::CloseBlock
+    ));
 }

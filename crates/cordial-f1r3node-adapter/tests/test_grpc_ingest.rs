@@ -16,6 +16,13 @@ use cordial_f1r3node_adapter::block_translation::{
 };
 use cordial_f1r3node_adapter::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
 
+use casper::rust::validator_identity::ValidatorIdentity;
+use crypto::rust::private_key::PrivateKey;
+use models::rust::casper::protocol::casper_message::{
+    BlockMessage as WireBlockMessage, Body as WireBody, F1r3flyState as WireState,
+    Header as WireHeader,
+};
+
 // ── Test Helpers ─────────────────────────────────────────────────────────
 
 /// Generate a 32-byte Secp256k1 signing key from a single byte seed.
@@ -178,6 +185,98 @@ impl BlocklaceAdapter<BlockIdentity> for RecordingAdapter {
 // ── Integration Tests ────────────────────────────────────────────────────
 
 #[test]
+fn accepts_block_signed_by_f1r3node_validator_identity() {
+    let private_key = PrivateKey::from_bytes(&[7u8; 32]);
+    let validator = ValidatorIdentity::new(&private_key);
+    let unsigned = WireBlockMessage {
+        block_hash: vec![].into(),
+        header: WireHeader {
+            parents_hash_list: vec![],
+            timestamp: 1_723_456_789,
+            version: 1,
+            extra_bytes: vec![0xaa, 0xbb].into(),
+        },
+        body: WireBody {
+            state: WireState {
+                pre_state_hash: vec![0u8; 32].into(),
+                post_state_hash: vec![1u8; 32].into(),
+                bonds: vec![],
+                block_number: 42,
+            },
+            deploys: vec![],
+            rejected_deploys: vec![],
+            system_deploys: vec![],
+            extra_bytes: vec![0xcc].into(),
+        },
+        justifications: vec![],
+        sender: vec![].into(),
+        seq_num: 9,
+        sig: vec![].into(),
+        sig_algorithm: String::new(),
+        shard_id: "root".to_string(),
+        extra_bytes: vec![0xdd].into(),
+    };
+    let signed = validator.sign_block(&unsigned);
+
+    let mapper: GrpcBlockMapper<(), (), ()> = GrpcBlockMapper::new();
+    let validated = mapper
+        .from_protobuf(&signed)
+        .expect("f1r3node-signed block should pass wire validation");
+
+    assert_eq!(validated.block.identity.creator.0, signed.sender.as_ref());
+    assert!(validated.block.identity.signature.is_empty());
+    assert_eq!(validated.wire_hash.as_slice(), signed.block_hash.as_ref());
+    assert_eq!(validated.wire_signature, signed.sig.as_ref());
+    assert_ne!(
+        validated.block.identity.content_hash.as_slice(),
+        signed.block_hash.as_ref(),
+        "wire and Cordial identities must remain separate hash domains"
+    );
+}
+
+#[test]
+fn rejects_tampered_f1r3node_wire_hash() {
+    let private_key = PrivateKey::from_bytes(&[8u8; 32]);
+    let validator = ValidatorIdentity::new(&private_key);
+    let unsigned = WireBlockMessage {
+        block_hash: vec![].into(),
+        header: WireHeader {
+            parents_hash_list: vec![],
+            timestamp: 1,
+            version: 1,
+            extra_bytes: vec![].into(),
+        },
+        body: WireBody {
+            state: WireState {
+                pre_state_hash: vec![].into(),
+                post_state_hash: vec![].into(),
+                bonds: vec![],
+                block_number: 0,
+            },
+            deploys: vec![],
+            rejected_deploys: vec![],
+            system_deploys: vec![],
+            extra_bytes: vec![].into(),
+        },
+        justifications: vec![],
+        sender: vec![].into(),
+        seq_num: 0,
+        sig: vec![].into(),
+        sig_algorithm: String::new(),
+        shard_id: "root".to_string(),
+        extra_bytes: vec![].into(),
+    };
+    let mut signed = validator.sign_block(&unsigned);
+    signed.header.timestamp += 1;
+
+    let mapper: GrpcBlockMapper<(), (), ()> = GrpcBlockMapper::new();
+    let error = mapper
+        .from_protobuf(&signed)
+        .expect_err("tampering with a signed protobuf field must fail");
+    assert!(error.to_string().contains("Wire hash mismatch"));
+}
+
+#[test]
 fn full_pipeline_valid_block_from_protobuf_to_adapter() {
     let mapper: GrpcBlockMapper<(), (), ()> = GrpcBlockMapper::new();
     let mut adapter = RecordingAdapter::new();
@@ -188,7 +287,7 @@ fn full_pipeline_valid_block_from_protobuf_to_adapter() {
 
     // Step 1: Mapper translates and validates protobuf message
     let mapped = mapper
-        .from_protobuf(&block_msg)
+        .from_adapter_message(&block_msg)
         .expect("Mapper should accept valid block");
 
     // Step 2: Adapter receives and records block
@@ -216,7 +315,7 @@ fn pipeline_rejects_non_broadcast_block_messages() {
     let mut block_msg = build_test_block_message(&creator, &[], &signing_key, "secp256k1");
     block_msg.sig_algorithm = "invalid_algorithm".to_string();
 
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
     assert!(
         result.is_err(),
         "Mapper should reject invalid signature algorithm"
@@ -245,7 +344,7 @@ fn pipeline_rejects_corrupted_blocks_before_adapter() {
     }
 
     // Mapper should reject
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
     assert!(result.is_err(), "Mapper should reject corrupted block");
 
     // Adapter should never be called
@@ -269,7 +368,7 @@ fn pipeline_sequence_multiple_valid_blocks() {
     // Process each block through the pipeline
     for block_msg in &block_msgs {
         let mapped = mapper
-            .from_protobuf(block_msg)
+            .from_adapter_message(block_msg)
             .expect("Valid block should map");
         adapter.on_block(mapped).expect("Adapter should accept");
     }
@@ -302,7 +401,7 @@ fn pipeline_with_block_predecessors() {
 
     // Process genesis
     mapper
-        .from_protobuf(&genesis_msg)
+        .from_adapter_message(&genesis_msg)
         .and_then(|b| adapter.on_block(b))
         .expect("Genesis should be accepted");
 
@@ -314,7 +413,7 @@ fn pipeline_with_block_predecessors() {
 
     // Process child
     mapper
-        .from_protobuf(&child_msg)
+        .from_adapter_message(&child_msg)
         .and_then(|b| adapter.on_block(b))
         .expect("Child should be accepted");
 
@@ -343,7 +442,9 @@ fn adapter_can_reject_valid_blocks() {
     let block_msg = build_test_block_message(&creator, &[], &signing_key, "secp256k1");
 
     // Mapper accepts
-    let mapped = mapper.from_protobuf(&block_msg).expect("Valid block");
+    let mapped = mapper
+        .from_adapter_message(&block_msg)
+        .expect("Valid block");
 
     // Adapter can reject even structurally valid blocks
     adapter.reject_next_block();
@@ -360,8 +461,12 @@ fn mapper_determinism_across_instances() {
     let creator = test_public_key(&signing_key);
     let block_msg = build_test_block_message(&creator, &[], &signing_key, "secp256k1");
 
-    let result1 = mapper1.from_protobuf(&block_msg).expect("mapper1 maps");
-    let result2 = mapper2.from_protobuf(&block_msg).expect("mapper2 maps");
+    let result1 = mapper1
+        .from_adapter_message(&block_msg)
+        .expect("mapper1 maps");
+    let result2 = mapper2
+        .from_adapter_message(&block_msg)
+        .expect("mapper2 maps");
 
     // Both instances should produce identical results
     assert_eq!(result1.identity.content_hash, result2.identity.content_hash);
@@ -378,9 +483,9 @@ fn mapper_idempotence_same_instance() {
     let block_msg = build_test_block_message(&creator, &[], &signing_key, "secp256k1");
 
     // Map same message multiple times
-    let r1 = mapper.from_protobuf(&block_msg).expect("First map");
-    let r2 = mapper.from_protobuf(&block_msg).expect("Second map");
-    let r3 = mapper.from_protobuf(&block_msg).expect("Third map");
+    let r1 = mapper.from_adapter_message(&block_msg).expect("First map");
+    let r2 = mapper.from_adapter_message(&block_msg).expect("Second map");
+    let r3 = mapper.from_adapter_message(&block_msg).expect("Third map");
 
     // All results should be identical
     assert_eq!(r1.identity, r2.identity);
@@ -405,7 +510,7 @@ fn error_messages_are_descriptive() {
         block_msg.block_hash[0] ^= 0xFF;
     }
 
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -421,7 +526,7 @@ fn error_messages_are_descriptive() {
         block_msg.sig[0] ^= 0xFF;
     }
 
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -458,7 +563,7 @@ fn complex_predecessor_chain() {
     // Process all blocks
     for block_msg in &block_msgs {
         mapper
-            .from_protobuf(block_msg)
+            .from_adapter_message(block_msg)
             .and_then(|b| adapter.on_block(b))
             .expect("Block in chain should be accepted");
     }
@@ -502,7 +607,7 @@ fn valid_genesis_block_maps_to_block() {
 
     let block_msg = build_test_block_message(&creator, &[], &signing_key, "secp256k1");
 
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
     assert!(result.is_ok());
     let mapped = result.unwrap();
     assert_eq!(
@@ -535,13 +640,13 @@ fn valid_block_with_predecessors_maps_deterministically() {
         "secp256k1",
     );
 
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
     assert!(result.is_ok());
 
     // Verify idempotence: same input → same output
     let block_msg2 =
         build_test_block_message(&creator_2, &[genesis_hash], &signing_key_2, "secp256k1");
-    let result2 = mapper.from_protobuf(&block_msg2);
+    let result2 = mapper.from_adapter_message(&block_msg2);
     assert!(result2.is_ok());
     assert_eq!(result.unwrap().identity, result2.unwrap().identity);
 }
@@ -556,15 +661,15 @@ fn mapper_is_stateless_and_idempotent() {
     let block_msg = build_test_block_message(&creator.clone(), &[], &signing_key, "secp256k1");
 
     // Same message mapped by different mapper instances
-    let r1 = mapper1.from_protobuf(&block_msg).unwrap();
-    let r2 = mapper2.from_protobuf(&block_msg).unwrap();
+    let r1 = mapper1.from_adapter_message(&block_msg).unwrap();
+    let r2 = mapper2.from_adapter_message(&block_msg).unwrap();
     assert_eq!(r1.identity, r2.identity);
 
     // Same mapper, same message, multiple times
     let block_msg3 = build_test_block_message(&creator.clone(), &[], &signing_key, "secp256k1");
-    let r3 = mapper1.from_protobuf(&block_msg3).unwrap();
+    let r3 = mapper1.from_adapter_message(&block_msg3).unwrap();
     let block_msg4 = build_test_block_message(&creator, &[], &signing_key, "secp256k1");
-    let r4 = mapper1.from_protobuf(&block_msg4).unwrap();
+    let r4 = mapper1.from_adapter_message(&block_msg4).unwrap();
     assert_eq!(r3.identity, r4.identity);
 }
 
@@ -586,7 +691,7 @@ fn block_with_corrupted_content_hash_rejected() {
         block_msg.block_hash[0] ^= 0xFF;
     }
 
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
@@ -609,7 +714,7 @@ fn block_with_invalid_signature_rejected() {
         block_msg.sig[0] ^= 0xFF;
     }
 
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
     assert!(result.is_err());
     assert!(
         result
@@ -631,7 +736,7 @@ fn block_with_wrong_creator_key_rejected() {
     // Change the creator in the message to a different key, but keep the old signature
     block_msg.sender = creator_2.to_vec();
 
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
     assert!(result.is_err());
     assert!(
         result
@@ -651,7 +756,7 @@ fn block_with_short_signature_rejected() {
     // Truncate the signature to make it invalid
     block_msg.sig.truncate(10);
 
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
     assert!(result.is_err());
     assert!(
         result
@@ -672,7 +777,7 @@ fn block_with_short_creator_key_rejected() {
 
     let block_msg = build_test_block_message(&creator, &[], &signing_key, "secp256k1");
 
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
     assert!(result.is_err());
 }
 
@@ -689,7 +794,7 @@ fn block_with_empty_signature_in_parent_rejected() {
     // Inject an invalid parent with empty signature
     block_msg.header.parents_hash_list.push(vec![0u8; 32]); // This creates a parent reference
 
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
     // The mapper should either accept it (as it's just a hash) or reject it
     // Parent validation in the mapper is minimal, so this may pass
     // Let's just verify it runs without panic
@@ -707,7 +812,7 @@ fn block_with_malformed_parent_key_rejected() {
     // Inject a parent with malformed length
     block_msg.header.parents_hash_list.push(vec![1, 2, 3]); // Invalid: too short (should be 32 bytes)
 
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
     // The mapper might reject this or normalize it
     // Just verify it runs without panic
     let _ = result;
@@ -754,7 +859,7 @@ fn valid_block_triggers_on_block_callback() {
     let creator = test_public_key(&signing_key);
     let block_msg = build_test_block_message(&creator, &[], &signing_key, "secp256k1");
 
-    let mapped = mapper.from_protobuf(&block_msg).unwrap();
+    let mapped = mapper.from_adapter_message(&block_msg).unwrap();
     adapter.on_block(mapped).unwrap();
 
     assert_eq!(adapter.callback_count(), 1);
@@ -779,8 +884,8 @@ fn multiple_valid_blocks_trigger_multiple_callbacks() {
     let creator_2 = test_public_key(&signing_key_2);
     let block_msg_2 = build_test_block_message(&creator_2, &[], &signing_key_2, "secp256k1");
 
-    let mapped_1 = mapper.from_protobuf(&block_msg_1).unwrap();
-    let mapped_2 = mapper.from_protobuf(&block_msg_2).unwrap();
+    let mapped_1 = mapper.from_adapter_message(&block_msg_1).unwrap();
+    let mapped_2 = mapper.from_adapter_message(&block_msg_2).unwrap();
 
     adapter.on_block(mapped_1).unwrap();
     adapter.on_block(mapped_2).unwrap();
@@ -803,7 +908,7 @@ fn adapter_fails_to_receive_invalid_block() {
         block_msg.sig[0] ^= 0xFF;
     }
 
-    let result = mapper.from_protobuf(&block_msg);
+    let result = mapper.from_adapter_message(&block_msg);
 
     // Mapper should reject before adapter sees it
     assert!(result.is_err());
