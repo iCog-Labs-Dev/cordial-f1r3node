@@ -829,6 +829,7 @@ impl PendingBlockBuffer {
                         }
                         crate::consensus::validation::ValidationResult::Invalid(errors) => {
                             if !should_keep_buffered_after_validation(&errors) {
+                                rejected.push((block.clone(), errors));
                                 resolved.push(id);
                             }
                         }
@@ -849,5 +850,7 @@ impl PendingBlockBuffer {
             *self.retry_passes.entry(id).or_insert(0) += 1;
         }
         self.evict_stale();
+
+        rejected
     }
 }

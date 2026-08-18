@@ -1,8 +1,8 @@
 # 15. Proposer Pipeline: Blocklace → Mempool → RSpace → Sign → Broadcast
 
-**Implementation**: `crates/cordial-f1r3node-adapter/src/proposer.rs`  
-**Module**: `cordial_f1r3node_adapter::proposer`  
-**Tests**: `crates/cordial-f1r3node-adapter/tests/test_proposer.rs`  
+**Implementation**: `crates/cordial-f1r3node-adapter/src/proposer.rs`
+**Module**: `cordial_f1r3node_adapter::proposer`
+**Tests**: `crates/cordial-f1r3node-adapter/tests/test_proposer.rs`
 **Purpose**: Outbound block creation — the mirror of the inbound [gRPC ingestion layer](./13-grpc-ingestion.md)
 
 ---

@@ -31,6 +31,10 @@ pub enum PorError {
     InvalidReputationBlockRound,
     MissingReputationBlockRatingsHash,
     MissingReputationBlockRoot,
+    // Audit-replay-specific errors
+    MissingReputationBlockEntry,
+    UnexpectedReputationBlockEntry,
+    ReputationValueMismatch,
 }
 
 impl fmt::Display for PorError {
@@ -110,6 +114,19 @@ impl fmt::Display for PorError {
             Self::MissingReputationBlockRoot => {
                 write!(f, "reputation block root is empty")
             }
+            Self::MissingReputationBlockEntry => {
+                write!(f, "reputation block is missing a replayed reputation entry")
+            }
+            Self::UnexpectedReputationBlockEntry => {
+                write!(
+                    f,
+                    "reputation block contains an unexpected reputation entry"
+                )
+            }
+            Self::ReputationValueMismatch => write!(
+                f,
+                "reputation block entry does not match the replayed reputation value"
+            ),
         }
     }
 }

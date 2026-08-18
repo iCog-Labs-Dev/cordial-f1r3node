@@ -47,7 +47,6 @@ use crate::snapshot::{
     CasperSnapshot, SnapshotError, build_snapshot, latest_finalized_block_id,
     ordered_block_identities_with_cache, ordered_finalized_block_hashes_with_cache,
 };
-
 /// High-level runtime phase for the live ingress adapter.
 ///
 /// Keeping this explicit helps later commits avoid mixing "discovery only"
@@ -526,13 +525,14 @@ impl<A> LiveIngress<A> {
         ))
     }
 
-    /// Return the latest finalized ordered fragment from live mirrored state.
+    /// Return the latest finalized ordered output through the stable
+    /// `ordered_output` export seam: the finalized-prefix blocks (full
+    /// [`BlockIdentity`] entries, not bare hashes), linearized via weighted
+    /// tau ordering, together with the anchor and consensus metadata needed
+    /// to interpret them.
     ///
-    /// This is a read-only seam that exposes the weighted tau ordering over
-    /// the current blocklace mirror. The returned [`OrderedFinalizedOutput`]
-    /// contains the deterministic topological order (predecessor-first) of all
-    /// finalized blocks, the anchoring weighted final leader, consensus
-    /// metadata, and a wall-clock timestamp.
+    /// `anchor` is `None` and `blocks` is empty when the mirrored state does
+    /// not yet have a finalized leader.
     ///
     /// This is the boundary inspection tooling and downstream consumers
     /// should use instead of recomputing ordering against the mirrored
@@ -647,16 +647,18 @@ impl<A> LiveIngress<A>
 where
     A: BlocklaceAdapter<BlockIdentity>,
 {
-    /// Accept a live protobuf block message and route it through the existing
-    /// gRPC ingestion pipeline before handing the translated block to the
-    /// adapter callback.
+    /// Accept an adapter-owned block message in Cordial's hash domain.
+    ///
+    /// Real f1r3node protobuf messages must first pass through
+    /// `GrpcBlockMapper::from_protobuf`, which keeps their wire-domain
+    /// attestation separate from the translated Cordial block.
     pub fn ingest_block_message(
         &mut self,
         block_msg: &BlockMessage,
     ) -> Result<Block, LiveIngressError> {
         let block = self
             .mapper
-            .from_protobuf(block_msg)
+            .from_adapter_message(block_msg)
             .map_err(LiveIngressError::Mapping)?;
 
         self.adapter

@@ -20,6 +20,14 @@ pub fn build_reputation_block(
     })
 }
 
+/// Validate an already-assembled reputation block.
+///
+/// This applies the same checks as `build_reputation_block`, exposed so that
+/// audit replay holds a proposed block to the rules a constructed one satisfies.
+pub fn validate_reputation_block(block: &ReputationBlock) -> Result<(), PorError> {
+    validate_reputation_block_inputs(&block.header, &block.reputation_list)
+}
+
 fn validate_reputation_block_inputs(
     header: &ReputationBlockHeader,
     reputation_list: &ReputationList,

@@ -1,12 +1,13 @@
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    InvalidBlock, PendingBlockBuffer, PredecessorSelectionMode, ProposalError, ValidationConfig,
-    build_block_candidate, build_block_candidate_with_mode, next_block_predecessors,
-    next_block_predecessors_with_mode, predecessors_acknowledge_all_equivocation_branches,
-    required_acknowledgements, select_predecessors, select_predecessors_sorted,
-    select_predecessors_strict, select_predecessors_with_mode, validated_insert,
-    validator_visible_tips, weighted_required_acknowledgements,
+    BufferOutcome, BufferPolicy, InvalidBlock, PendingBlockBuffer, PredecessorSelectionMode,
+    ProposalError, ValidationConfig, build_block_candidate, build_block_candidate_with_mode,
+    next_block_predecessors, next_block_predecessors_with_mode,
+    predecessors_acknowledge_all_equivocation_branches, required_acknowledgements,
+    select_predecessors, select_predecessors_sorted, select_predecessors_strict,
+    select_predecessors_with_mode, validated_insert, validator_visible_tips,
+    weighted_required_acknowledgements,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};

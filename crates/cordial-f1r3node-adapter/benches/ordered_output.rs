@@ -5,7 +5,9 @@
 //! 1. **`SharedOrderedOutput::update`** — publishing a new output under
 //!    concurrent read contention (simulated with a read-biased workload).
 //! 2. **`SharedOrderedOutput::latest`** — reading the latest output.
-//! 3. **JSON serialisation** of `OrderedFinalizedOutput` at 100, 1 000, and
+//! 3. **`OrderedFinalizedOutput` construction and hash extraction** at 100,
+//!    1 000, and 10 000 blocks.
+//! 4. **JSON serialisation** of `OrderedFinalizedOutput` at 100, 1 000, and
 //!    10 000 blocks.
 //!
 //! Notes on concurrency model
@@ -29,9 +31,8 @@ fn node(id: u8) -> NodeId {
     NodeId(vec![id])
 }
 
-/// Build an `OrderedFinalizedOutput` with `n` synthetic blocks.
-fn make_output(n: usize) -> OrderedFinalizedOutput {
-    let blocks: Vec<BlockIdentity> = (0..n)
+fn make_blocks(n: usize) -> Vec<BlockIdentity> {
+    (0..n)
         .map(|i| {
             let mut hash = [0u8; 32];
             hash[0..8].copy_from_slice(&(i as u64).to_le_bytes());
@@ -41,7 +42,12 @@ fn make_output(n: usize) -> OrderedFinalizedOutput {
                 signature: (i as u64).to_le_bytes().to_vec(),
             }
         })
-        .collect();
+        .collect()
+}
+
+/// Build an `OrderedFinalizedOutput` with `n` synthetic blocks.
+fn make_output(n: usize) -> OrderedFinalizedOutput {
+    let blocks = make_blocks(n);
     let anchor = blocks.last().cloned();
     OrderedFinalizedOutput::new(blocks, anchor, 3, 4, n).with_timestamp(0)
 }
@@ -143,11 +149,37 @@ fn bench_block_hashes_extraction(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_ordered_output_construction(c: &mut Criterion) {
+    let sizes: &[usize] = &[100, 1_000, 10_000];
+
+    let mut group = c.benchmark_group("ordered_output/construction");
+    group.sample_size(20);
+
+    for &n in sizes {
+        let blocks = make_blocks(n);
+        let anchor = blocks.last().cloned();
+
+        group.bench_with_input(
+            BenchmarkId::new(format!("n{n}"), ""),
+            &blocks,
+            |b, blocks| {
+                b.iter_batched(
+                    || (blocks.clone(), anchor.clone()),
+                    |(blocks, anchor)| OrderedFinalizedOutput::new(blocks, anchor, 3, 4, n),
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_shared_ordered_output_update,
     bench_shared_ordered_output_latest,
     bench_json_serialisation,
+    bench_ordered_output_construction,
     bench_block_hashes_extraction,
 );
 criterion_main!(benches);
