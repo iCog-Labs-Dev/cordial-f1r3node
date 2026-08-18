@@ -1,9 +1,6 @@
 name: Benchmarks
 
 on:
-  pull_request:
-    branches: ["master", "dev"]
-    types: [opened, synchronize, reopened]
   push:
     branches: ["master", "dev"]
 
@@ -11,68 +8,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ─── Smoke check (every PR) ────────────────────────────────────────────────
-  #
-  # Runs cargo bench -- --test which compiles and executes each benchmark
-  # function exactly once (no timing). This validates that:
-  #   1. All benchmark code compiles.
-  #   2. No panic occurs during setup or the benchmark body itself.
-  #   3. No regression in the benchmark public API (function signatures etc.).
-  #
-  # Runtime is O(seconds), not O(minutes), so it fits comfortably in PR CI.
-  bench-smoke:
-    name: Benchmark smoke check (compile + single-run)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout blocklace
-        uses: actions/checkout@v4
-        with:
-          path: blocklace
-
-      - name: Checkout f1r3node
-        uses: actions/checkout@v4
-        with:
-          repository: F1R3FLY-io/f1r3node
-          path: f1r3node
-
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            blocklace/target
-          key: ${{ runner.os }}-bench-${{ hashFiles('blocklace/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-bench-
-
-      # cordial-miners-core benchmarks: leader_lookup, tau_ordering, height_bootstrap
-      - name: Smoke-check cordial-miners-core benchmarks
-        working-directory: blocklace
-        run: |
-          cargo bench -p cordial-miners-core -- --test
-
-      # cordial-f1r3node-adapter benchmark: ordered_output
-      - name: Smoke-check cordial-f1r3node-adapter benchmarks
-        working-directory: blocklace
-        run: |
-          cargo bench -p cordial-f1r3node-adapter -- --test
-
   # ─── Full Criterion run (main push only) ───────────────────────────────────
   #
   # Executes the full Criterion benchmark suite and uploads the HTML report
-  # and raw JSON output as a downloadable workflow artefact. This runs only on
-  # pushes to main branches to avoid spending CI minutes on every PR.
+  # and raw JSON output as a downloadable workflow artefact. PR smoke-checks
+  # run inside `rust.yml` to eliminate redundant runner setup overhead.
   bench-full:
     name: Full Criterion benchmarks (main push)
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
 
     steps:
       - name: Checkout blocklace
