@@ -3,6 +3,14 @@ name: Benchmarks
 on:
   push:
     branches: ["master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,6 +24,7 @@ jobs:
   bench-full:
     name: Full Criterion benchmarks (main push)
     runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     steps:
       - name: Checkout blocklace
@@ -32,7 +41,7 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-      - name: Install nightly toolchain
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Cache Cargo registry
@@ -56,6 +65,7 @@ jobs:
           cargo bench -p cordial-f1r3node-adapter 2>&1 | tee bench-adapter.txt
 
       - name: Upload benchmark results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: criterion-benchmark-results-${{ github.sha }}
@@ -64,3 +74,4 @@ jobs:
             blocklace/bench-adapter.txt
             blocklace/target/criterion/
           retention-days: 90
+          if-no-files-found: warn
