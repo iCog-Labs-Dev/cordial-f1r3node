@@ -220,17 +220,28 @@ updates the current round, and replaces the stored `ReputationList` by moving
 the vector contents. It does not perform rating validation, matrix construction,
 normalization, Liquid Rank, alpha blending, or clamping.
 
+The `src/block.rs` module assembles a reputation block with:
+
+```text
+ReputationBlockHeader + ReputationList -> ReputationBlock
+```
+
+`build_reputation_block` consumes the header and finalized list, validates that
+the header round matches the list round, requires non-empty `ratings_hash` and
+`reputation_root` fields, and preserves the canonical `NodeId` ordering by
+rejecting duplicate or unsorted entries. It does not recompute the reputation
+pipeline, mutate `ReputationState`, publish a block, or perform audit replay.
+
 Future work remains:
 
-- `src/block.rs`: reputation block construction helpers
 - `src/audit.rs`: replay and transition verification
 - `src/committee.rs`: consensus group selection
 - `src/leader.rs`: leader selection from the consensus group
 
 `EquivocationPenalty` and `InactivityPenalty` remain intentionally as Cordial
 integration extensions and are not part of the first reputation calculation
-step. Reputation block construction and later consensus-selection logic remain
-future work.
+step. Reputation block publication, audit replay, and later consensus-selection
+logic remain future work.
 
 ## Paper-Aligned Structures
 

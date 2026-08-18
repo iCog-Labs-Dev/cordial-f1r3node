@@ -139,7 +139,7 @@ flowchart TD
 ### Implemented And Future PoR Stages
 
 > **Implementation Note:**  
-> The stages shown with dotted edges in the architecture above are part of the intended PoR architecture described in the paper (arXiv:2108.03542 and related Liquid-Rank literature). The current crate implements the data-preparation path, Liquid-Rank contribution `P = S * R`, the pure fixed-point alpha-blend transition, deterministic fixed-point sigmoid clamping, and explicit application of finalized vectors to `ReputationState`. The transition requires matching canonical node sets and consecutive rounds. These stages do not apply a no-rating fallback or publish blocks.
+> The stages shown with dotted edges in the architecture above are part of the intended PoR architecture described in the paper (arXiv:2108.03542 and related Liquid-Rank literature). The current crate implements the data-preparation path, Liquid-Rank contribution `P = S * R`, the pure fixed-point alpha-blend transition, deterministic fixed-point sigmoid clamping, explicit application of finalized vectors to `ReputationState`, and construction of a `ReputationBlock` from a finalized reputation list. The transition requires matching canonical node sets and consecutive rounds. These stages do not apply a no-rating fallback or publish blocks.
 
 - Rating validation and deterministic round batching
 - Rating matrix construction
@@ -148,8 +148,9 @@ flowchart TD
 - Alpha-blended reputation transition
 - Deterministic sigmoid clamping
 - Reputation state application
+- Reputation block construction
 - Penalties / slashing
-- Reputation block / audit path
+- Reputation audit path
 - Committee selection
 
 ## Module Responsibilities
@@ -165,9 +166,10 @@ flowchart TD
 | `transition` | Blend contribution with previous reputation using checked fixed-point arithmetic, matching node sets, and consecutive rounds | contribution `ReputationVector`, previous `ReputationVector`, `PorConfig` | next-round `ReputationVector` | `config`, `types`, `error` | `blend_reputation_transition` |
 | `clamp` | Apply deterministic fixed-point sigmoid clamp to reputation values | `ReputationVector`, `PorConfig` | clamped `ReputationVector` | `config`, `types`, `error` | `clamp_reputation_value`, `clamp_reputation_vector` |
 | `state` | In-memory reputation snapshot keyed by `NodeId`; consumes finalized vectors into state | round, validator → weight, finalized `ReputationVector` | `ReputationState` | `types`, `error` | `new`, `round`, `reputation_list`, `reputation_list_mut`, `pending_ratings`, `latest_block`, `add_rating`, `set_reputation`, `apply_reputation_vector` |
+| `block` | Build a reputation block from a finalized reputation list and header | `ReputationBlockHeader`, `ReputationList` | `ReputationBlock` | `types`, `error` | `build_reputation_block` |
 | `weights` | Export current reputation map for the weighted path | `&ReputationState` | `HashMap<NodeId, ReputationWeight>` | `state`, `cordial-miners-core::NodeId` | `reputation_weights` |
 | `error` | PoR validation, matrix, normalization, and calculation errors | — | `PorError` | none | `PorError` variants |
-| `lib` | Crate root, re-exports | — | public API surface | all of the above | `PorConfig`, `PorError`, `ReputationState`, rating/matrix/liquid-rank/transition APIs, types, `reputation_weights` |
+| `lib` | Crate root, re-exports | — | public API surface | all of the above | `PorConfig`, `PorError`, `ReputationState`, rating/matrix/liquid-rank/transition/block APIs, types, `reputation_weights` |
 
 ## Data Flow
 
@@ -179,8 +181,9 @@ flowchart TD
 6. The next vector is computed with `blend_reputation_transition`, which requires matching canonical node sets and consecutive rounds; this is a pure calculation and does not mutate state.
 7. The next vector can be clamped with `clamp_reputation_vector`; this is also a pure calculation and does not mutate state.
 8. The finalized vector is applied with `ReputationState::apply_reputation_vector`, which validates canonical ordering and moves the vector entries into the state snapshot.
-9. A `ReputationState` can still be exported through `reputation_weights(&state)` for Cordial Miners weighted APIs.
-10. Block construction, audit/replay, and consensus selection remain future stages.
+9. A `ReputationBlock` can be assembled with `build_reputation_block`, which validates the header/list round match, required block hash fields, and canonical reputation-list ordering.
+10. A `ReputationState` can still be exported through `reputation_weights(&state)` for Cordial Miners weighted APIs.
+11. Audit/replay and consensus selection remain future stages.
 
 ## Ownership Boundaries
 
@@ -188,9 +191,9 @@ flowchart TD
 
 - Reputation state representation (`ReputationState`).
 - Fixed-point scale and initial-reputation configuration.
-- Rating validation, deterministic matrix construction, paper-guided rating normalization, Liquid-Rank contribution calculation, pure alpha-blend transition calculation, deterministic sigmoid clamping, and explicit finalized-vector application to `ReputationState`.
+- Rating validation, deterministic matrix construction, paper-guided rating normalization, Liquid-Rank contribution calculation, pure alpha-blend transition calculation, deterministic sigmoid clamping, explicit finalized-vector application to `ReputationState`, and reputation-block construction.
 - Conversion of the current reputation map into the weight map expected by Cordial Miners.
-- Future PoR algorithms (penalties, reputation blocks, audit, and selection) once implemented.
+- Future PoR algorithms (penalties, audit, and selection) once implemented.
 
 ### cordial-por does NOT own
 
@@ -257,16 +260,16 @@ All of the above remain the exclusive responsibility of `cordial-miners-core`. T
 
 ### Reputation sidechain vs payload references
 
-- **Current implementation:** No reputation blocks or sidechain.
+- **Current implementation:** Reputation blocks can be assembled locally from finalized reputation lists, but there is no sidechain publication, storage, or audit path yet.
 - **Paper design:** Reputation updates may be carried as a sidechain or as payload references inside the main blocklace.
-- **Future work:** Choose the audit / publication path and the corresponding data structures.
+- **Future work:** Choose the audit / publication path and the corresponding storage/replay structures.
 
 ## Future Extensions
 
 Logical extension points that do not yet exist:
 
 - Penalty / slashing application that mutates `ReputationState`.
-- Reputation-block construction and audit trail.
+- Reputation-block publication, storage, and audit trail.
 - Committee selection policy that filters the exported weight map.
 - Persistence layer (snapshot / restore of `ReputationState`).
 - Configuration-driven weight policies (reputation-only, stake-times-reputation, capped stake, committee-only).
