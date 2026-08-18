@@ -48,7 +48,7 @@ fn apply_reputation_vector_replaces_state_snapshot_and_round() {
     state.set_reputation(NodeId(vec![2]), 20);
 
     state
-        .apply_reputation_vector(&vector(7, vec![entry(1, 90), entry(3, 30)]))
+        .apply_reputation_vector(vector(7, vec![entry(1, 90), entry(3, 30)]))
         .unwrap();
 
     assert_eq!(state.round(), 7);
@@ -65,7 +65,7 @@ fn apply_empty_reputation_vector_updates_round_and_clears_entries() {
     state.set_reputation(NodeId(vec![1]), 10);
 
     state
-        .apply_reputation_vector(&vector(8, Vec::new()))
+        .apply_reputation_vector(vector(8, Vec::new()))
         .unwrap();
 
     assert_eq!(state.round(), 8);
@@ -78,7 +78,7 @@ fn apply_reputation_vector_preserves_canonical_vector_order() {
     let mut state = ReputationState::new(0);
 
     state
-        .apply_reputation_vector(&vector(9, vec![entry(1, 10), entry(2, 20), entry(3, 30)]))
+        .apply_reputation_vector(vector(9, vec![entry(1, 10), entry(2, 20), entry(3, 30)]))
         .unwrap();
 
     assert_eq!(
@@ -93,7 +93,7 @@ fn apply_reputation_vector_rejects_duplicate_entries_without_mutating_state() {
     state.set_reputation(NodeId(vec![1]), 10);
     let before = state.clone();
 
-    let result = state.apply_reputation_vector(&vector(2, vec![entry(1, 20), entry(1, 30)]));
+    let result = state.apply_reputation_vector(vector(2, vec![entry(1, 20), entry(1, 30)]));
 
     assert_eq!(result, Err(PorError::DuplicateReputationEntry));
     assert_eq!(state, before);
@@ -105,7 +105,7 @@ fn apply_reputation_vector_rejects_unsorted_entries_without_mutating_state() {
     state.set_reputation(NodeId(vec![1]), 10);
     let before = state.clone();
 
-    let result = state.apply_reputation_vector(&vector(2, vec![entry(2, 20), entry(1, 10)]));
+    let result = state.apply_reputation_vector(vector(2, vec![entry(2, 20), entry(1, 10)]));
 
     assert_eq!(result, Err(PorError::UnsortedReputationVector));
     assert_eq!(state, before);

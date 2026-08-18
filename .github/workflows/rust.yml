@@ -2,63 +2,211 @@ name: Rust
 
 on:
   push:
-    branches: [ "master", "dev" ]
+    branches: ["master"]
   pull_request:
-    branches: [ "master", "dev" ]
-    # Explicitly including types ensures activity from forks triggers the CI
+    branches: ["master", "dev"]
     types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
 
 jobs:
-  build:
+  quality:
+    name: quality
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-    - name: Checkout blocklace
-      uses: actions/checkout@v4
-      with:
-        path: blocklace
+      - name: Checkout cordial-f1r3node
+        uses: actions/checkout@v4
+        with:
+          path: blocklace
 
-    - name: Checkout f1r3node
-      uses: actions/checkout@v4
-      with:
-        repository: F1R3FLY-io/f1r3node
-        path: f1r3node
+      - name: Checkout f1r3node
+        uses: actions/checkout@v4
+        with:
+          repository: F1R3FLY-io/f1r3node
+          path: f1r3node
 
-    - name: Install protoc
-      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler ripgrep
 
-    - name: Install nightly toolchain
-      uses: dtolnay/rust-toolchain@nightly
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy, rustfmt
 
-    # --- QUALITY CHECKS ---
-    - name: Check Formatting
-      working-directory: blocklace
-      run: |
-        cargo fmt -p cordial-miners-core --check
-        cargo fmt -p cordial-f1r3node-adapter --check
-        cargo fmt -p cordial-f1r3space-adapter --check
-        cargo fmt -p cordial-por --check
+      - name: Cache Cargo data
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: blocklace -> target
+          shared-key: quality
 
-    - name: Lint with Clippy
-      working-directory: blocklace
-      run: |
-        cargo clippy -p cordial-miners-core -p cordial-f1r3node-adapter -p cordial-f1r3space-adapter -p cordial-por --all-targets --all-features --no-deps -- -D warnings
+      - name: Check formatting
+        working-directory: blocklace
+        run: |
+          cargo fmt -p cordial-miners-core --check
+          cargo fmt -p cordial-f1r3node-adapter --check
+          cargo fmt -p cordial-f1r3space-adapter --check
+          cargo fmt -p cordial-por --check
 
-    # --- BUILD & TEST ---
-    - name: Build
-      working-directory: blocklace
-      run: cargo build --verbose
+      - name: Check core boundaries
+        working-directory: blocklace
+        run: ./scripts/check_core_boundaries.sh
 
-    - name: Run tests
-      working-directory: blocklace
-      run: cargo test --verbose
+      - name: Lint with Clippy
+        working-directory: blocklace
+        run: >-
+          cargo clippy
+          -p cordial-miners-core
+          -p cordial-f1r3node-adapter
+          -p cordial-f1r3space-adapter
+          -p cordial-por
+          --all-targets
+          --all-features
+          --no-deps
+          -- -D warnings
 
-    # --- BENCHMARK SMOKE CHECKS ---
-    - name: Smoke-check benchmarks
-      working-directory: blocklace
-      run: |
-        cargo bench -p cordial-miners-core -- --test
-        cargo bench -p cordial-f1r3node-adapter -- --test
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout cordial-f1r3node
+        uses: actions/checkout@v4
+        with:
+          path: blocklace
+
+      - name: Checkout f1r3node
+        uses: actions/checkout@v4
+        with:
+          repository: F1R3FLY-io/f1r3node
+          path: f1r3node
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache Cargo data
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: blocklace -> target
+          shared-key: build-and-test
+
+      - name: Build workspace
+        working-directory: blocklace
+        run: cargo build --workspace --verbose
+
+      - name: Run workspace tests
+        working-directory: blocklace
+        run: cargo test --workspace --verbose
+
+  conformance:
+    name: adapter conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout cordial-f1r3node
+        uses: actions/checkout@v4
+        with:
+          path: blocklace
+
+      - name: Checkout f1r3node
+        uses: actions/checkout@v4
+        with:
+          repository: F1R3FLY-io/f1r3node
+          path: f1r3node
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache Cargo data
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: blocklace -> target
+          shared-key: adapter-conformance
+
+      - name: Run adapter conformance tests
+        working-directory: blocklace
+        run: cargo test -p cordial-f1r3node-adapter --test conformance -- --nocapture
+
+  compose-config:
+    name: Docker Compose configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout cordial-f1r3node
+        uses: actions/checkout@v4
+        with:
+          path: blocklace
+
+      - name: Checkout f1r3node
+        uses: actions/checkout@v4
+        with:
+          repository: F1R3FLY-io/f1r3node
+          path: f1r3node
+
+      - name: Create local Docker environment
+        working-directory: blocklace
+        run: cp docker/.env.example docker/.env
+
+      - name: Validate Compose files
+        working-directory: blocklace
+        run: |
+          docker compose --env-file docker/.env -f docker/standalone.yml config --quiet
+          docker compose --env-file docker/.env -f docker/prebuilt-standalone.yml config --quiet
+          docker compose --env-file docker/.env -f docker/conformance.yml config --quiet
+          docker compose --env-file docker/.env -f docker/four-node-intercept.yml config --quiet
+          docker compose --env-file docker/.env -f docker/four-node-cluster.yml config --quiet
+
+  benchmark-smoke:
+    name: benchmark smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout cordial-f1r3node
+        uses: actions/checkout@v4
+        with:
+          path: blocklace
+
+      - name: Checkout f1r3node
+        uses: actions/checkout@v4
+        with:
+          repository: F1R3FLY-io/f1r3node
+          path: f1r3node
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache Cargo data
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: blocklace -> target
+          shared-key: benchmark-smoke
+
+      - name: Smoke-check benchmarks
+        working-directory: blocklace
+        run: |
+          cargo bench -p cordial-miners-core -- --test
+          cargo bench -p cordial-f1r3node-adapter -- --test

@@ -4,6 +4,7 @@
 //!
 //! Consensus logic remains inside cordial-miners-core.
 
+pub mod block;
 pub mod clamp;
 pub mod config;
 pub mod error;
@@ -24,6 +25,7 @@ pub use normalization::normalize_rating_matrix;
 pub use ratings::{build_rating_batch, validate_rating};
 pub use state::ReputationState;
 
+pub use block::build_reputation_block;
 pub use types::{
     EquivocationPenalty, InactivityPenalty, NormalizedRatingEntry, NormalizedRatingMatrix,
     RatingBatch, RatingMatrix, RatingRecord, RatingScore, ReputationBlock, ReputationBlockHeader,
