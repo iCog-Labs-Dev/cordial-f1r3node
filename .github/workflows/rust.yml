@@ -55,3 +55,10 @@ jobs:
     - name: Run tests
       working-directory: blocklace
       run: cargo test --verbose
+
+    # --- BENCHMARK SMOKE CHECKS ---
+    - name: Smoke-check benchmarks
+      working-directory: blocklace
+      run: |
+        cargo bench -p cordial-miners-core -- --test
+        cargo bench -p cordial-f1r3node-adapter -- --test
