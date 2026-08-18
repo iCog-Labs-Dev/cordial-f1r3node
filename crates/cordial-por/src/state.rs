@@ -83,16 +83,17 @@ impl ReputationState {
     /// Apply a finalized reputation vector as the current state snapshot.
     ///
     /// The vector is expected to be the already-computed output of the
-    /// calculation pipeline. This method validates canonical ordering and then
-    /// replaces the state's reputation list; it does not recompute ratings,
-    /// Liquid Rank, transition, or clamping.
-    pub fn apply_reputation_vector(&mut self, vector: &ReputationVector) -> Result<(), PorError> {
-        validate_reputation_vector(vector)?;
+    /// calculation pipeline. This method validates canonical ordering, takes
+    /// ownership of the vector entries, and replaces the state's reputation
+    /// list; it does not recompute ratings, Liquid Rank, transition, or
+    /// clamping.
+    pub fn apply_reputation_vector(&mut self, vector: ReputationVector) -> Result<(), PorError> {
+        validate_reputation_vector(&vector)?;
 
         self.current_round = vector.round;
         self.reputation_list = ReputationList {
             round: vector.round,
-            entries: vector.values.clone(),
+            entries: vector.values,
         };
 
         Ok(())

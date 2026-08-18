@@ -32,7 +32,9 @@ returns a new deterministic vector and does not mutate `ReputationState`.
 The module `src/clamp.rs` applies the paper-guided sigmoid clamp using
 deterministic fixed-point integer arithmetic.
 The module `src/state.rs` can apply the finalized vector as the current
-`ReputationState` snapshot after validating canonical `NodeId` ordering.
+`ReputationState` snapshot after validating canonical `NodeId` ordering. State
+application takes ownership of the finalized vector so entries can be moved into
+the snapshot without cloning.
 
 Rating matrix construction and normalization are still data preparation only.
 The liquid-rank, transition, and clamp stages are pure calculation stages. They
@@ -212,11 +214,11 @@ The `src/state.rs` module applies a finalized vector with:
 R_clamped -> ReputationState / ReputationList
 ```
 
-`ReputationState::apply_reputation_vector` validates canonical `NodeId`
-ordering, rejects duplicate or unsorted entries, updates the current round, and
-replaces the stored `ReputationList` with the vector contents. It does not
-perform rating validation, matrix construction, normalization, Liquid Rank,
-alpha blending, or clamping.
+`ReputationState::apply_reputation_vector` consumes the finalized vector,
+validates canonical `NodeId` ordering, rejects duplicate or unsorted entries,
+updates the current round, and replaces the stored `ReputationList` by moving
+the vector contents. It does not perform rating validation, matrix construction,
+normalization, Liquid Rank, alpha blending, or clamping.
 
 Future work remains:
 
