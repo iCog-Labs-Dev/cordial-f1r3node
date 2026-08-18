@@ -4,6 +4,7 @@
 //!
 //! Consensus logic remains inside cordial-miners-core.
 
+pub mod clamp;
 pub mod config;
 pub mod error;
 pub mod liquid_rank;
@@ -29,5 +30,6 @@ pub use types::{
     ReputationEntry, ReputationList, ReputationRound, ReputationVector, ReputationWeight,
 };
 
+pub use clamp::{clamp_reputation_value, clamp_reputation_vector};
 pub use transition::blend_reputation_transition;
 pub use weights::reputation_weights;

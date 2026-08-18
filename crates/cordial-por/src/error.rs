@@ -24,6 +24,9 @@ pub enum PorError {
     ReputationTransitionOverflow,
     MissingContributionEntry,
     InvalidTransitionRound,
+    // Clamp-specific errors
+    InvalidClampScale,
+    ClampOverflow,
 }
 
 impl fmt::Display for PorError {
@@ -91,6 +94,8 @@ impl fmt::Display for PorError {
                     "contribution round must immediately follow the previous reputation round"
                 )
             }
+            Self::InvalidClampScale => write!(f, "clamp scale must be greater than zero"),
+            Self::ClampOverflow => write!(f, "clamp arithmetic overflowed"),
         }
     }
 }
