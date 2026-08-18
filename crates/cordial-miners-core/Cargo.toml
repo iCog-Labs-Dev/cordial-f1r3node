@@ -30,3 +30,19 @@ harness = false
 [[bench]]
 name = "height_bootstrap"
 harness = false
+
+[[bench]]
+name = "dag_traversal"
+harness = false
+
+[[bench]]
+name = "pruning_gc"
+harness = false
+
+[[bench]]
+name = "block_validation"
+harness = false
+
+[[bench]]
+name = "proposer_selection"
+harness = false
