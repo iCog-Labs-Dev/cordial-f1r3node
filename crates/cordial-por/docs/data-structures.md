@@ -226,22 +226,40 @@ The `src/block.rs` module assembles a reputation block with:
 ReputationBlockHeader + ReputationList -> ReputationBlock
 ```
 
-`build_reputation_block` consumes the header and finalized list, validates that
-the header round matches the list round, requires non-empty `ratings_hash` and
-`reputation_root` fields, and preserves the canonical `NodeId` ordering by
-rejecting duplicate or unsorted entries. It does not recompute the reputation
-pipeline, mutate `ReputationState`, publish a block, or perform audit replay.
+`validate_reputation_block` checks that the header round matches the list round,
+requires non-empty `ratings_hash` and `reputation_root` fields, and enforces the
+canonical `NodeId` ordering by rejecting duplicate or unsorted entries.
+`build_reputation_block` runs those checks and then consumes the header and
+finalized list. Neither recomputes the reputation pipeline, mutates
+`ReputationState`, or publishes a block.
+
+The `src/audit.rs` module replays the whole pipeline so that any member can
+audit a proposed reputation block:
+
+```text
+ratings + previous reputation + config -> expected ReputationList
+```
+
+`replay_reputation_transition` runs batching, matrix construction,
+normalization, Liquid Rank, alpha blending, and clamping for one round, so a
+shuffled rating set yields the same list. `verify_reputation_transition` applies
+`validate_reputation_block` to the proposed block first, so an audited block is
+held to the same structural rules as a constructed one, then compares the
+replayed list against `ReputationBlock.reputation_list`. Node-set and value
+differences are reported separately as `MissingReputationBlockEntry`,
+`UnexpectedReputationBlockEntry`, and `ReputationValueMismatch`. Replay is
+read-only: it does not mutate `ReputationState`, publish blocks, or perform
+networking.
 
 Future work remains:
 
-- `src/audit.rs`: replay and transition verification
 - `src/committee.rs`: consensus group selection
 - `src/leader.rs`: leader selection from the consensus group
 
 `EquivocationPenalty` and `InactivityPenalty` remain intentionally as Cordial
 integration extensions and are not part of the first reputation calculation
-step. Reputation block publication, audit replay, and later consensus-selection
-logic remain future work.
+step. Reputation block publication and later consensus-selection logic remain
+future work.
 
 ## Paper-Aligned Structures
 
