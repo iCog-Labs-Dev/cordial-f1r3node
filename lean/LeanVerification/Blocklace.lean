@@ -33,10 +33,6 @@ def Closed (B : Blocklace) : Prop :=
       ∀ p ∈ blk.content.predecessors,
         p ∈ B.keys
 
-/-- Retrieve a block from the blocklace by its ID. -/
-def get (B : Blocklace) (id : BlockId) : Option Block :=
-  B.lookup id
-
 /--
 A block is insertable iff all of its predecessors are
 already present in the blocklace.
