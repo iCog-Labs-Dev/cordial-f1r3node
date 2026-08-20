@@ -37,11 +37,15 @@ use cordial_miners_core::crypto::{self, Ed25519Scheme, Secp256k1Scheme, Signatur
 #[allow(unused)]
 use cordial_miners_core::types::{BlockIdentity, NodeId};
 
-use crate::block_translation::{BlockMessage, message_to_block};
+use models::rust::casper::protocol::casper_message::BlockMessage as F1r3nodeBlockMessage;
+
+use crate::block_translation::{
+    BlockMessage as AdapterBlockMessage, message_from_f1r3node, message_to_block,
+};
 
 /// A pure, stateless validator for protobuf blocks from f1r3node.
 ///
-/// Accepts f1r3node [`BlockMessage`] (protobuf wire format), translates to internal
+/// Accepts f1r3node [`F1r3nodeBlockMessage`] (protobuf wire format), translates to internal
 /// [`Block`] format, and validates structural integrity (hashes, signatures, parent
 /// references). The signature algorithm is dispatched from the protobuf message.
 ///
@@ -75,6 +79,20 @@ pub struct GrpcBlockMapper<V = (), P = (), Id = ()> {
     _phantom: std::marker::PhantomData<(V, P, Id)>,
 }
 
+/// A wire-authenticated f1r3node block and its translated Cordial content.
+///
+/// The wire signature is valid for [`Self::wire_hash`] (`Hf`), not for the
+/// translated block's Cordial content hash (`Hc`). Keeping the attestation
+/// separate prevents downstream Cordial verifiers from interpreting an `Hf`
+/// signature as an `Hc` signature.
+#[derive(Debug, Clone)]
+pub struct ValidatedF1r3nodeBlock {
+    pub block: Block,
+    pub wire_hash: [u8; 32],
+    pub wire_signature: Vec<u8>,
+    pub signature_algorithm: String,
+}
+
 impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
     /// Create a new mapper with no configuration.
     pub fn new() -> Self {
@@ -83,16 +101,16 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
         }
     }
 
-    /// Translate and validate a protobuf [`BlockMessage`] to a consensus [`Block`].
+    /// Translate and validate a protobuf [`F1r3nodeBlockMessage`] to a consensus [`Block`].
     ///
     /// Performs the following steps:
     ///
-    /// 1. **Protobuf translation**: Converts f1r3node [`BlockMessage`] to internal [`Block`]
-    ///    format via [`message_to_block`]
-    /// 2. **Algorithm extraction**: Gets signature algorithm from `BlockMessage.sig_algorithm`
-    /// 3. **Content hash validation**: Verifies wire `block_hash` and translated identity both match the recomputed Blake2b-256 hash
-    /// 4. **Signature validation**: Verifies block signature using the extracted algorithm
-    /// 5. **Parent integrity**: Ensures all parent references are well-formed
+    /// 1. **Wire hash validation**: Recomputes f1r3node's protobuf hash with
+    ///    `proto_util::hash_block`
+    /// 2. **Signature validation**: Verifies the signature over that wire hash
+    /// 3. **Translation**: Converts the validated message into Cordial's internal
+    ///    [`Block`] and independently derives its content hash
+    /// 4. **Parent integrity**: Ensures all parent references are well-formed
     ///
     /// Returns an error if any step fails. Errors are detailed and actionable
     /// for logging and debugging.
@@ -103,12 +121,61 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
     ///
     /// # Returns
     ///
-    /// - `Ok(Block)` if all validations pass
+    /// - `Ok(ValidatedF1r3nodeBlock)` if all validations pass
     /// - `Err(anyhow::Error)` with a detailed message if translation or validation fails
-    pub fn from_protobuf(&self, block_msg: &BlockMessage) -> Result<Block> {
-        // 1. Translate protobuf message to internal Block format
-        let block = message_to_block(block_msg)
+    pub fn from_protobuf(
+        &self,
+        block_msg: &F1r3nodeBlockMessage,
+    ) -> Result<ValidatedF1r3nodeBlock> {
+        // Validate the original f1r3node model before the intentionally lossy
+        // translation drops execution-event details.
+        let wire_hash = casper::rust::util::proto_util::hash_block(block_msg);
+        if block_msg.block_hash.as_ref() != wire_hash.as_ref() {
+            return Err(anyhow!(
+                "Wire hash mismatch: block_hash {:?} does not match f1r3node hash {:?}",
+                block_msg.block_hash,
+                wire_hash
+            ));
+        }
+
+        self.validate_signature_bytes(
+            wire_hash.as_ref(),
+            block_msg.sender.as_ref(),
+            block_msg.sig.as_ref(),
+            &block_msg.sig_algorithm,
+        )?;
+
+        let adapter_msg = message_from_f1r3node(block_msg)
+            .map_err(|e| anyhow!("Failed to convert f1r3node BlockMessage: {e:?}"))?;
+        let mut block = message_to_block(&adapter_msg)
             .map_err(|e| anyhow!("Failed to translate BlockMessage to Block: {e:?}"))?;
+
+        self.validate_internal_content_hash(&block)?;
+        self.validate_parents(&block)?;
+
+        let wire_hash: [u8; 32] = wire_hash
+            .as_ref()
+            .try_into()
+            .map_err(|_| anyhow!("f1r3node returned a non-32-byte block hash"))?;
+        let wire_signature = std::mem::take(&mut block.identity.signature);
+
+        Ok(ValidatedF1r3nodeBlock {
+            block,
+            wire_hash,
+            wire_signature,
+            signature_algorithm: block_msg.sig_algorithm.clone(),
+        })
+    }
+
+    /// Translate an adapter-owned message that is already in Cordial's hash
+    /// domain.
+    ///
+    /// This compatibility path is for locally constructed adapter messages;
+    /// network protobuf messages must use [`Self::from_protobuf`] so their
+    /// f1r3node wire hash and signature are verified before translation.
+    pub fn from_adapter_message(&self, block_msg: &AdapterBlockMessage) -> Result<Block> {
+        let block = message_to_block(block_msg)
+            .map_err(|e| anyhow!("Failed to translate adapter BlockMessage to Block: {e:?}"))?;
 
         // 2. Extract signature algorithm (case-insensitive, default to secp256k1)
         let sig_algo = block_msg.sig_algorithm.to_lowercase();
@@ -123,7 +190,7 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
         //    content, then verify it matches the identity stored in the translated block.
         //    This catches corruption of block_msg.block_hash before translation silently
         //    discards the tampered value.
-        self.validate_content_hash_against_wire(block_msg, &block)?;
+        self.validate_adapter_content_hash(block_msg, &block)?;
 
         // 4. Validate signature (algorithm-specific from protobuf)
         self.validate_signature(&block, sig_algo)?;
@@ -139,9 +206,9 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
     ///
     /// Checks both the raw wire `block_msg.block_hash` (before translation can discard it)
     /// and the translated `block.identity.content_hash`, using Blake2b-256 (f1r3node alignment).
-    fn validate_content_hash_against_wire(
+    fn validate_adapter_content_hash(
         &self,
-        block_msg: &BlockMessage,
+        block_msg: &AdapterBlockMessage,
         block: &Block,
     ) -> Result<()> {
         let recomputed = crypto::hash_content(&block.content);
@@ -172,6 +239,17 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
         Ok(())
     }
 
+    fn validate_internal_content_hash(&self, block: &Block) -> Result<()> {
+        let recomputed = crypto::hash_content(&block.content);
+        if block.identity.content_hash != recomputed {
+            return Err(anyhow!(
+                "Content hash mismatch: translated identity {:?} does not match recomputed {recomputed:?}",
+                block.identity.content_hash
+            ));
+        }
+        Ok(())
+    }
+
     /// Verify that the block's signature is valid for its creator.
     ///
     /// The signature verification algorithm is dispatched based on the `sig_algorithm`
@@ -191,9 +269,28 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
     /// - `Ok(())` if the signature is valid
     /// - `Err` if the signature verification fails, public key is invalid, or algorithm is unknown
     fn validate_signature(&self, block: &Block, sig_algorithm: &str) -> Result<()> {
-        let creator_key = &block.identity.creator.0;
-        let hash_array = &block.identity.content_hash;
-        let signature = &block.identity.signature;
+        self.validate_signature_bytes(
+            &block.identity.content_hash,
+            &block.identity.creator.0,
+            &block.identity.signature,
+            sig_algorithm,
+        )
+    }
+
+    fn validate_signature_bytes(
+        &self,
+        signed_hash: &[u8],
+        creator_key: &[u8],
+        signature: &[u8],
+        sig_algorithm: &str,
+    ) -> Result<()> {
+        let sig_algorithm = sig_algorithm.to_lowercase();
+        let signed_hash: &[u8; 32] = signed_hash.try_into().map_err(|_| {
+            anyhow!(
+                "Signed hash has invalid length: {} bytes (expected 32)",
+                signed_hash.len()
+            )
+        })?;
 
         // Signature must not be empty
         if signature.is_empty() {
@@ -201,9 +298,9 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
         }
 
         // Dispatch verification based on algorithm
-        let valid = match sig_algorithm {
-            "secp256k1" => Secp256k1Scheme.verify(hash_array, creator_key, signature),
-            "ed25519" => Ed25519Scheme.verify(hash_array, creator_key, signature),
+        let valid = match sig_algorithm.as_str() {
+            "secp256k1" => Secp256k1Scheme.verify(signed_hash, creator_key, signature),
+            "ed25519" => Ed25519Scheme.verify(signed_hash, creator_key, signature),
             other => {
                 return Err(anyhow!(
                     "Unknown signature algorithm: {other} (expected 'secp256k1' or 'ed25519')"

@@ -737,6 +737,7 @@ dependencies = [
  "cordial-f1r3space-adapter",
  "cordial-miners-core",
  "criterion",
+ "crypto",
  "ed25519-dalek",
  "either",
  "heed 0.20.5",

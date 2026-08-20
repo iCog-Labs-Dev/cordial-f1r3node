@@ -42,6 +42,7 @@ use cordial_miners_core::execution::{
     RejectedDeploy as CmRejectedDeploy, SignedDeploy as CmSignedDeploy,
 };
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
+use models::rust::casper::protocol::casper_message as wire;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Mirror of f1r3node wire types
@@ -185,6 +186,129 @@ pub enum TranslationError {
 
     /// A predecessor id could not be reconstructed from the wire hash (length mismatch).
     InvalidPredecessorHash { expected_len: usize, got: usize },
+}
+
+/// Convert the real f1r3node model into the adapter's translation model.
+///
+/// Callers at a network trust boundary must validate the original
+/// [`wire::BlockMessage`] before invoking this conversion. The adapter payload
+/// intentionally omits execution events, so reconstructing a wire hash from
+/// the translated value would not be byte-for-byte equivalent for every
+/// f1r3node block.
+pub fn message_from_f1r3node(msg: &wire::BlockMessage) -> Result<BlockMessage, TranslationError> {
+    let system_deploys = msg
+        .body
+        .system_deploys
+        .iter()
+        .map(|deploy| match deploy {
+            wire::ProcessedSystemDeploy::Succeeded { system_deploy, .. } => match system_deploy {
+                wire::SystemDeployData::Slash {
+                    issuer_public_key, ..
+                } => ProcessedSystemDeploy::Slash {
+                    validator: issuer_public_key.bytes.to_vec(),
+                    succeeded: true,
+                },
+                wire::SystemDeployData::CloseBlockSystemDeployData
+                | wire::SystemDeployData::Empty => {
+                    ProcessedSystemDeploy::CloseBlock { succeeded: true }
+                }
+            },
+            wire::ProcessedSystemDeploy::Failed { .. } => {
+                // f1r3node's failed form does not retain which system deploy
+                // was attempted. Preserve the failure without inventing a
+                // validator identity.
+                ProcessedSystemDeploy::CloseBlock { succeeded: false }
+            }
+        })
+        .collect();
+
+    Ok(BlockMessage {
+        block_hash: msg.block_hash.to_vec(),
+        header: Header {
+            parents_hash_list: msg
+                .header
+                .parents_hash_list
+                .iter()
+                .map(|hash| hash.to_vec())
+                .collect(),
+            timestamp: msg.header.timestamp,
+            version: msg.header.version,
+            extra_bytes: msg.header.extra_bytes.to_vec(),
+        },
+        body: Body {
+            state: F1r3flyState {
+                pre_state_hash: msg.body.state.pre_state_hash.to_vec(),
+                post_state_hash: msg.body.state.post_state_hash.to_vec(),
+                bonds: msg
+                    .body
+                    .state
+                    .bonds
+                    .iter()
+                    .map(|bond| Bond {
+                        validator: bond.validator.to_vec(),
+                        stake: bond.stake,
+                    })
+                    .collect(),
+                block_number: msg.body.state.block_number,
+            },
+            deploys: msg
+                .body
+                .deploys
+                .iter()
+                .map(|deploy| {
+                    Ok(ProcessedDeploy {
+                        deploy: SignedDeployData {
+                            data: DeployData {
+                                term: deploy.deploy.data.term.clone(),
+                                time_stamp: deploy.deploy.data.time_stamp,
+                                phlo_price: deploy.deploy.data.phlo_price,
+                                phlo_limit: deploy.deploy.data.phlo_limit,
+                                valid_after_block_number: deploy
+                                    .deploy
+                                    .data
+                                    .valid_after_block_number,
+                                shard_id: deploy.deploy.data.shard_id.clone(),
+                                expiration_timestamp: deploy.deploy.data.expiration_timestamp,
+                            },
+                            pk: deploy.deploy.pk.bytes.to_vec(),
+                            sig: deploy.deploy.sig.to_vec(),
+                            sig_algorithm: deploy.deploy.sig_algorithm.name(),
+                        },
+                        cost: i64::try_from(deploy.cost.cost).map_err(|_| {
+                            TranslationError::NumericOverflow("processed_deploy.cost")
+                        })?,
+                        deploy_log: vec![],
+                        is_failed: deploy.is_failed,
+                        system_deploy_error: deploy.system_deploy_error.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, TranslationError>>()?,
+            rejected_deploys: msg
+                .body
+                .rejected_deploys
+                .iter()
+                .map(|deploy| RejectedDeploy {
+                    sig: deploy.sig.to_vec(),
+                })
+                .collect(),
+            system_deploys,
+            extra_bytes: msg.body.extra_bytes.to_vec(),
+        },
+        justifications: msg
+            .justifications
+            .iter()
+            .map(|justification| Justification {
+                validator: justification.validator.to_vec(),
+                latest_block_hash: justification.latest_block_hash.to_vec(),
+            })
+            .collect(),
+        sender: msg.sender.to_vec(),
+        seq_num: msg.seq_num,
+        sig: msg.sig.to_vec(),
+        sig_algorithm: msg.sig_algorithm.clone(),
+        shard_id: msg.shard_id.clone(),
+        extra_bytes: msg.extra_bytes.to_vec(),
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────

@@ -1,13 +1,11 @@
 //! Benchmark: tau ordering
 //!
-//! Covers three main axes:
+//! Covers two main axes:
 //!
 //! 1. **`weighted_tau` vs `weighted_tau_with_cache`** — over blocklaces with
 //!    1, 3, and 10 finalized waves.
 //! 2. **`xsort`** — deterministic topological sort of block sets of sizes
 //!    50, 500, and 5 000.
-//! 3. **`OrderedFinalizedOutput` construction** — building the output struct
-//!    and extracting `block_hashes()` at 100, 1 000, and 10 000 blocks.
 
 use std::collections::{HashMap, HashSet};
 
@@ -193,66 +191,10 @@ fn bench_xsort(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_ordered_finalized_output(c: &mut Criterion) {
-    use cordial_miners_core::types::BlockIdentity;
-
-    // Build synthetic BlockIdentity vectors of different sizes.
-    let make_ids = |n: usize| -> Vec<BlockIdentity> {
-        (0..n as u64)
-            .map(|tag| {
-                let mut hash = [0u8; 32];
-                hash[0..8].copy_from_slice(&tag.to_le_bytes());
-                BlockIdentity {
-                    content_hash: hash,
-                    creator: node(0),
-                    signature: tag.to_le_bytes().to_vec(),
-                }
-            })
-            .collect()
-    };
-
-    let sizes: &[usize] = &[100, 1_000, 10_000];
-
-    // Construction benchmark
-    let mut group = c.benchmark_group("tau_ordering/ordered_output_construction");
-    group.sample_size(20);
-
-    for &n in sizes {
-        let ids = make_ids(n);
-        group.bench_with_input(BenchmarkId::new(format!("n{n}"), ""), &ids, |b, ids| {
-            b.iter(|| {
-                let anchor = ids.last().cloned();
-                // Measure the full block-identity round-trip: clone
-                // the ordered block list and pull hashes — the same
-                // work OrderedFinalizedOutput::new + block_hashes() does.
-                let hashes: Vec<Vec<u8>> = ids.iter().map(|id| id.content_hash.to_vec()).collect();
-                let _ = (hashes, anchor);
-            });
-        });
-    }
-    group.finish();
-
-    // block_hashes() extraction benchmark
-    let mut group = c.benchmark_group("tau_ordering/block_hashes_extraction");
-    group.sample_size(20);
-
-    for &n in sizes {
-        let ids = make_ids(n);
-        group.bench_with_input(BenchmarkId::new(format!("n{n}"), ""), &ids, |b, ids| {
-            b.iter(|| {
-                let hashes: Vec<Vec<u8>> = ids.iter().map(|id| id.content_hash.to_vec()).collect();
-                hashes
-            });
-        });
-    }
-    group.finish();
-}
-
 criterion_group!(
     benches,
     bench_weighted_tau,
     bench_weighted_tau_with_cache,
     bench_xsort,
-    bench_ordered_finalized_output,
 );
 criterion_main!(benches);
