@@ -44,22 +44,24 @@ structure BlockContent where
 
 /-! ### Block Identity / Hash -/
 
-/-- Abstract hash function mapping block content to a block identifier.
+/-- Abstract hash function mapping creator identity and block content to a block identifier.
 
-The concrete cryptographic hash is intentionally not modeled.
+Corresponds to paper §2.2: i = signedhash((v, P), k_p).
+Including creator NodeId ensures two distinct nodes creating identical content yield
+distinct block identifiers (matching Rust BlockIdentity).
 -/
-opaque hashContent : BlockContent → BlockId
+opaque hashContent : NodeId → BlockContent → BlockId
 
 /--
 Hash injectivity assumption.
 
-This is a trusted mathematical boundary: if two block contents have
-the same block ID, then their contents are equal.
+This is a trusted mathematical boundary: if two blocks have the same block ID,
+then their creator node IDs and block contents are equal.
 
 All downstream acyclicity reasoning relies on this assumption.
 -/
-axiom hashInj {c1 c2 : BlockContent}
-    (h : hashContent c1 = hashContent c2) : c1 = c2
+axiom hashInj {n1 n2 : NodeId} {c1 c2 : BlockContent}
+    (h : hashContent n1 c1 = hashContent n2 c2) : n1 = n2 ∧ c1 = c2
 
 /-! ### Block -/
 
@@ -70,13 +72,13 @@ A block consists of:
 * an identifier
 * the node that created it
 * its content (payload and predecessors)
-* a well-formedness proof that its identifier is the hash of its content
+* a well-formedness proof that its identifier is the signed hash of its creator and content
 -/
 structure Block where
   id        : BlockId
   creator   : NodeId
   content   : BlockContent
-  id_eq     : id = hashContent content
+  id_eq     : id = hashContent creator content
   deriving DecidableEq
 
 end CordialMiners

@@ -42,11 +42,11 @@ structure Block where
   id      : BlockId
   creator : NodeId
   content : BlockContent
-  id_eq   : id = hashContent content
+  id_eq   : id = hashContent creator content
 ```
 
 `id_eq` is a proof-carrying invariant: every `Block` is self-certifying, its identity is
-definitionally the hash of its content. You cannot fabricate a `Block` value with a mismatched ID.
+definitionally the signed hash of its creator identity and content. You cannot fabricate a `Block` value with a mismatched ID.
 
 **Rust:** `Block { identity, content }` (`block.rs`).
 
@@ -55,15 +55,13 @@ definitionally the hash of its content. You cannot fabricate a `Block` value wit
 ### `hashContent` and `hashInj`
 
 ```lean
-opaque hashContent : BlockContent → BlockId
+opaque hashContent : NodeId → BlockContent → BlockId
 
-axiom hashInj {c1 c2 : BlockContent}
-    (h : hashContent c1 = hashContent c2) : c1 = c2
+axiom hashInj {n1 n2 : NodeId} {c1 c2 : BlockContent}
+    (h : hashContent n1 c1 = hashContent n2 c2) : n1 = n2 ∧ c1 = c2
 ```
 
-`hashContent` is `opaque`; Lean treats it as an abstract function. `hashInj` is the **only
-non-standard axiom** in the formalization, it asserts collision-resistance. All acyclicity
-and well-foundedness reasoning depends on it.
+`hashContent` is `opaque`; Lean treats it as an abstract function mapping a creator `NodeId` and `BlockContent` to a `BlockId` (matching paper §2.2: $i = \text{signedhash}((v, P), k_p)$). `hashInj` is the **only non-standard axiom** in the formalization, asserting collision-resistance across creator-content pairs. Including `NodeId` ensures two distinct nodes creating identical content yield distinct `BlockId` values (matching Rust `BlockIdentity`).
 
 ---
 
