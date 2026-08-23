@@ -525,13 +525,14 @@ impl<A> LiveIngress<A> {
         ))
     }
 
-    /// Return the latest finalized ordered fragment from live mirrored state.
+    /// Return the latest finalized ordered output through the stable
+    /// `ordered_output` export seam: the finalized-prefix blocks (full
+    /// [`BlockIdentity`] entries, not bare hashes), linearized via weighted
+    /// tau ordering, together with the anchor and consensus metadata needed
+    /// to interpret them.
     ///
-    /// This is a read-only seam that exposes the weighted tau ordering over
-    /// the current blocklace mirror. The returned [`OrderedFinalizedOutput`]
-    /// contains the deterministic topological order (predecessor-first) of all
-    /// finalized blocks, the anchoring weighted final leader, consensus
-    /// metadata, and a wall-clock timestamp.
+    /// `anchor` is `None` and `blocks` is empty when the mirrored state does
+    /// not yet have a finalized leader.
     ///
     /// This is the boundary inspection tooling and downstream consumers
     /// should use instead of recomputing ordering against the mirrored
