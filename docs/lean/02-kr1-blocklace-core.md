@@ -76,7 +76,7 @@ in Rust (`blocklace.rs:14`), but with the `id_eq` invariant tracked per block.
 
 ---
 
-### `Closed`
+### `Closed` and `ValidBlocklace`
 
 ```lean
 def Closed (B : Blocklace) : Prop :=
@@ -84,13 +84,20 @@ def Closed (B : Blocklace) : Prop :=
     B.lookup id = some blk →
       ∀ p ∈ blk.content.predecessors,
         p ∈ B.keys
+
+inductive ValidBlocklace : Blocklace → Prop where
+  | empty : ValidBlocklace emptyBlocklace
+  | insert (B : Blocklace) (blk : Block)
+      (hValid : ValidBlocklace B)
+      (hInsertable : Insertable B blk)
+      (hNew : blk.id ∉ B.keys) :
+      ValidBlocklace (blocklaceInsert B blk)
 ```
 
-`Closed B` holds iff every predecessor referenced by any block in `B` is itself present in
-`B`. This is the **CLOSED** invariant from Definition 2.3: no dangling pointers.
+`Closed B` holds iff every predecessor referenced by any block in `B` is itself present in `B` (no dangling pointers).
+`ValidBlocklace B` is the inductive structural construction of a blocklace starting from `emptyBlocklace` by inserting valid, closure-respecting (`Insertable`), fresh blocks. Every `ValidBlocklace` is `Closed` (`closed_of_valid`).
 
-**Rust:** `Blocklace::is_closed` (`blocklace.rs:183–191`); enforced at insert time
-(`blocklace.rs:159–165`).
+**Rust:** `Blocklace::is_closed` (`blocklace.rs:183–191`); enforced at insert time (`blocklace.rs:159–165`).
 
 ---
 
@@ -129,22 +136,30 @@ def PrecedesOrEquals (B : Blocklace) (a b : BlockId) : Prop :=
 
 **Rust:**
 - `Precedes`         ↔ `Blocklace::precedes`            (`blocklace.rs:277–281`)
-- `PrecedesOrEquals` ↔ `Blocklace::preceedes_or_equals`  (`blocklace.rs:284–286`)
+- `PrecedesOrEquals` ↔ `Blocklace::precedes_or_equals`  (`blocklace.rs:284–286`)
 
-## 2. Trusted Boundary: Hash Injectivity
+---
+
+## 2. Trusted Boundaries (Axioms)
+
+The formalization relies on **a single trusted boundary axiom**:
+
+### Cryptographic Hash Injectivity (`hashInj`)
 
 ```lean
-axiom hashInj {c1 c2 : BlockContent}
-    (h : hashContent c1 = hashContent c2) : c1 = c2
+opaque hashContent : NodeId → BlockContent → BlockId
+
+axiom hashInj {n1 n2 : NodeId} {c1 c2 : BlockContent}
+    (h : hashContent n1 c1 = hashContent n2 c2) : n1 = n2 ∧ c1 = c2
 ```
 
-This is stated explicitly as a **trusted boundary**, not proved. It represents the
-collision-resistance of the cryptographic hash function used in production. All acyclicity
-reasoning (`directPred_wf`, `directPred_acyclic`, `observes_antisymm`) traces back to this
-assumption.
+This represents the collision-resistance of the cryptographic hash function used in production. It ensures that distinct creator-content pairs produce distinct block identifiers.
 
-**Future work:** replace `directPred_wf` with a constructive proof once blocks carry a
-rank/depth field that strictly decreases along predecessor edges.
+> [!NOTE]
+> **Zero Axioms for DAG Structure**:
+> All structural DAG properties (`directPred_wf_of_valid`, `directPred_acyclic`, `observes_antisymm`, `observeSet_equiv`) are **100% constructive theorems** proved via structural induction over `ValidBlocklace` derivations. No external assumptions or axioms are used.
+
+---
 
 ## 3. Key Theorems
 
@@ -159,8 +174,7 @@ theorem insertPreservesClosed
 ```
 
 Any protocol layer that calls `insert` on an already-closed blocklace with an insertable block
-can assume the resulting blocklace is still closed. This is what makes every downstream proof
-about "any closed blocklace" applicable after every insertion.
+can assume the resulting blocklace is still closed.
 
 **Rust:** correctness of `Blocklace::insert` (`blocklace.rs:148–170`).
 
@@ -182,25 +196,28 @@ Formalizes the error path of `Blocklace::insert` (`blocklace.rs:160–164`).
 
 ---
 
-### 3.3 Acyclicity / Well-Foundedness
+### 3.3 Structural Acyclicity and Well-Foundedness
 
 ```lean
-axiom directPred_wf
-    (B : Blocklace) (hClosed : Closed B) :
-    WellFounded (DirectPred B)
+theorem directPred_acc
+    (B : Blocklace) (hV : ValidBlocklace B) :
+    ∀ id, Acc (fun a b => DirectPred B b a) id
+
+theorem directPred_wf_of_valid
+    (B : Blocklace) (h : ValidBlocklace B) :
+    WellFounded (fun a b => DirectPred B b a)
 
 theorem directPred_acyclic
-    (B : Blocklace) (hClosed : Closed B)
+    (B : Blocklace) (hV : ValidBlocklace B)
     {a : BlockId}
-    (hcycle : Relation.TransGen (DirectPred B) a a) :
+    (hcycle : TransGen (DirectPred B) a a) :
     False
 ```
 
-`directPred_wf` is a trusted well-foundedness assumption encoding the DAG invariant.
-`directPred_acyclic` is a proved consequence: no block can be its own ancestor.
+`directPred_acc` and `directPred_wf_of_valid` are proved by induction over `ValidBlocklace` constructors using edge transfer lemmas (`directPred_insert_of_ne`, `directPred_insert_self`). `directPred_acyclic` is a proved consequence: no block can be its own ancestor.
 
 **Why it matters:** every fixed-point argument (finality safety, ordering convergence) relies
-on the observation relation being a DAG. A cycle would make "deepest block" ill-defined.
+on the observation relation being an acyclic DAG.
 
 ---
 
@@ -209,8 +226,9 @@ on the observation relation being a DAG. A cycle would make "deepest block" ill-
 ```lean
 theorem observes_refl      : Observes B a a
 theorem observes_trans      : Observes B a b → Observes B b c → Observes B a c
-theorem observes_antisymm   : Closed B → Observes B a b → Observes B b a → a = b
+theorem observes_antisymm   : ValidBlocklace B → Observes B a b → Observes B b a → a = b
 theorem observes_partialOrder :
+    ValidBlocklace B →
     (∀ a, Observes B a a) ∧
     (∀ a b c, Observes B a b → Observes B b c → Observes B a c) ∧
     (∀ a b, Observes B a b → Observes B b a → a = b)
@@ -234,28 +252,43 @@ theorem observes_mono
 ```
 
 Blocklaces only grow (blocks are never removed in the consensus path). Cone monotonicity
-formalizes: what you could see before, you can still see after new blocks are added. Used by
-any argument of the form "once approved, always approved."
+formalizes: what you could see before, you can still see after new blocks are added.
 
 ---
-### 3.6 `observeSet` Soundness, Completeness, Equivalence
+
+### 3.6 Executable `observeSet` (Soundness & Completeness)
 
 ```lean
-noncomputable def observeSet (B : Blocklace) (a : BlockId) : Finset BlockId :=
-  letI : DecidablePred (Observes B a) := fun _ => Classical.propDecidable _
-  B.keys.filter (Observes B a)
+def observeSetWF
+    (B : Blocklace) (hwf : WellFounded (fun a b => DirectPred B b a)) :
+    BlockId → Finset BlockId :=
+  hwf.fix (fun x rec =>
+    match _hB : B.lookup x with
+    | none => {x}
+    | some blk =>
+        insert x (blk.content.predecessors.attach.biUnion
+          (fun p => rec p.1 ⟨blk, _hB, p.2⟩)))
 
-theorem observeSet_sound    : p ∈ observeSet B a → Observes B a p
-theorem observeSet_complete : p ∈ B.keys → Observes B a p → p ∈ observeSet B a
-theorem observeSet_equiv    : p ∈ B.keys → (p ∈ observeSet B a ↔ Observes B a p)
+def observeSet (B : Blocklace) (hV : ValidBlocklace B) (a : BlockId) : Finset BlockId :=
+  observeSetWF B (directPred_wf_of_valid B hV) a
+
+theorem observeSet_sound
+    (B : Blocklace) (hV : ValidBlocklace B) (a : BlockId) :
+    ∀ p, p ∈ observeSet B hV a → Observes B a p
+
+theorem observeSet_complete
+    (B : Blocklace) (hV : ValidBlocklace B) (a p : BlockId)
+    (_hp : p ∈ B.keys) (h : Observes B a p) :
+    p ∈ observeSet B hV a
+
+theorem observeSet_equiv
+    (B : Blocklace) (hV : ValidBlocklace B) (a p : BlockId) (hp : p ∈ B.keys) :
+    p ∈ observeSet B hV a ↔ Observes B a p
 ```
 
-`observeSet` is `noncomputable` because `Observes` is `Prop`-valued and `Finset.filter`
-needs classical decidability. The sound/complete pair provides the bidirectional bridge
-between the finite-set representation (`Finset BlockId`) and the logical `Observes` relation.
+`observeSet` is **fully executable and computable**. It uses well-founded recursion (`observeSetWF`) to compute the exact reachability cone of block `a`.
 
-**Rust:** `Blocklace::observe` (`blocklace.rs:230–257`),
-`Blocklace::ancestors_inclusive` (`blocklace.rs:261–267`).
+**Rust:** `Blocklace::observe` (`blocklace.rs:230–257`), `Blocklace::ancestors_inclusive` (`blocklace.rs:261–267`).
 
 ---
 
@@ -274,13 +307,14 @@ Every strict predecessor is observed (at least one edge ⊆ zero-or-more edges).
 
 ## 4. Rust Mapping Table
 
-| Lean definition / theorem | Rust function | File | Lines |
+| Lean definition / theorem | Rust function / Type | File | Lines |
 |---|---|---|---|
 | `BlockId` | `BlockIdentity` | `types/identity_id.rs` | 15–25 |
 | `BlockContent` | `BlockContent` | `types/content_id.rs` | 10–22 |
 | `Block` | `Block` | `block.rs` | 15–40 |
 | `Blocklace` | `Blocklace.blocks` | `blocklace.rs` | 13–21 |
 | `Closed B` | `Blocklace::is_closed` | `blocklace.rs` | 183–191 |
+| `ValidBlocklace B` | Valid blocklace construction | `blocklace.rs` | 148–170 |
 | `Insertable B blk` | predecessor check in `insert` | `blocklace.rs` | 159–165 |
 | `blocklaceInsert` | `commit_validated` | `blocklace.rs` | 58–61 |
 | `insertPreservesClosed` | correctness of `insert` gate | `blocklace.rs` | 148–170 |
@@ -289,10 +323,13 @@ Every strict predecessor is observed (at least one edge ⊆ zero-or-more edges).
 | `hashInj` | collision-resistance (trusted) | *(axiom)* | — |
 | `DirectPred B b p` | `Blocklace::predecessors` | `blocklace.rs` | 198–203 |
 | `Observes B a b` | `Blocklace::precedes_or_equals` | `blocklace.rs` | 284–286 |
-| `observeSet B a` | `Blocklace::observe` | `blocklace.rs` | 230–257 |
+| `observeSet B hV a` | `Blocklace::observe` | `blocklace.rs` | 230–257 |
+| `observeSet_sound` | Soundness of observation fold | — | — |
+| `observeSet_complete` | Completeness of observation fold | — | — |
+| `observeSet_equiv` | Bi-implication equivalence ($\iff$) | — | — |
 | `Precedes B a b` | `Blocklace::precedes` | `blocklace.rs` | 277–281 |
 | `PrecedesOrEquals B a b` | `Blocklace::preceedes_or_equals` | `blocklace.rs` | 284–286 |
-| `directPred_wf` | DAG invariant (no cycles, trusted) | *(axiom)* | — |
-| `directPred_acyclic` | DAG acyclicity consequence | — | — |
+| `directPred_wf_of_valid` | Structural DAG well-foundedness | *(proved theorem)* | — |
+| `directPred_acyclic` | DAG acyclicity consequence | *(proved theorem)* | — |
 | `observes_antisymm` | partial order / no mutual observation | Definition 2.2 | — |
 | `observes_mono` | monotonicity of observation cone | `blocklace.rs` | 230–257 |
