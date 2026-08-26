@@ -289,6 +289,13 @@ The executable `observeSet`, requiring proof `B` is validly constructed.
 def observeSet (B : Blocklace) (hV : ValidBlocklace B) (a : BlockId) : Finset BlockId :=
   observeSetWF B (directPred_wf_of_valid B hV) a
 
+/-- `observedBlockIds B hV a` is the set of all blocks in the blocklace `B`
+that are observed by block `a` and are distinct from `a` itself. corresponds with
+Rust: `cordiality::observed_block_ids`
+-/
+def observedBlockIds (B : Blocklace) (hV : ValidBlocklace B) (a : BlockId) : Finset BlockId :=
+  (observeSet B hV a).erase a
+
 /-- Every element of `observeSet` is observed by `a`. -/
 theorem observeSet_sound
     (B : Blocklace) (hV : ValidBlocklace B) (a : BlockId) :
