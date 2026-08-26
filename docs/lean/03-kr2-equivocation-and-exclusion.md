@@ -85,9 +85,21 @@ chain, not a tree.
 `ExtendsOwnChain` is stated as an explicit hypothesis rather than derived,
 mirroring `satisfies_chain_axiom` in `blocklace.rs:252–279`, which the Rust
 side likewise treats as an invariant to be checked, not something proved
-from more primitive facts. This is why "the chain of validator v" is a
-well-defined, unambiguous object everywhere else in the protocol — an
-equivocator is precisely the validator for whom this fails.
+from more primitive facts.
+
+**`HonestIn` vs `ExtendsOwnChain` — two distinct predicates.**
+`HonestIn B v` rules out only same-round duplication: `v` never has two
+distinct blocks at the *same* round. `ExtendsOwnChain B v` is a strictly
+stronger property: every later block observes every earlier block, across
+*all* round pairs. A validator could satisfy `HonestIn` (one block per
+round) yet violate `ExtendsOwnChain` by producing blocks at different rounds
+that are incomparable — i.e. neither observes the other. Such a validator
+also fails Rust's `satisfies_chain_axiom`, which checks all block pairs
+regardless of round. `honest_chain_linear` therefore requires *both*
+`HonestIn` and `ExtendsOwnChain` to conclude the full chain property;
+`HonestIn` alone is not enough. The Rust side conflates these into one
+`satisfies_chain_axiom` check; the Lean side makes the decomposition
+explicit.
 
 ## Acknowledgement and its monotonicity
 
