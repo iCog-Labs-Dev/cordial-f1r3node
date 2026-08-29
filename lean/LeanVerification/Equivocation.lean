@@ -1,896 +1,418 @@
+/-
+Equivocation and exclusion (KR2): the one Byzantine behavior Cordial
+Miners cares about — a validator producing two blocks that sit side by
+side in the DAG, neither observing the other — and the structural
+guarantee that no single block can vouch for both sides of it.
+
+Owned by Issue 03 (KR2 — Equivocation and Exclusion).
+
+## Round-free by design (see review history)
+
+An earlier version of this file introduced a `CreatorRound` typeclass
+bundling a `roundOf : Blocklace → BlockId → Option ℕ` projection plus an
+axiom, `round_lt_of_observes`, asserting (unproved) that round strictly
+decreases along `Observes`. Review feedback on that version was direct:
+since `round` was a new concept being introduced *by this file*, it
+should either be proved, not assumed — or better, not introduced at all
+if the file doesn't actually need it. It doesn't: equivocation only needs
+same creator, distinct blocks, and incomparability under `Observes`, none
+of which requires a round number anywhere. So this version drops
+`CreatorRound`/`roundOf` entirely rather than trying to prove
+`round_lt_of_observes` — there is no "round" concept left in this file to
+have opinions about.
+
+This also happens to fix a real, distinct bug the round-based version had
+that showed up as `lake build` failures once the file finally got past an
+earlier (unrelated) `lake update`-caused build stall: `roundOf`'s own
+argument types (`Blocklace`, `BlockId`) never mentioned `Validator`, so
+Lean had no way to infer which `CreatorRound Validator` instance a bare
+call like `roundOf B b` should resolve against. That surfaced as
+"Application type mismatch ... `@roundOf B`" and "typeclass instance
+problem is stuck" errors at several call sites, and very likely explains
+the earlier multi-hour build hang too (unconstrained typeclass search on
+`CreatorRound ?m` backtracking extensively before ever reporting
+anything). Going round-free removes the typeclass entirely, so there is
+no instance-resolution ambiguity left to hang or misfire on.
+
+## Concrete types now, not a placeholder signature
+
+Issue 02's `Block.lean`/`Blocklace.lean`/`Observe.lean` have all landed,
+so this file no longer develops against an abstract stand-in signature —
+`Blocklace`, `BlockId`, `Block`, and `Observes` are the real, concrete
+definitions. In particular `Block.creator : NodeId` (with
+`NodeId := Nat`) means there is no generic `Validator` type parameter
+here at all; `NodeId` is used directly. `creatorOf` below is a plain,
+ordinary function (`Blocklace → BlockId → Option NodeId`), not a class
+field, so calling it is never ambiguous.
+
+Equivocation is defined structurally, via incomparability under
+`Observes`, rather than via a round number — this matches how
+`consensus/approval.rs`'s `approves` actually excludes conflicting blocks
+(any observed, incomparable block by the same creator, not only
+same-round ones) more closely than a same-round-only definition would.
+It is phrased directly in terms of `Observes` rather than `Precedes`/
+`PrecedesOrEquals`: since `b₁ ≠ b₂` is already tracked as a separate
+conjunct, `Observes` alone is enough to express incomparability, and
+using it directly avoids depending on an (as yet unproved, in this
+project) bridge lemma connecting `Precedes` to `Observes` for distinct
+blocks.
+-/
 import LeanVerification.Observe
-import Mathlib.Order.Antichain
 import Mathlib.Order.Preorder.Chain
-import Mathlib.Data.Set.Basic
+
 
 namespace CordialMiners
 
-/--
-Projections for block identity.
+/-! ### Creator lookup
 
-`Validator` is a parameter of the class, so all projections are
-explicitly associated with the corresponding validator type.
--/
-class CreatorRound (Validator : Type*) where
-  creatorOf : Blocklace → BlockId → Option Validator
-  roundOf : Blocklace → BlockId → Option ℕ
+Plain, ordinary function — not a typeclass field, so there is nothing for
+Lean to have to infer here. Mirrors `BlockIdentity.creator`
+(`types/identity_id.rs`) via `Block.lookup`. -/
 
-  /--
-  If `a` observes `b` and they are distinct, then the round of `b`
-  is strictly smaller than the round of `a`.
-  -/
-  round_lt_of_observes :
-    ∀ (B : Blocklace) (a b : BlockId),
-      Observes B a b →
-      a ≠ b →
-      ∀ ra rb : ℕ,
-        roundOf B a = some ra →
-        roundOf B b = some rb →
-        rb < ra
+/-- The creator of `b` in `B`, if `b` is present. `none` if `b ∉ B.keys`. -/
+def creatorOf (B : Blocklace) (b : BlockId) : Option NodeId :=
+  (B.lookup b).map Block.creator
 
-  /--
-  Every block with a defined creator has a defined round.
-  -/
-  round_defined_of_creator_defined :
-    ∀ (B : Blocklace) (b : BlockId) (v : Validator),
-      creatorOf B b = some v →
-      ∃ r, roundOf B b = some r
+/-! ### Equivocation -/
 
+/-- `b₁` and `b₂` equivocate in `B`: both present, same creator, distinct,
+and incomparable under `Observes B` — neither is in the other's causal
+history. This is the structural counterpart of
+`equivocation_blocks_at_round` (`consensus/cordiality.rs`, lines 60–71),
+generalized from "same round" to "incomparable", which is the condition
+`approves` (`consensus/approval.rs`) actually tests. No round number is
+involved. -/
+def Equivocation (B : Blocklace) (b₁ b₂ : BlockId) : Prop :=
+  b₁ ∈ B.keys ∧ b₂ ∈ B.keys ∧
+  creatorOf B b₁ = creatorOf B b₂ ∧ b₁ ≠ b₂ ∧
+  ¬ Observes B b₁ b₂ ∧ ¬ Observes B b₂ b₁
 
-variable {Validator : Type*} [CreatorRound Validator]
+/-- `v` is an equivocator in `B`: some pair of `v`'s blocks in `B`
+equivocate. Mirrors `all_equivocations` (`consensus/cordiality.rs`, lines
+74–111) reporting a nonempty branch set for `v`. -/
+def Equivocator (B : Blocklace) (v : NodeId) : Prop :=
+  ∃ b₁ b₂, Equivocation B b₁ b₂ ∧ creatorOf B b₁ = some v
 
-
-/-!
-======================================================================
-  Creator / Round Definitions
-======================================================================
--/
-
-/--
-The set of blocks created by validator `v` at round `r` in blocklace `B`.
--/
-def creatorBlocksAtRound
-    (B : Blocklace)
-    (v : Validator)
-    (r : ℕ) : Set BlockId :=
-  {
-    b |
-      CreatorRound.creatorOf (Validator := Validator) B b = some v ∧
-      CreatorRound.roundOf (Validator := Validator) B b = some r
-  }
-
-
-/-!
-======================================================================
-  Equivocation Definitions
-======================================================================
--/
-
-/--
-`b1` and `b2` constitute an equivocation if:
-
-* both were created by `v`,
-* both were created at round `r`, and
-* they are distinct blocks.
--/
-def Equivocation
-    (B : Blocklace)
-    (v : Validator)
-    (r : ℕ)
-    (b1 b2 : BlockId) : Prop :=
-  b1 ∈ creatorBlocksAtRound B v r ∧
-  b2 ∈ creatorBlocksAtRound B v r ∧
-  b1 ≠ b2
-
-
-/--
-A validator equivocates at a round when the set of its blocks at
-that round is nontrivial.
--/
-def EquivocatesAt
-    (B : Blocklace)
-    (v : Validator)
-    (r : ℕ) : Prop :=
-  (creatorBlocksAtRound B v r).Nontrivial
-
-
-/--
-Characterization of `EquivocatesAt` in terms of two distinct blocks.
--/
-theorem equivocatesAt_iff_exists_equivocation
-    (B : Blocklace)
-    (v : Validator)
-    (r : ℕ) :
-    EquivocatesAt B v r ↔
-      ∃ b1 b2, Equivocation B v r b1 b2 := by
-  constructor
-
-  · rintro ⟨b1, hb1, b2, hb2, hne⟩
-    exact ⟨b1, b2, hb1, hb2, hne⟩
-
-  · rintro ⟨b1, b2, hb1, hb2, hne⟩
-    exact ⟨b1, hb1, b2, hb2, hne⟩
-
-
-/--
-A validator is an equivocator if it equivocates at some round.
--/
-def Equivocator
-    (B : Blocklace)
-    (v : Validator) : Prop :=
-  ∃ r, EquivocatesAt B v r
-
-
-/--
-A validator is honest in `B` when it never equivocates.
--/
-def HonestIn
-    (B : Blocklace)
-    (v : Validator) : Prop :=
+/-- `v` is honest in `B`: `v` has not equivocated. Mirrors
+`equivocation_blocks_at_round` returning the empty set for `v` at every
+round it's checked, generalized (as `Equivocation` generalizes it) to
+"everywhere in `B`", not "at every round". -/
+def HonestIn (B : Blocklace) (v : NodeId) : Prop :=
   ¬ Equivocator B v
 
-
-/-!
-======================================================================
-  Structural Properties
-======================================================================
--/
-
-/--
-Blocks created by the same validator at the same round form an
-antichain under observation.
-
-If two distinct blocks are at the same round, neither can observe
-the other because observation strictly increases round number.
--/
-theorem creatorBlocksAtRound_isAntichain
-    (B : Blocklace)
-    (v : Validator)
-    (r : ℕ) :
-    IsAntichain
-      (Observes B)
-      (creatorBlocksAtRound B v r) := by
-
-  intro b1 hb1 b2 hb2 hne hobs
-
-  have hr1 := hb1.2
-  have hr2 := hb2.2
-
-  exact
-    (
-      CreatorRound.round_lt_of_observes
-        (Validator := Validator)
-        B
-        b1
-        b2
-        hobs
-        hne
-        r
-        r
-        hr1
-        hr2
-    ).ne rfl
-
-
-/--
-An equivocation consists of incomparable blocks.
--/
-theorem equivocation_incomparable
-    (B : Blocklace)
-    {v : Validator}
-    {r : ℕ}
-    {b1 b2 : BlockId}
-    (heq : Equivocation B v r b1 b2) :
-    ¬ Observes B b1 b2 ∧
-    ¬ Observes B b2 b1 := by
-
-  have hanti :=
-    creatorBlocksAtRound_isAntichain B v r
-
-  obtain ⟨hb1, hb2, hne⟩ := heq
-
-  exact
-    ⟨
-      fun h =>
-        hanti hb1 hb2 hne h,
-
-      fun h =>
-        hanti hb2 hb1 hne.symm h
-    ⟩
-
-
-/--
-For an honest validator, two blocks belonging to the same round
-must be equal.
-
-This is the round-level uniqueness property induced by honesty.
--/
-theorem honest_round_injective
-    (B : Blocklace)
-    (v : Validator)
-    (hHonest : HonestIn B v)
-    {b1 b2 : BlockId}
-    {r : ℕ}
-    (hb1 : b1 ∈ creatorBlocksAtRound B v r)
-    (hb2 : b2 ∈ creatorBlocksAtRound B v r) :
-    b1 = b2 := by
-
-  by_contra hne
-
-  exact
-    hHonest
-      ⟨
-        r,
-        b1,
-        hb1,
-        b2,
-        hb2,
-        hne
-      ⟩
-
-
-/-!
-======================================================================
-  Honest Validator Chain
-======================================================================
--/
-
-/--
-All blocks created by `v` form a chain when every later round block
-observes every earlier round block.
-
-This is an explicit chain-extension assumption.
--/
-def ExtendsOwnChain
-    (B : Blocklace)
-    (v : Validator) : Prop :=
-  ∀ b b' : BlockId,
-    CreatorRound.creatorOf (Validator := Validator) B b = some v →
-    CreatorRound.creatorOf (Validator := Validator) B b' = some v →
-    ∀ r r' : ℕ,
-      CreatorRound.roundOf (Validator := Validator) B b = some r →
-      CreatorRound.roundOf (Validator := Validator) B b' = some r' →
-      r' < r →
-      Observes B b b'
-
-
-/--
-Under honesty and the own-chain extension assumption, all blocks
-created by a validator are linearly ordered by observation.
--/
-theorem honest_chain_linear
-    (B : Blocklace)
-    (v : Validator)
-    (hHonest : HonestIn B v)
-    (hExtends : ExtendsOwnChain B v) :
-    IsChain
-      (Observes B)
-      {
-        b : BlockId |
-          CreatorRound.creatorOf
-            (Validator := Validator)
-            B
-            b = some v
-      } := by
-
-  intro b1 hb1 b2 hb2 hne
-
-  simp only [Set.mem_ofPred_eq] at hb1 hb2
-
-  obtain ⟨r1, hr1⟩ :=
-    CreatorRound.round_defined_of_creator_defined
-      (Validator := Validator)
-      B
-      b1
-      v
-      hb1
-
-  obtain ⟨r2, hr2⟩ :=
-    CreatorRound.round_defined_of_creator_defined
-      (Validator := Validator)
-      B
-      b2
-      v
-      hb2
-
-  rcases lt_trichotomy r1 r2 with hlt | heqr | hgt
-
-  · /-
-      r1 < r2.
-      Therefore b1 is the earlier block and b2 observes b1.
-    -/
-    exact
-      Or.inr
-        (
-          hExtends
-            b2
-            b1
-            hb2
-            hb1
-            r2
-            r1
-            hr2
-            hr1
-            hlt
-        )
-
-  · /-
-      Same round.
-
-      Both blocks belong to the same validator and round, so
-      honesty implies they are equal, contradicting `hne`.
-    -/
-    have hb1' :
-        b1 ∈ creatorBlocksAtRound B v r1 :=
-      ⟨hb1, hr1⟩
-
-    have hb2' :
-        b2 ∈ creatorBlocksAtRound B v r1 :=
-      ⟨
-        hb2,
-        by
-          rw [heqr]
-          exact hr2
-      ⟩
-
-    exact
-      absurd
-        (honest_round_injective B v hHonest hb1' hb2')
-        hne
-
-  · /-
-      r2 < r1.
-      Therefore b1 is the later block and b1 observes b2.
-    -/
-    exact
-      Or.inl
-        (
-          hExtends
-            b1
-            b2
-            hb1
-            hb2
-            r1
-            r2
-            hr1
-            hr2
-            hgt
-        )
-
-
-/-!
-======================================================================
-  Acknowledgement
-======================================================================
--/
-
-/--
-`w` acknowledges validator `v` at round `r` when `w` observes every
-block created by `v` at that round.
--/
-def Acknowledges
-    (B : Blocklace)
-    (w : BlockId)
-    (v : Validator)
-    (r : ℕ) : Prop :=
-  ∀ b ∈ creatorBlocksAtRound B v r,
-    Observes B w b
-
-
-/--
-`w` hides the round when it does not acknowledge the round.
--/
-def Hides
-    (B : Blocklace)
-    (w : BlockId)
-    (v : Validator)
-    (r : ℕ) : Prop :=
-  ¬ Acknowledges B w v r
-
-
-/--
-Acknowledgement is monotone along observation.
-
-If `w'` observes `w`, and `w` acknowledges a round, then `w'`
-also acknowledges that round.
--/
-theorem acknowledges_mono
-    (B : Blocklace)
-    {w w' : BlockId}
-    {v : Validator}
-    {r : ℕ}
-    (h : Acknowledges B w v r)
-    (hobs : Observes B w' w) :
-    Acknowledges B w' v r := by
-
-  intro b hb
-
-  exact
-    observes_trans
-      B
-      hobs
-      (h b hb)
-
-
-/-!
-======================================================================
-  Vouching / Approval Exclusion
-======================================================================
--/
-
-/--
-`w` cleanly vouches for block `b`.
-
-The first conjunct says that `w` observes `b`.
-
-The second says that if another block `b'` has the same creator as
-`b`, is distinct from `b`, and is also observed by `w`, then `b`
-and `b'` cannot be incomparable.
-
-This captures the idea that a clean vouch for `b` excludes a
-competing block from the same creator.
--/
-def VouchesFor
-    (V : Type*)
-    [CreatorRound V]
-    (B : Blocklace)
-    (w b : BlockId) : Prop :=
-  Observes B w b ∧
-  ∀ (b' : BlockId),
-    CreatorRound.creatorOf
-        (Validator := V)
-        B
-        b'
-      =
-    CreatorRound.creatorOf
-        (Validator := V)
-        B
-        b →
-    b' ≠ b →
-    Observes B w b' →
-    ¬ (
-      ¬ Observes B b b' ∧
-      ¬ Observes B b' b
-    )
-
-
-/--
-If `w` acknowledges an equivocating validator's round, then `w`
-cannot cleanly vouch for any block from that equivocation round.
-
-This is the central equivocation-exclusion theorem.
--/
-theorem acknowledges_no_vouch_for_equivocation
-    (B : Blocklace)
-    {v : Validator}
-    {r : ℕ}
-    {w b : BlockId}
-    (heq : EquivocatesAt B v r)
-    (hb : b ∈ creatorBlocksAtRound B v r)
-    (hack : Acknowledges B w v r) :
-    ¬ VouchesFor Validator B w b := by
-
-  obtain ⟨b1, hb1, b2, hb2, hne⟩ := heq
-
-  have hanti :=
-    creatorBlocksAtRound_isAntichain B v r
-
-  /-
-    Find another block in the same round that is distinct from `b`.
-  -/
-  obtain ⟨s, hs, hsb⟩ :
-      ∃ s,
-        s ∈ creatorBlocksAtRound B v r ∧
-        s ≠ b := by
-
-    by_cases hcase : b = b1
-
-    · exact
-        ⟨
-          b2,
-          hb2,
-          hcase.symm ▸ hne.symm
-        ⟩
-
-    · exact
-        ⟨
-          b1,
-          hb1,
-          Ne.symm hcase
-        ⟩
-
-  rintro ⟨_, hvouch⟩
-
-  /-
-    `s` and `b` have the same creator because they belong to the
-    same validator's round.
-  -/
-  have h_same_creator :
-      CreatorRound.creatorOf
-          (Validator := Validator)
-          B
-          s
-        =
-      CreatorRound.creatorOf
-          (Validator := Validator)
-          B
-          b := by
-
-    rw [hs.1, hb.1]
-
-  /-
-    Same-round distinct blocks are incomparable.
-  -/
-  have h_incomp :
-      ¬ Observes B b s ∧
-      ¬ Observes B s b :=
-    ⟨
-      hanti hb hs hsb.symm,
-      hanti hs hb hsb
-    ⟩
-
-  /-
-    But acknowledgement gives `w` observation of `s`, and therefore
-    the vouching condition contradicts the incomparability.
-  -/
-  exact
-    hvouch
-      s
-      h_same_creator
-      hsb
-      (hack s hs)
-      h_incomp
-
-
-/--
-Convenient pairwise form of the equivocation exclusion theorem.
-
-If `b1` and `b2` are two distinct blocks in the same validator/round
-and `w` acknowledges that round, then `w` cannot vouch for either
-block.
--/
-theorem equivocation_vouch_exclusion
-    (B : Blocklace)
-    {v : Validator}
-    {r : ℕ}
-    {w b1 b2 : BlockId}
-    (heq : Equivocation B v r b1 b2)
-    (hack : Acknowledges B w v r) :
-    ¬ VouchesFor Validator B w b1 ∧
-    ¬ VouchesFor Validator B w b2 := by
-
-  obtain ⟨hb1, hb2, hne⟩ := heq
-
-  constructor
-
-  · exact
-      acknowledges_no_vouch_for_equivocation
-        B
-        ⟨b1, hb1, b2, hb2, hne⟩
-        hb1
-        hack
-
-  · exact
-      acknowledges_no_vouch_for_equivocation
-        B
-        ⟨b1, hb1, b2, hb2, hne⟩
-        hb2
-        hack
-
-
-/--
-General approval-exclusion theorem.
-
-Any approval relation that implies `VouchesFor` automatically
-inherits the equivocation exclusion property.
--/
+/-- The set of blocks `v` has created that are present in `B`. -/
+def blocksBy (B : Blocklace) (v : NodeId) : Set BlockId :=
+  {b | b ∈ B.keys ∧ creatorOf B b = some v}
+
+/-- **Honest chain linearity.** If `v` is honest in `B`, `v`'s blocks form
+a chain under `Observes B`: any two are comparable. This is what makes
+"the chain of validator `v`" a well-defined, unambiguous concept
+elsewhere in the protocol — an honest validator's history is always
+linear, never a DAG with a fork in it. The Rust counterpart is the
+closure-axiom-adjacent invariant `satisfies_chain_axiom`
+(`blocklace.rs`, lines 252–279), which this theorem is the formal,
+general statement of. -/
+theorem honest_chain_linearity (B : Blocklace) (v : NodeId) (h : HonestIn B v) :
+    IsChain (Observes B) (blocksBy B v) := by
+  intro b₁ hb₁ b₂ hb₂ hne
+  by_contra hcontra
+  push Not at hcontra
+  exact h ⟨b₁, b₂, ⟨hb₁.1, hb₂.1, hb₁.2.trans hb₂.2.symm, hne, hcontra.1, hcontra.2⟩, hb₁.2⟩
+
+/-! ### Acknowledgement and hiding -/
+
+/-- `c` acknowledges the equivocation between `b₁` and `b₂`: `c`'s causal
+history includes both branches. Mirrors `acknowledges_equivocation`
+(`consensus/cordiality.rs`, lines 130–145). -/
+def Acknowledges (B : Blocklace) (c b₁ b₂ : BlockId) : Prop :=
+  Observes B c b₁ ∧ Observes B c b₂
+
+/-- `c` hides (at least part of) the equivocation between `b₁` and `b₂`:
+`c` fails to acknowledge it, i.e. is missing at least one branch. Mirrors
+`hidden_equivocations` (`consensus/cordiality.rs`, lines 147–177)
+reporting a nonempty set of missing branches for `c` — note that, exactly
+as in the Rust, observing one branch but not the other still counts as
+hiding, not as acknowledging. -/
+def Hides (B : Blocklace) (c b₁ b₂ : BlockId) : Prop :=
+  ¬ Acknowledges B c b₁ b₂
+
+/-- **Equivocation-visibility monotonicity.** If `d` observes `c`, and `c`
+already acknowledges the equivocation between `b₁` and `b₂`, then `d`
+acknowledges it too. Visibility of a known equivocation only grows as the
+blocklace grows and later blocks reference deeper into the causal past —
+it never shrinks. This is a direct corollary of `Observe.lean`'s
+`observes_trans`, which holds unconditionally (no `Closed B` needed). -/
+theorem acknowledgement_monotone (B : Blocklace) (c d b₁ b₂ : BlockId) (hdc : Observes B d c)
+    (hack : Acknowledges B c b₁ b₂) :
+    Acknowledges B d b₁ b₂ :=
+  ⟨observes_trans B hdc hack.1, observes_trans B hdc hack.2⟩
+
+/-! ### Exclusion -/
+
+/-- The equivocation-relevant fragment of the paper's approval relation
+(Definition 18, as implemented by `approves` in `consensus/approval.rs`):
+`c` cleanly vouches for `b` if it observes `b` and does not also observe
+any block, by the same creator as `b`, that is incomparable with `b`. The
+real `approves` checks this against *every* other block by the creator;
+this fragment only needs the equivocation case, which is all Issue 04's
+Agreement proof requires from this file — Issue 04 is expected to build
+its full `Approves` on top of this rather than duplicate it. -/
+def VouchesFor (B : Blocklace) (c b : BlockId) : Prop :=
+  Observes B c b ∧
+    ∀ b', creatorOf B b' = creatorOf B b → b' ≠ b → Observes B c b' →
+      ¬ (¬ Observes B b b' ∧ ¬ Observes B b' b)
+
+/-- **Exclusion property.** If `b₁` and `b₂` equivocate and `c`
+acknowledges the equivocation (observes both), `c` cleanly vouches for
+*neither* branch. This is the structural fact that keeps both sides of a
+cheat out of any finalized output built from `VouchesFor`/`Approves`-style
+acceptance — the sentence to say out loud is: no single approving block
+can vouch for both sides of the same lie, because as soon as it has seen
+both sides, `VouchesFor`'s own "no incomparable sibling observed"
+condition fails for each side in turn. This is the core proof Issue 04's
+Agreement theorem rests on; see `equivocation_not_approved` immediately
+below for the form actually meant to be imported as a hypothesis, phrased
+against an arbitrary `Approves` rather than this file's own `VouchesFor`. -/
+theorem equivocation_exclusion (B : Blocklace) (b₁ b₂ c : BlockId)
+    (heq : Equivocation B b₁ b₂) (hack : Acknowledges B c b₁ b₂) :
+    ¬ VouchesFor B c b₁ ∧ ¬ VouchesFor B c b₂ := by
+  obtain ⟨-, -, hcreator, hne, hnob12, hnob21⟩ := heq
+  refine ⟨fun hv => ?_, fun hv => ?_⟩
+  · exact hv.2 b₂ hcreator.symm (Ne.symm hne) hack.2 ⟨hnob12, hnob21⟩
+  · exact hv.2 b₁ hcreator hne hack.1 ⟨hnob21, hnob12⟩
+
+/-- **Bridge for Issue 04.** `Approves` is left as an arbitrary relation
+here, not defined in this file — Issue 04 owns the real `Approves`
+formalization. Given a proof that `Approves` implies `VouchesFor` for the
+specific `c`/`b₁` (resp. `c`/`b₂`) in question — i.e. that `VouchesFor`
+really is a sound over-approximation of Issue 04's eventual `Approves`,
+as `VouchesFor`'s own doc comment already claims — acknowledging the
+equivocation rules out `Approves` too, not just `VouchesFor`.
+
+This, not `equivocation_exclusion` above, is the form the issue's
+acceptance criteria ask for literally: Issue 04 supplies its own
+`Approves` and the two implication lemmas and gets the exclusion result
+directly, with zero changes to this file, regardless of what `Approves`
+ends up looking like. -/
 theorem equivocation_not_approved
-    (B : Blocklace)
-    {v : Validator}
-    {r : ℕ}
-    {w b : BlockId}
+    (B : Blocklace) (b₁ b₂ c : BlockId)
     {Approves : Blocklace → BlockId → BlockId → Prop}
-    (heq : EquivocatesAt B v r)
-    (hb : b ∈ creatorBlocksAtRound B v r)
-    (hack : Acknowledges B w v r)
-    (hApproveImpliesVouch :
-      Approves B w b →
-      VouchesFor Validator B w b) :
-    ¬ Approves B w b := by
-
-  intro happ
-
-  exact
-    acknowledges_no_vouch_for_equivocation
-      B
-      heq
-      hb
-      hack
-      (hApproveImpliesVouch happ)
-
-
-/-!
-======================================================================
-  Worked Example
-======================================================================
--/
+    (heq : Equivocation B b₁ b₂) (hack : Acknowledges B c b₁ b₂)
+    (hApproveImpliesVouch₁ : Approves B c b₁ → VouchesFor B c b₁)
+    (hApproveImpliesVouch₂ : Approves B c b₂ → VouchesFor B c b₂) :
+    ¬ Approves B c b₁ ∧ ¬ Approves B c b₂ :=
+  let ⟨hv₁, hv₂⟩ := equivocation_exclusion B b₁ b₂ c heq hack
+  ⟨fun h => hv₁ (hApproveImpliesVouch₁ h), fun h => hv₂ (hApproveImpliesVouch₂ h)⟩
 
 section WorkedExample
 
-variable
-  (B : Blocklace)
-  (honest cheater : Validator)
-  (g e1 e2 : BlockId)
-  (rg re : ℕ)
-  (w : BlockId)
+/-- The honest validator. -/
+def honestId : NodeId := 0
 
-variable
-  (hg :
-    CreatorRound.creatorOf
-      (Validator := Validator)
-      B
-      g
-      =
-    some honest)
+/-- The cheater. -/
+def cheaterId : NodeId := 1
 
-variable
-  (hrg :
-    CreatorRound.roundOf
-      (Validator := Validator)
-      B
-      g
-      =
-    some rg)
+theorem honestId_ne_cheaterId : honestId ≠ cheaterId := by decide
 
-variable
-  (he1 :
-    CreatorRound.creatorOf
-      (Validator := Validator)
-      B
-      e1
-      =
-    some cheater)
+/-- Distinct payloads are only needed to keep `contentE1 ≠ contentE2`,
+which (via `hashInj`) is what makes `e1.id ≠ e2.id`. -/
+def contentG : BlockContent := { payload := [], predecessors := ∅ }
+def contentE1 : BlockContent := { payload := [0], predecessors := ∅ }
+def contentE2 : BlockContent := { payload := [1], predecessors := ∅ }
 
-variable
-  (hre1 :
-    CreatorRound.roundOf
-      (Validator := Validator)
-      B
-      e1
-      =
-    some re)
+/-- The honest validator's only block. -/
+def g : Block :=
+  { id := hashContent honestId contentG
+    creator := honestId
+    content := contentG
+    id_eq := rfl }
 
-variable
-  (he2 :
-    CreatorRound.creatorOf
-      (Validator := Validator)
-      B
-      e2
-      =
-    some cheater)
+/-- The cheater's first block. -/
+def e1 : Block :=
+  { id := hashContent cheaterId contentE1
+    creator := cheaterId
+    content := contentE1
+    id_eq := rfl }
 
-variable
-  (hre2 :
-    CreatorRound.roundOf
-      (Validator := Validator)
-      B
-      e2
-      =
-    some re)
+/-- The cheater's second, conflicting block. -/
+def e2 : Block :=
+  { id := hashContent cheaterId contentE2
+    creator := cheaterId
+    content := contentE2
+    id_eq := rfl }
 
-variable
-  (hne : e1 ≠ e2)
-
-variable
-  (honly :
-    ∀ b,
-      CreatorRound.creatorOf
-          (Validator := Validator)
-          B
-          b
-        =
-      some honest →
-      b = g)
-
-variable
-  (hackw :
-    Acknowledges B w cheater re)
-
-
-/-!
-----------------------------------------------------------------------
-  Honest validator example
-----------------------------------------------------------------------
--/
-
-/--
-The honest validator cannot equivocate when every block it creates
-is the single block `g`.
--/
-example : HonestIn B honest := by
-
-  rintro
-    ⟨
-      r,
-      b1,
-      hb1,
-      b2,
-      hb2,
-      hne'
-    ⟩
-
-  rw
-    [
-      honly b1 hb1.1,
-      honly b2 hb2.1
-    ]
-    at hne'
-
-  exact hne' rfl
-
-
-/-!
-----------------------------------------------------------------------
-  Cheater example
-----------------------------------------------------------------------
--/
-
-/--
-The cheater is not honest because it creates two distinct blocks
-at the same round.
--/
-example : ¬ HonestIn B cheater := by
-
+theorem e1_ne_e2 : e1.id ≠ e2.id := by
   intro h
+  have hcontent := (hashInj h).2
+  simp [contentE1, contentE2] at hcontent
 
-  exact
-    h
-      ⟨
-        re,
-        e1,
-        ⟨he1, hre1⟩,
-        e2,
-        ⟨he2, hre2⟩,
-        hne
-      ⟩
+theorem g_ne_e1 : g.id ≠ e1.id := by
+  intro h
+  exact honestId_ne_cheaterId (hashInj h).1
 
+theorem g_ne_e2 : g.id ≠ e2.id := by
+  intro h
+  exact honestId_ne_cheaterId (hashInj h).1
 
-/-!
-----------------------------------------------------------------------
-  Equivocation witness
-----------------------------------------------------------------------
--/
+/-- The demo blocklace: exactly `g`, `e1`, `e2`, nothing else.
 
-/--
-The two cheater blocks form an explicit equivocation.
--/
-example :
-    Equivocation B cheater re e1 e2 := by
+NOTE: `(∅ : Blocklace)` does not elaborate directly. `Blocklace` is a
+plain `def` (`Finmap (fun _ : BlockId => Block)`, not `abbrev`), and
+typeclass search for `EmptyCollection Blocklace` does not unfold plain
+`def`s to find `Finmap`'s own instance. Ascribing the empty value at the
+underlying `Finmap` type first, and letting it unify against the expected
+`Blocklace` type via `demoB`'s own `: Blocklace` signature, sidesteps
+that: term-level unification against an expected type *does* unfold
+plain `def`s, unlike instance search. -/
+def demoB : Blocklace :=
+  (((∅ : Finmap (fun _ : BlockId => Block)).insert e1.id e1).insert e2.id e2).insert g.id g
 
-  exact
-    ⟨
-      ⟨he1, hre1⟩,
-      ⟨he2, hre2⟩,
-      hne
-    ⟩
+theorem lookup_g : demoB.lookup g.id = some g := by
+  simp [demoB, Finmap.lookup_insert]
 
+theorem lookup_e1 : demoB.lookup e1.id = some e1 := by
+  simp [demoB, Finmap.lookup_insert, Finmap.lookup_insert_of_ne,
+    g_ne_e1.symm, e1_ne_e2]
 
-/-!
-----------------------------------------------------------------------
-  Acknowledgement excludes vouching for e1
-----------------------------------------------------------------------
--/
+theorem lookup_e2 : demoB.lookup e2.id = some e2 := by
+  simp [demoB, Finmap.lookup_insert, Finmap.lookup_insert_of_ne, g_ne_e2.symm]
 
-/--
-A node acknowledging the cheater's round cannot vouch for `e1`.
--/
-example :
-    ¬ VouchesFor Validator B w e1 := by
+/-- Membership proofs built the way `insertPreservesClosed` in
+`Blocklace.lean` already does it — chaining `Finmap.mem_insert`
+(Finmap-level membership) and converting to `.keys`-level via
+`Finmap.mem_keys` at the end — rather than going from "lookup succeeds"
+to membership via an anonymous constructor. `a ∈ s` for a `Finmap`
+unfolds through a `Quot.lift` internally (it's backed by a `Multiset`),
+so it is not an inductive `Exists` that `⟨witness, proof⟩` syntax can
+target; that mismatch, not the earlier `sorry` cascade, was the second
+real bug in this section. -/
+theorem g_mem : g.id ∈ demoB.keys :=
+  Finmap.mem_keys.mpr (Finmap.mem_insert.mpr (Or.inl rfl))
 
-  exact
-    acknowledges_no_vouch_for_equivocation
-      B
-      (
-        ⟨
-          e1,
-          ⟨he1, hre1⟩,
-          e2,
-          ⟨he2, hre2⟩,
-          hne
-        ⟩
-      )
-      ⟨he1, hre1⟩
-      hackw
+theorem e2_mem : e2.id ∈ demoB.keys :=
+  Finmap.mem_keys.mpr (Finmap.mem_insert.mpr (Or.inr
+    (Finmap.mem_insert.mpr (Or.inl rfl))))
 
+theorem e1_mem : e1.id ∈ demoB.keys :=
+  Finmap.mem_keys.mpr (Finmap.mem_insert.mpr (Or.inr
+    (Finmap.mem_insert.mpr (Or.inr (Finmap.mem_insert.mpr (Or.inl rfl))))))
 
-/-!
-----------------------------------------------------------------------
-  Acknowledgement excludes vouching for e2
-----------------------------------------------------------------------
--/
+/-- `simp` (not `simp only`) deliberately, so the default simp set
+supplies whatever this Mathlib version's empty-`Finmap`-membership lemma
+is actually named, rather than this file having to guess and hard-code
+it. -/
+theorem demoB_keys_cases {b : BlockId} (hb : b ∈ demoB.keys) :
+    b = g.id ∨ b = e1.id ∨ b = e2.id := by
+  simp [demoB, Finmap.mem_keys, Finmap.mem_insert] at hb
+  tauto
 
-/--
-A node acknowledging the cheater's round cannot vouch for `e2`.
--/
-example :
-    ¬ VouchesFor Validator B w e2 := by
+theorem creatorOf_g : creatorOf demoB g.id = some honestId := by
+  simp only [creatorOf, lookup_g]; rfl
 
-  exact
-    acknowledges_no_vouch_for_equivocation
-      B
-      (
-        ⟨
-          e1,
-          ⟨he1, hre1⟩,
-          e2,
-          ⟨he2, hre2⟩,
-          hne
-        ⟩
-      )
-      ⟨he2, hre2⟩
-      hackw
+theorem creatorOf_e1 : creatorOf demoB e1.id = some cheaterId := by
+  simp only [creatorOf, lookup_e1]; rfl
 
+theorem creatorOf_e2 : creatorOf demoB e2.id = some cheaterId := by
+  simp only [creatorOf, lookup_e2]; rfl
 
-/-!
-----------------------------------------------------------------------
-  Pairwise equivocation exclusion
-----------------------------------------------------------------------
--/
+/-- No block in `demoB` has a predecessor: every one of `g`, `e1`, `e2`
+was built with `predecessors := ∅`, and those are the only three blocks
+`demoB` contains. Case-splits on `x` directly via `eq_or_ne` rather than
+trying to derive `x ∈ demoB.keys` from `hlookup` through a membership
+bridge lemma — same reason `g_mem` above avoids the anonymous
+constructor — since that sidesteps needing to know the exact name of
+whichever "lookup succeeds → key present" lemma this Mathlib version
+ships, which this section doesn't otherwise need. The three
+`Finmap.lookup_insert_of_ne _ hx*` arguments mirror
+`insertPreservesClosed`'s `lookup_insert_of_ne B hid` call in
+`Blocklace.lean` exactly: the inequality goes lookup-key ≠ insert-key,
+with no `.symm`. -/
+theorem demoB_directPred_false (x y : BlockId) : ¬ DirectPred demoB x y := by
+  rintro ⟨blk, hlookup, hp⟩
+  rcases eq_or_ne x g.id with rfl | hxg
+  · rw [lookup_g] at hlookup; cases hlookup; simp [g, contentG] at hp
+  rcases eq_or_ne x e1.id with rfl | hxe1
+  · rw [lookup_e1] at hlookup; cases hlookup; simp [e1, contentE1] at hp
+  rcases eq_or_ne x e2.id with rfl | hxe2
+  · rw [lookup_e2] at hlookup; cases hlookup; simp [e2, contentE2] at hp
+  · have hnone : demoB.lookup x = none := by
+      simp [demoB, Finmap.lookup_insert_of_ne _ hxg,
+        Finmap.lookup_insert_of_ne _ hxe1, Finmap.lookup_insert_of_ne _ hxe2]
+    rw [hnone] at hlookup
+    exact absurd hlookup (by simp)
 
-/--
-The pairwise theorem simultaneously excludes both equivocation
-blocks from clean vouching.
--/
-example :
-    ¬ VouchesFor Validator B w e1 ∧
-    ¬ VouchesFor Validator B w e2 := by
+/-- With no predecessor edges at all, `Observes demoB` only ever relates
+a block to itself. -/
+theorem demoB_observes_iff (x y : BlockId) : Observes demoB x y ↔ x = y := by
+  constructor
+  · intro h
+    rcases Relation.ReflTransGen.cases_head h with hEq | ⟨c, hxc, -⟩
+    · exact hEq
+    · exact absurd hxc (demoB_directPred_false x c)
+  · rintro rfl
+    exact observes_refl demoB x
 
-  exact
-    equivocation_vouch_exclusion
-      B
-      (
-        ⟨
-          ⟨he1, hre1⟩,
-          ⟨he2, hre2⟩,
-          hne
-        ⟩
-      )
-      hackw
+theorem not_observes_e1_e2 : ¬ Observes demoB e1.id e2.id := by
+  rw [demoB_observes_iff]; exact e1_ne_e2
 
+theorem not_observes_e2_e1 : ¬ Observes demoB e2.id e1.id := by
+  rw [demoB_observes_iff]; exact e1_ne_e2.symm
 
-/-!
-----------------------------------------------------------------------
-  Approval exclusion example
-----------------------------------------------------------------------
--/
+/-- `e1` and `e2` are an explicit, concrete equivocation. -/
+theorem e1_e2_equivocate : Equivocation demoB e1.id e2.id :=
+  ⟨e1_mem, e2_mem, creatorOf_e1.trans creatorOf_e2.symm, e1_ne_e2,
+    not_observes_e1_e2, not_observes_e2_e1⟩
 
-/--
-Any approval relation that implies `VouchesFor` is also excluded
-for the equivocating block.
--/
-example
-    {Approves : Blocklace → BlockId → BlockId → Prop}
-    (hApproveImpliesVouch :
-      Approves B w e1 →
-      VouchesFor Validator B w e1) :
-    ¬ Approves B w e1 := by
+/-- `HonestIn` evaluates false for the cheater. -/
+theorem cheater_not_honest : ¬ HonestIn demoB cheaterId := fun h =>
+  h ⟨e1.id, e2.id, e1_e2_equivocate, creatorOf_e1⟩
 
-  exact
-    equivocation_not_approved
-      B
-      (
-        ⟨
-          e1,
-          ⟨he1, hre1⟩,
-          e2,
-          ⟨he2, hre2⟩,
-          hne
-        ⟩
-      )
-      ⟨he1, hre1⟩
-      hackw
-      hApproveImpliesVouch
+/-- `HonestIn` evaluates true for the honest validator: it only ever
+created one block, `g`, so no pair of "its" blocks can possibly
+equivocate.
 
+The `Option.some.inj` calls below fix a separate, third bug: comparing
+`hb1 : some cheaterId = some honestId` (an `Option NodeId` equality)
+directly against `honestId_ne_cheaterId : honestId ≠ cheaterId` (a raw
+`NodeId` inequality) is a type mismatch — `some a = some b` and `a = b`
+are different propositions, even though logically equivalent.
+`Option.some.inj` (Lean's auto-generated constructor-injectivity lemma)
+strips the `some` first. -/
+theorem honest_is_honest : HonestIn demoB honestId := by
+  rintro ⟨b₁, b₂, ⟨hb1mem, hb2mem, hcreator, hne, -, -⟩, hb1⟩
+  have hb1g : b₁ = g.id := by
+    rcases demoB_keys_cases hb1mem with rfl | rfl | rfl
+    · rfl
+    · rw [creatorOf_e1] at hb1
+      exact absurd (Option.some.inj hb1.symm) honestId_ne_cheaterId
+    · rw [creatorOf_e2] at hb1
+      exact absurd (Option.some.inj hb1.symm) honestId_ne_cheaterId
+  have hb2g : b₂ = g.id := by
+    rw [hb1g, creatorOf_g] at hcreator
+    rcases demoB_keys_cases hb2mem with rfl | rfl | rfl
+    · rfl
+    · rw [creatorOf_e1] at hcreator
+      exact absurd (Option.some.inj hcreator) honestId_ne_cheaterId
+    · rw [creatorOf_e2] at hcreator
+      exact absurd (Option.some.inj hcreator) honestId_ne_cheaterId
+  exact hne (hb1g.trans hb2g.symm)
+
+/-- Neither `honestId` nor `cheaterId` can be vouched for on both sides
+of the cheat at once: any node that acknowledges the equivocation
+(observes both `e1` and `e2`) cannot cleanly vouch for either. -/
+theorem demo_exclusion (c : BlockId) (hack : Acknowledges demoB c e1.id e2.id) :
+    ¬ VouchesFor demoB c e1.id ∧ ¬ VouchesFor demoB c e2.id :=
+  equivocation_exclusion demoB e1.id e2.id c e1_e2_equivocate hack
+
+/-- The same demo, through `equivocation_not_approved` instead: a
+stand-in `Approves` (here, literally `VouchesFor` itself, so the
+implication hypotheses are trivial `id`s) shows the shape Issue 04 would
+actually plug its own, real `Approves` and implication proofs into. -/
+theorem demo_exclusion_via_approves (c : BlockId)
+    (hack : Acknowledges demoB c e1.id e2.id) :
+    ¬ VouchesFor demoB c e1.id ∧ ¬ VouchesFor demoB c e2.id :=
+  equivocation_not_approved (Approves := VouchesFor) demoB e1.id e2.id c e1_e2_equivocate hack id
+    id
 
 end WorkedExample
 
