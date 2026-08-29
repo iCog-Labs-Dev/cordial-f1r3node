@@ -1,38 +1,20 @@
 /-
 Equivocation and exclusion (KR2): the one Byzantine behavior Cordial
-Miners cares about — a validator producing two blocks that sit side by
-side in the DAG, neither observing the other — and the structural
+Miners cares about — a validator producing two same-depth blocks that sit
+side by side in the DAG, neither observing the other — and the structural
 guarantee that no single block can vouch for both sides of it.
 
 Owned by Issue 03 (KR2 — Equivocation and Exclusion).
 
-## Round-free by design (see review history)
+## Rounds are derived, not assumed
 
-An earlier version of this file introduced a `CreatorRound` typeclass
-bundling a `roundOf : Blocklace → BlockId → Option ℕ` projection plus an
-axiom, `round_lt_of_observes`, asserting (unproved) that round strictly
-decreases along `Observes`. Review feedback on that version was direct:
-since `round` was a new concept being introduced *by this file*, it
-should either be proved, not assumed — or better, not introduced at all
-if the file doesn't actually need it. It doesn't: equivocation only needs
-same creator, distinct blocks, and incomparability under `Observes`, none
-of which requires a round number anywhere. So this version drops
-`CreatorRound`/`roundOf` entirely rather than trying to prove
-`round_lt_of_observes` — there is no "round" concept left in this file to
-have opinions about.
-
-This also happens to fix a real, distinct bug the round-based version had
-that showed up as `lake build` failures once the file finally got past an
-earlier (unrelated) `lake update`-caused build stall: `roundOf`'s own
-argument types (`Blocklace`, `BlockId`) never mentioned `Validator`, so
-Lean had no way to infer which `CreatorRound Validator` instance a bare
-call like `roundOf B b` should resolve against. That surfaced as
-"Application type mismatch ... `@roundOf B`" and "typeclass instance
-problem is stuck" errors at several call sites, and very likely explains
-the earlier multi-hour build hang too (unconstrained typeclass search on
-`CreatorRound ?m` backtracking extensively before ever reporting
-anything). Going round-free removes the typeclass entirely, so there is
-no instance-resolution ambiguity left to hang or misfire on.
+Rust defines a round as a block's DAG depth. This file computes that depth
+by well-founded recursion over `DirectPred`, using Issue 02's proved
+`directPred_wf_of_valid`; it does not assume a `round_lt_of_observes` axiom
+or introduce a typeclass projection. `Fork` records the round-independent
+same-creator incomparability used by approval and the chain invariant.
+`Equivocation` adds equality of the two computed depths, matching
+`equivocation_blocks_at_round` and `all_equivocations` in Rust.
 
 ## Concrete types now, not a placeholder signature
 
@@ -45,17 +27,10 @@ here at all; `NodeId` is used directly. `creatorOf` below is a plain,
 ordinary function (`Blocklace → BlockId → Option NodeId`), not a class
 field, so calling it is never ambiguous.
 
-Equivocation is defined structurally, via incomparability under
-`Observes`, rather than via a round number — this matches how
-`consensus/approval.rs`'s `approves` actually excludes conflicting blocks
-(any observed, incomparable block by the same creator, not only
-same-round ones) more closely than a same-round-only definition would.
-It is phrased directly in terms of `Observes` rather than `Precedes`/
-`PrecedesOrEquals`: since `b₁ ≠ b₂` is already tracked as a separate
-conjunct, `Observes` alone is enough to express incomparability, and
-using it directly avoids depending on an (as yet unproved, in this
-project) bridge lemma connecting `Precedes` to `Observes` for distinct
-blocks.
+The distinction matters: Rust's detector reports same-depth forks, while
+`approves` rejects every observed incomparable block by the same creator.
+Keeping both predicates makes each Lean-to-Rust mapping exact instead of
+silently broadening the detector.
 -/
 import LeanVerification.Observe
 import Mathlib.Order.Preorder.Chain
@@ -73,32 +48,63 @@ Lean to have to infer here. Mirrors `BlockIdentity.creator`
 def creatorOf (B : Blocklace) (b : BlockId) : Option NodeId :=
   (B.lookup b).map Block.creator
 
-/-! ### Equivocation -/
+/-! ### DAG depth -/
 
-/-- `b₁` and `b₂` equivocate in `B`: both present, same creator, distinct,
-and incomparable under `Observes B` — neither is in the other's causal
-history. This is the structural counterpart of
-`equivocation_blocks_at_round` (`consensus/cordiality.rs`, lines 60–71),
-generalized from "same round" to "incomparable", which is the condition
-`approves` (`consensus/approval.rs`) actually tests. No round number is
-involved. -/
-def Equivocation (B : Blocklace) (b₁ b₂ : BlockId) : Prop :=
+/-- DAG depth computed by well-founded recursion. Missing identifiers have
+depth zero; all uses in `Equivocation` separately require membership. -/
+def blockDepthWF
+    (B : Blocklace)
+    (hwf : WellFounded (fun a b => DirectPred B b a)) :
+    BlockId → Nat :=
+  hwf.fix fun b rec =>
+    match hlookup : B.lookup b with
+    | none => 0
+    | some blk =>
+        blk.content.predecessors.attach.sup fun p =>
+          rec p.1 ⟨blk, hlookup, p.2⟩ + 1
+
+/-- Unfolding equation for `blockDepthWF`. -/
+theorem blockDepthWF_eq
+    (B : Blocklace)
+    (hwf : WellFounded (fun a b => DirectPred B b a))
+    (b : BlockId) :
+    blockDepthWF B hwf b =
+      match _hlookup : B.lookup b with
+      | none => 0
+      | some blk =>
+          blk.content.predecessors.attach.sup fun p =>
+            blockDepthWF B hwf p.1 + 1 := by
+  unfold blockDepthWF
+  rw [WellFounded.fix_eq]
+
+/-- Rust-compatible block depth for a validly constructed blocklace. -/
+def blockDepth (B : Blocklace) (hV : ValidBlocklace B) (b : BlockId) : Nat :=
+  blockDepthWF B (directPred_wf_of_valid B hV) b
+
+/-! ### Forks, equivocation, and honesty -/
+
+/-- A structural fork: two present, distinct, incomparable blocks with the
+same creator. This is the conflict relation checked by Rust `approves`. -/
+def Fork (B : Blocklace) (b₁ b₂ : BlockId) : Prop :=
   b₁ ∈ B.keys ∧ b₂ ∈ B.keys ∧
   creatorOf B b₁ = creatorOf B b₂ ∧ b₁ ≠ b₂ ∧
   ¬ Observes B b₁ b₂ ∧ ¬ Observes B b₂ b₁
 
-/-- `v` is an equivocator in `B`: some pair of `v`'s blocks in `B`
-equivocate. Mirrors `all_equivocations` (`consensus/cordiality.rs`, lines
-74–111) reporting a nonempty branch set for `v`. -/
-def Equivocator (B : Blocklace) (v : NodeId) : Prop :=
-  ∃ b₁ b₂, Equivocation B b₁ b₂ ∧ creatorOf B b₁ = some v
+/-- A Rust/Issue-186 equivocation: a structural fork at one DAG depth. -/
+def Equivocation
+    (B : Blocklace) (hV : ValidBlocklace B) (b₁ b₂ : BlockId) : Prop :=
+  Fork B b₁ b₂ ∧ blockDepth B hV b₁ = blockDepth B hV b₂
 
-/-- `v` is honest in `B`: `v` has not equivocated. Mirrors
-`equivocation_blocks_at_round` returning the empty set for `v` at every
-round it's checked, generalized (as `Equivocation` generalizes it) to
-"everywhere in `B`", not "at every round". -/
+/-- `v` is an equivocator in `B`: some pair of `v`'s blocks in `B`
+equivocate at one computed depth. Mirrors `all_equivocations`. -/
+def Equivocator (B : Blocklace) (hV : ValidBlocklace B) (v : NodeId) : Prop :=
+  ∃ b₁ b₂, Equivocation B hV b₁ b₂ ∧ creatorOf B b₁ = some v
+
+/-- Chain honesty is the absence of every structural fork, including forks
+whose blocks have different depths. This is the premise needed by the
+all-pairs chain theorem and corresponds to Rust `satisfies_chain_axiom`. -/
 def HonestIn (B : Blocklace) (v : NodeId) : Prop :=
-  ¬ Equivocator B v
+  ¬ ∃ b₁ b₂, Fork B b₁ b₂ ∧ creatorOf B b₁ = some v
 
 /-- The set of blocks `v` has created that are present in `B`. -/
 def blocksBy (B : Blocklace) (v : NodeId) : Set BlockId :=
@@ -119,6 +125,14 @@ theorem honest_chain_linearity (B : Blocklace) (v : NodeId) (h : HonestIn B v) :
   push Not at hcontra
   exact h ⟨b₁, b₂, ⟨hb₁.1, hb₂.1, hb₁.2.trans hb₂.2.symm, hne, hcontra.1, hcontra.2⟩, hb₁.2⟩
 
+/-- Chain honesty rules out the narrower same-depth detector predicate. -/
+theorem honest_not_equivocator
+    (B : Blocklace) (hV : ValidBlocklace B) (v : NodeId)
+    (h : HonestIn B v) :
+    ¬ Equivocator B hV v := by
+  rintro ⟨b₁, b₂, ⟨hfork, -⟩, hcreator⟩
+  exact h ⟨b₁, b₂, hfork, hcreator⟩
+
 /-! ### Acknowledgement and hiding -/
 
 /-- `c` acknowledges the equivocation between `b₁` and `b₂`: `c`'s causal
@@ -135,6 +149,35 @@ as in the Rust, observing one branch but not the other still counts as
 hiding, not as acknowledging. -/
 def Hides (B : Blocklace) (c b₁ b₂ : BlockId) : Prop :=
   ¬ Acknowledges B c b₁ b₂
+
+/-- The causal view reconstructed from a candidate block's declared
+predecessors before that candidate is inserted into `B`. -/
+def CandidateObserves (B : Blocklace) (candidate : Block) (b : BlockId) : Prop :=
+  ∃ p ∈ candidate.content.predecessors, Observes B p b
+
+/-- Pre-insertion acknowledgement, matching Rust
+`acknowledges_equivocation(blocklace, candidate, ...)`. -/
+def CandidateAcknowledges
+    (B : Blocklace) (candidate : Block) (b₁ b₂ : BlockId) : Prop :=
+  CandidateObserves B candidate b₁ ∧ CandidateObserves B candidate b₂
+
+/-- Pre-insertion hiding, matching Rust `hidden_equivocations`. -/
+def CandidateHides
+    (B : Blocklace) (candidate : Block) (b₁ b₂ : BlockId) : Prop :=
+  ¬ CandidateAcknowledges B candidate b₁ b₂
+
+/-- Once a candidate is present under its own identifier, its reconstructed
+pre-insertion view is included in ordinary `Observes`. -/
+theorem candidateAcknowledges_of_inserted
+    (B : Blocklace) (candidate : Block) (b₁ b₂ : BlockId)
+    (hlookup : B.lookup candidate.id = some candidate)
+    (hack : CandidateAcknowledges B candidate b₁ b₂) :
+    Acknowledges B candidate.id b₁ b₂ := by
+  constructor
+  · obtain ⟨p, hp, hpb⟩ := hack.1
+    exact observes_trans B (observes_step B candidate.id p ⟨candidate, hlookup, hp⟩) hpb
+  · obtain ⟨p, hp, hpb⟩ := hack.2
+    exact observes_trans B (observes_step B candidate.id p ⟨candidate, hlookup, hp⟩) hpb
 
 /-- **Equivocation-visibility monotonicity.** If `d` observes `c`, and `c`
 already acknowledges the equivocation between `b₁` and `b₂`, then `d`
@@ -173,10 +216,11 @@ condition fails for each side in turn. This is the core proof Issue 04's
 Agreement theorem rests on; see `equivocation_not_approved` immediately
 below for the form actually meant to be imported as a hypothesis, phrased
 against an arbitrary `Approves` rather than this file's own `VouchesFor`. -/
-theorem equivocation_exclusion (B : Blocklace) (b₁ b₂ c : BlockId)
-    (heq : Equivocation B b₁ b₂) (hack : Acknowledges B c b₁ b₂) :
+theorem equivocation_exclusion
+    (B : Blocklace) (hV : ValidBlocklace B) (b₁ b₂ c : BlockId)
+    (heq : Equivocation B hV b₁ b₂) (hack : Acknowledges B c b₁ b₂) :
     ¬ VouchesFor B c b₁ ∧ ¬ VouchesFor B c b₂ := by
-  obtain ⟨-, -, hcreator, hne, hnob12, hnob21⟩ := heq
+  obtain ⟨⟨-, -, hcreator, hne, hnob12, hnob21⟩, -⟩ := heq
   refine ⟨fun hv => ?_, fun hv => ?_⟩
   · exact hv.2 b₂ hcreator.symm (Ne.symm hne) hack.2 ⟨hnob12, hnob21⟩
   · exact hv.2 b₁ hcreator hne hack.1 ⟨hnob21, hnob12⟩
@@ -195,13 +239,13 @@ acceptance criteria ask for literally: Issue 04 supplies its own
 directly, with zero changes to this file, regardless of what `Approves`
 ends up looking like. -/
 theorem equivocation_not_approved
-    (B : Blocklace) (b₁ b₂ c : BlockId)
+    (B : Blocklace) (hV : ValidBlocklace B) (b₁ b₂ c : BlockId)
     {Approves : Blocklace → BlockId → BlockId → Prop}
-    (heq : Equivocation B b₁ b₂) (hack : Acknowledges B c b₁ b₂)
+    (heq : Equivocation B hV b₁ b₂) (hack : Acknowledges B c b₁ b₂)
     (hApproveImpliesVouch₁ : Approves B c b₁ → VouchesFor B c b₁)
     (hApproveImpliesVouch₂ : Approves B c b₂ → VouchesFor B c b₂) :
     ¬ Approves B c b₁ ∧ ¬ Approves B c b₂ :=
-  let ⟨hv₁, hv₂⟩ := equivocation_exclusion B b₁ b₂ c heq hack
+  let ⟨hv₁, hv₂⟩ := equivocation_exclusion B hV b₁ b₂ c heq hack
   ⟨fun h => hv₁ (hApproveImpliesVouch₁ h), fun h => hv₂ (hApproveImpliesVouch₂ h)⟩
 
 section WorkedExample
@@ -212,10 +256,13 @@ def honestId : NodeId := 0
 /-- The cheater. -/
 def cheaterId : NodeId := 1
 
-theorem honestId_ne_cheaterId : honestId ≠ cheaterId := by decide
+/-- A third validator whose block acknowledges both equivocation branches. -/
+def observerId : NodeId := 2
 
-/-- Distinct payloads are only needed to keep `contentE1 ≠ contentE2`,
-which (via `hashInj`) is what makes `e1.id ≠ e2.id`. -/
+theorem honestId_ne_cheaterId : honestId ≠ cheaterId := by decide
+theorem honestId_ne_observerId : honestId ≠ observerId := by decide
+theorem cheaterId_ne_observerId : cheaterId ≠ observerId := by decide
+
 def contentG : BlockContent := { payload := [], predecessors := ∅ }
 def contentE1 : BlockContent := { payload := [0], predecessors := ∅ }
 def contentE2 : BlockContent := { payload := [1], predecessors := ∅ }
@@ -241,6 +288,16 @@ def e2 : Block :=
     content := contentE2
     id_eq := rfl }
 
+/-- A real acknowledging block whose declared predecessors are both branches. -/
+def contentC : BlockContent :=
+  { payload := [2], predecessors := {e1.id, e2.id} }
+
+def c : Block :=
+  { id := hashContent observerId contentC
+    creator := observerId
+    content := contentC
+    id_eq := rfl }
+
 theorem e1_ne_e2 : e1.id ≠ e2.id := by
   intro h
   have hcontent := (hashInj h).2
@@ -254,56 +311,149 @@ theorem g_ne_e2 : g.id ≠ e2.id := by
   intro h
   exact honestId_ne_cheaterId (hashInj h).1
 
-/-- The demo blocklace: exactly `g`, `e1`, `e2`, nothing else.
+theorem g_ne_c : g.id ≠ c.id := by
+  intro h
+  exact honestId_ne_observerId (hashInj h).1
 
-NOTE: `(∅ : Blocklace)` does not elaborate directly. `Blocklace` is a
-plain `def` (`Finmap (fun _ : BlockId => Block)`, not `abbrev`), and
-typeclass search for `EmptyCollection Blocklace` does not unfold plain
-`def`s to find `Finmap`'s own instance. Ascribing the empty value at the
-underlying `Finmap` type first, and letting it unify against the expected
-`Blocklace` type via `demoB`'s own `: Blocklace` signature, sidesteps
-that: term-level unification against an expected type *does* unfold
-plain `def`s, unlike instance search. -/
-def demoB : Blocklace :=
-  (((∅ : Finmap (fun _ : BlockId => Block)).insert e1.id e1).insert e2.id e2).insert g.id g
+theorem e1_ne_c : e1.id ≠ c.id := by
+  intro h
+  exact cheaterId_ne_observerId (hashInj h).1
+
+theorem e2_ne_c : e2.id ≠ c.id := by
+  intro h
+  exact cheaterId_ne_observerId (hashInj h).1
+
+/-! Build the example by valid insertions so DAG depth is available without
+an axiom. `demoBeforeC` is exactly the state used by Rust while validating
+the not-yet-inserted candidate `c`; `demoB` is the state after insertion. -/
+
+def demoB0 : Blocklace := emptyBlocklace
+def demoB1 : Blocklace := blocklaceInsert demoB0 e1
+def demoB2 : Blocklace := blocklaceInsert demoB1 e2
+def demoBeforeC : Blocklace := blocklaceInsert demoB2 g
+def demoB : Blocklace := blocklaceInsert demoBeforeC c
+
+theorem no_mem_demoB0 (x : BlockId) : x ∉ demoB0.keys := by
+  intro h
+  have hm := Finmap.mem_keys.mp h
+  simp [demoB0, emptyBlocklace, Finmap.mem_def] at hm
+
+theorem key_mem_insert_self (B : Blocklace) (blk : Block) :
+    blk.id ∈ (blocklaceInsert B blk).keys := by
+  exact Finmap.mem_keys.mpr (Finmap.mem_insert.mpr (Or.inl rfl))
+
+theorem key_mem_insert_of_mem
+    (B : Blocklace) (blk : Block) {x : BlockId} (h : x ∈ B.keys) :
+    x ∈ (blocklaceInsert B blk).keys := by
+  exact Finmap.mem_keys.mpr (Finmap.mem_insert.mpr (Or.inr (Finmap.mem_keys.mp h)))
+
+theorem key_not_mem_insert
+    (B : Blocklace) (blk : Block) {x : BlockId}
+    (hne : x ≠ blk.id) (hnot : x ∉ B.keys) :
+    x ∉ (blocklaceInsert B blk).keys := by
+  intro h
+  rcases Finmap.mem_insert.mp (Finmap.mem_keys.mp h) with heq | hmem
+  · exact hne heq
+  · exact hnot (Finmap.mem_keys.mpr hmem)
+
+theorem e1_mem_before_c : e1.id ∈ demoBeforeC.keys :=
+  key_mem_insert_of_mem demoB2 g
+    (key_mem_insert_of_mem demoB1 e2 (key_mem_insert_self demoB0 e1))
+
+theorem e2_mem_before_c : e2.id ∈ demoBeforeC.keys :=
+  key_mem_insert_of_mem demoB2 g (key_mem_insert_self demoB1 e2)
+
+theorem demoB0_valid : ValidBlocklace demoB0 := by
+  exact ValidBlocklace.empty
+
+theorem demoB1_valid : ValidBlocklace demoB1 := by
+  apply ValidBlocklace.insert demoB0 e1 demoB0_valid
+  · intro p hp
+    simp [e1, contentE1] at hp
+  · exact no_mem_demoB0 e1.id
+
+theorem demoB2_valid : ValidBlocklace demoB2 := by
+  apply ValidBlocklace.insert demoB1 e2 demoB1_valid
+  · intro p hp
+    simp [e2, contentE2] at hp
+  · exact key_not_mem_insert demoB0 e1 e1_ne_e2.symm (no_mem_demoB0 e2.id)
+
+theorem demoBeforeC_valid : ValidBlocklace demoBeforeC := by
+  apply ValidBlocklace.insert demoB2 g demoB2_valid
+  · intro p hp
+    simp [g, contentG] at hp
+  · exact key_not_mem_insert demoB1 e2 g_ne_e2
+      (key_not_mem_insert demoB0 e1 g_ne_e1 (no_mem_demoB0 g.id))
+
+theorem demoB_valid : ValidBlocklace demoB := by
+  apply ValidBlocklace.insert demoBeforeC c demoBeforeC_valid
+  · intro p hp
+    simp [c, contentC] at hp
+    rcases hp with rfl | rfl
+    · exact e1_mem_before_c
+    · exact e2_mem_before_c
+  · exact key_not_mem_insert demoB2 g g_ne_c.symm
+      (key_not_mem_insert demoB1 e2 e2_ne_c.symm
+        (key_not_mem_insert demoB0 e1 e1_ne_c.symm (no_mem_demoB0 c.id)))
 
 theorem lookup_g : demoB.lookup g.id = some g := by
-  simp [demoB, Finmap.lookup_insert]
+  unfold demoB blocklaceInsert
+  rw [Finmap.lookup_insert_of_ne demoBeforeC g_ne_c]
+  unfold demoBeforeC blocklaceInsert
+  exact Finmap.lookup_insert demoB2
 
 theorem lookup_e1 : demoB.lookup e1.id = some e1 := by
-  simp [demoB, Finmap.lookup_insert, Finmap.lookup_insert_of_ne,
-    g_ne_e1.symm, e1_ne_e2]
+  unfold demoB blocklaceInsert
+  rw [Finmap.lookup_insert_of_ne demoBeforeC e1_ne_c]
+  unfold demoBeforeC blocklaceInsert
+  rw [Finmap.lookup_insert_of_ne demoB2 g_ne_e1.symm]
+  unfold demoB2 blocklaceInsert
+  rw [Finmap.lookup_insert_of_ne demoB1 e1_ne_e2]
+  unfold demoB1 blocklaceInsert
+  exact Finmap.lookup_insert demoB0
 
 theorem lookup_e2 : demoB.lookup e2.id = some e2 := by
-  simp [demoB, Finmap.lookup_insert, Finmap.lookup_insert_of_ne, g_ne_e2.symm]
+  unfold demoB blocklaceInsert
+  rw [Finmap.lookup_insert_of_ne demoBeforeC e2_ne_c]
+  unfold demoBeforeC blocklaceInsert
+  rw [Finmap.lookup_insert_of_ne demoB2 g_ne_e2.symm]
+  unfold demoB2 blocklaceInsert
+  exact Finmap.lookup_insert demoB1
 
-/-- Membership proofs built the way `insertPreservesClosed` in
-`Blocklace.lean` already does it — chaining `Finmap.mem_insert`
-(Finmap-level membership) and converting to `.keys`-level via
-`Finmap.mem_keys` at the end — rather than going from "lookup succeeds"
-to membership via an anonymous constructor. `a ∈ s` for a `Finmap`
-unfolds through a `Quot.lift` internally (it's backed by a `Multiset`),
-so it is not an inductive `Exists` that `⟨witness, proof⟩` syntax can
-target; that mismatch, not the earlier `sorry` cascade, was the second
-real bug in this section. -/
-theorem g_mem : g.id ∈ demoB.keys :=
-  Finmap.mem_keys.mpr (Finmap.mem_insert.mpr (Or.inl rfl))
+theorem lookup_c : demoB.lookup c.id = some c := by
+  unfold demoB blocklaceInsert
+  exact Finmap.lookup_insert demoBeforeC
 
-theorem e2_mem : e2.id ∈ demoB.keys :=
-  Finmap.mem_keys.mpr (Finmap.mem_insert.mpr (Or.inr
-    (Finmap.mem_insert.mpr (Or.inl rfl))))
+theorem lookup_before_c_e1 : demoBeforeC.lookup e1.id = some e1 := by
+  unfold demoBeforeC blocklaceInsert
+  rw [Finmap.lookup_insert_of_ne demoB2 g_ne_e1.symm]
+  unfold demoB2 blocklaceInsert
+  rw [Finmap.lookup_insert_of_ne demoB1 e1_ne_e2]
+  unfold demoB1 blocklaceInsert
+  exact Finmap.lookup_insert demoB0
 
-theorem e1_mem : e1.id ∈ demoB.keys :=
-  Finmap.mem_keys.mpr (Finmap.mem_insert.mpr (Or.inr
-    (Finmap.mem_insert.mpr (Or.inr (Finmap.mem_insert.mpr (Or.inl rfl))))))
+theorem lookup_before_c_e2 : demoBeforeC.lookup e2.id = some e2 := by
+  unfold demoBeforeC blocklaceInsert
+  rw [Finmap.lookup_insert_of_ne demoB2 g_ne_e2.symm]
+  unfold demoB2 blocklaceInsert
+  exact Finmap.lookup_insert demoB1
 
-/-- `simp` (not `simp only`) deliberately, so the default simp set
-supplies whatever this Mathlib version's empty-`Finmap`-membership lemma
-is actually named, rather than this file having to guess and hard-code
-it. -/
+theorem g_mem : g.id ∈ demoB.keys := by
+  exact key_mem_insert_of_mem demoBeforeC c (key_mem_insert_self demoB2 g)
+
+theorem e1_mem : e1.id ∈ demoB.keys := by
+  exact key_mem_insert_of_mem demoBeforeC c e1_mem_before_c
+
+theorem e2_mem : e2.id ∈ demoB.keys := by
+  exact key_mem_insert_of_mem demoBeforeC c e2_mem_before_c
+
+theorem c_mem : c.id ∈ demoB.keys := by
+  exact key_mem_insert_self demoBeforeC c
+
 theorem demoB_keys_cases {b : BlockId} (hb : b ∈ demoB.keys) :
-    b = g.id ∨ b = e1.id ∨ b = e2.id := by
-  simp [demoB, Finmap.mem_keys, Finmap.mem_insert] at hb
+    b = g.id ∨ b = e1.id ∨ b = e2.id ∨ b = c.id := by
+  simp [demoB, demoBeforeC, demoB2, demoB1, demoB0, blocklaceInsert,
+    emptyBlocklace, Finmap.mem_keys, Finmap.mem_insert] at hb
   tauto
 
 theorem creatorOf_g : creatorOf demoB g.id = some honestId := by
@@ -315,57 +465,54 @@ theorem creatorOf_e1 : creatorOf demoB e1.id = some cheaterId := by
 theorem creatorOf_e2 : creatorOf demoB e2.id = some cheaterId := by
   simp only [creatorOf, lookup_e2]; rfl
 
-/-- No block in `demoB` has a predecessor: every one of `g`, `e1`, `e2`
-was built with `predecessors := ∅`, and those are the only three blocks
-`demoB` contains. Case-splits on `x` directly via `eq_or_ne` rather than
-trying to derive `x ∈ demoB.keys` from `hlookup` through a membership
-bridge lemma — same reason `g_mem` above avoids the anonymous
-constructor — since that sidesteps needing to know the exact name of
-whichever "lookup succeeds → key present" lemma this Mathlib version
-ships, which this section doesn't otherwise need. The three
-`Finmap.lookup_insert_of_ne _ hx*` arguments mirror
-`insertPreservesClosed`'s `lookup_insert_of_ne B hid` call in
-`Blocklace.lean` exactly: the inequality goes lookup-key ≠ insert-key,
-with no `.symm`. -/
-theorem demoB_directPred_false (x y : BlockId) : ¬ DirectPred demoB x y := by
-  rintro ⟨blk, hlookup, hp⟩
-  rcases eq_or_ne x g.id with rfl | hxg
-  · rw [lookup_g] at hlookup; cases hlookup; simp [g, contentG] at hp
-  rcases eq_or_ne x e1.id with rfl | hxe1
-  · rw [lookup_e1] at hlookup; cases hlookup; simp [e1, contentE1] at hp
-  rcases eq_or_ne x e2.id with rfl | hxe2
-  · rw [lookup_e2] at hlookup; cases hlookup; simp [e2, contentE2] at hp
-  · have hnone : demoB.lookup x = none := by
-      simp [demoB, Finmap.lookup_insert_of_ne _ hxg,
-        Finmap.lookup_insert_of_ne _ hxe1, Finmap.lookup_insert_of_ne _ hxe2]
-    rw [hnone] at hlookup
-    exact absurd hlookup (by simp)
+theorem creatorOf_c : creatorOf demoB c.id = some observerId := by
+  simp only [creatorOf, lookup_c]; rfl
 
-/-- With no predecessor edges at all, `Observes demoB` only ever relates
-a block to itself. -/
-theorem demoB_observes_iff (x y : BlockId) : Observes demoB x y ↔ x = y := by
-  constructor
-  · intro h
-    rcases Relation.ReflTransGen.cases_head h with hEq | ⟨c, hxc, -⟩
-    · exact hEq
-    · exact absurd hxc (demoB_directPred_false x c)
-  · rintro rfl
-    exact observes_refl demoB x
+theorem directPred_e1_false (y : BlockId) : ¬ DirectPred demoB e1.id y := by
+  rintro ⟨blk, hlookup, hp⟩
+  rw [lookup_e1] at hlookup
+  cases hlookup
+  simp [e1, contentE1] at hp
+
+theorem directPred_e2_false (y : BlockId) : ¬ DirectPred demoB e2.id y := by
+  rintro ⟨blk, hlookup, hp⟩
+  rw [lookup_e2] at hlookup
+  cases hlookup
+  simp [e2, contentE2] at hp
 
 theorem not_observes_e1_e2 : ¬ Observes demoB e1.id e2.id := by
-  rw [demoB_observes_iff]; exact e1_ne_e2
+  intro h
+  rcases Relation.ReflTransGen.cases_head h with hEq | ⟨p, hstep, -⟩
+  · exact e1_ne_e2 hEq
+  · exact directPred_e1_false p hstep
 
 theorem not_observes_e2_e1 : ¬ Observes demoB e2.id e1.id := by
-  rw [demoB_observes_iff]; exact e1_ne_e2.symm
+  intro h
+  rcases Relation.ReflTransGen.cases_head h with hEq | ⟨p, hstep, -⟩
+  · exact e1_ne_e2.symm hEq
+  · exact directPred_e2_false p hstep
 
-/-- `e1` and `e2` are an explicit, concrete equivocation. -/
-theorem e1_e2_equivocate : Equivocation demoB e1.id e2.id :=
+theorem depth_e1 : blockDepth demoB demoB_valid e1.id = 0 := by
+  unfold blockDepth
+  rw [blockDepthWF_eq, lookup_e1]
+  simp [e1, contentE1]
+
+theorem depth_e2 : blockDepth demoB demoB_valid e2.id = 0 := by
+  unfold blockDepth
+  rw [blockDepthWF_eq, lookup_e2]
+  simp [e2, contentE2]
+
+theorem e1_e2_fork : Fork demoB e1.id e2.id :=
   ⟨e1_mem, e2_mem, creatorOf_e1.trans creatorOf_e2.symm, e1_ne_e2,
     not_observes_e1_e2, not_observes_e2_e1⟩
 
+/-- `e1` and `e2` are an explicit same-depth equivocation. -/
+theorem e1_e2_equivocate : Equivocation demoB demoB_valid e1.id e2.id :=
+  ⟨e1_e2_fork, depth_e1.trans depth_e2.symm⟩
+
 /-- `HonestIn` evaluates false for the cheater. -/
 theorem cheater_not_honest : ¬ HonestIn demoB cheaterId := fun h =>
-  h ⟨e1.id, e2.id, e1_e2_equivocate, creatorOf_e1⟩
+  h ⟨e1.id, e2.id, e1_e2_fork, creatorOf_e1⟩
 
 /-- `HonestIn` evaluates true for the honest validator: it only ever
 created one block, `g`, so no pair of "its" blocks can possibly
@@ -381,38 +528,59 @@ strips the `some` first. -/
 theorem honest_is_honest : HonestIn demoB honestId := by
   rintro ⟨b₁, b₂, ⟨hb1mem, hb2mem, hcreator, hne, -, -⟩, hb1⟩
   have hb1g : b₁ = g.id := by
-    rcases demoB_keys_cases hb1mem with rfl | rfl | rfl
+    rcases demoB_keys_cases hb1mem with rfl | rfl | rfl | rfl
     · rfl
     · rw [creatorOf_e1] at hb1
       exact absurd (Option.some.inj hb1.symm) honestId_ne_cheaterId
     · rw [creatorOf_e2] at hb1
       exact absurd (Option.some.inj hb1.symm) honestId_ne_cheaterId
+    · rw [creatorOf_c] at hb1
+      exact absurd (Option.some.inj hb1.symm) honestId_ne_observerId
   have hb2g : b₂ = g.id := by
     rw [hb1g, creatorOf_g] at hcreator
-    rcases demoB_keys_cases hb2mem with rfl | rfl | rfl
+    rcases demoB_keys_cases hb2mem with rfl | rfl | rfl | rfl
     · rfl
     · rw [creatorOf_e1] at hcreator
       exact absurd (Option.some.inj hcreator) honestId_ne_cheaterId
     · rw [creatorOf_e2] at hcreator
       exact absurd (Option.some.inj hcreator) honestId_ne_cheaterId
+    · rw [creatorOf_c] at hcreator
+      exact absurd (Option.some.inj hcreator) honestId_ne_observerId
   exact hne (hb1g.trans hb2g.symm)
 
-/-- Neither `honestId` nor `cheaterId` can be vouched for on both sides
-of the cheat at once: any node that acknowledges the equivocation
-(observes both `e1` and `e2`) cannot cleanly vouch for either. -/
-theorem demo_exclusion (c : BlockId) (hack : Acknowledges demoB c e1.id e2.id) :
-    ¬ VouchesFor demoB c e1.id ∧ ¬ VouchesFor demoB c e2.id :=
-  equivocation_exclusion demoB e1.id e2.id c e1_e2_equivocate hack
+/-- Before insertion, Rust reconstructs `c`'s view from its declared
+predecessors; both branches are present in that view. -/
+theorem candidate_c_acknowledges_before_insert :
+    CandidateAcknowledges demoBeforeC c e1.id e2.id := by
+  constructor
+  · exact ⟨e1.id, by simp [c, contentC], observes_refl demoBeforeC e1.id⟩
+  · exact ⟨e2.id, by simp [c, contentC], observes_refl demoBeforeC e2.id⟩
+
+theorem candidate_c_acknowledges_after_insert :
+    CandidateAcknowledges demoB c e1.id e2.id := by
+  constructor
+  · exact ⟨e1.id, by simp [c, contentC], observes_refl demoB e1.id⟩
+  · exact ⟨e2.id, by simp [c, contentC], observes_refl demoB e2.id⟩
+
+/-- The pre-insertion view bridges to ordinary observation after `c` is
+inserted under its own identifier. This witness makes the exclusion demo
+non-vacuous. -/
+theorem c_acknowledges : Acknowledges demoB c.id e1.id e2.id :=
+  candidateAcknowledges_of_inserted demoB c e1.id e2.id lookup_c
+    candidate_c_acknowledges_after_insert
+
+theorem demo_exclusion :
+    ¬ VouchesFor demoB c.id e1.id ∧ ¬ VouchesFor demoB c.id e2.id :=
+  equivocation_exclusion demoB demoB_valid e1.id e2.id c.id e1_e2_equivocate c_acknowledges
 
 /-- The same demo, through `equivocation_not_approved` instead: a
 stand-in `Approves` (here, literally `VouchesFor` itself, so the
 implication hypotheses are trivial `id`s) shows the shape Issue 04 would
 actually plug its own, real `Approves` and implication proofs into. -/
-theorem demo_exclusion_via_approves (c : BlockId)
-    (hack : Acknowledges demoB c e1.id e2.id) :
-    ¬ VouchesFor demoB c e1.id ∧ ¬ VouchesFor demoB c e2.id :=
-  equivocation_not_approved (Approves := VouchesFor) demoB e1.id e2.id c e1_e2_equivocate hack id
-    id
+theorem demo_exclusion_via_approves :
+    ¬ VouchesFor demoB c.id e1.id ∧ ¬ VouchesFor demoB c.id e2.id :=
+  equivocation_not_approved (Approves := VouchesFor) demoB demoB_valid e1.id e2.id c.id
+    e1_e2_equivocate c_acknowledges id id
 
 end WorkedExample
 
