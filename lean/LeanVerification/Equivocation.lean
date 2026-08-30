@@ -81,6 +81,38 @@ theorem blockDepthWF_eq
 def blockDepth (B : Blocklace) (hV : ValidBlocklace B) (b : BlockId) : Nat :=
   blockDepthWF B (directPred_wf_of_valid B hV) b
 
+/-! ### Depth monotonicity along predecessor edges -/
+
+/-- A direct predecessor is strictly shallower than its successor. -/
+theorem blockDepth_directPred (B : Blocklace) (hV : ValidBlocklace B) (b p : BlockId)
+    (h : DirectPred B b p) : blockDepth B hV p + 1 ≤ blockDepth B hV b := by
+  obtain ⟨blk, hblk, hp⟩ := h
+  unfold blockDepth
+  rw [blockDepthWF_eq B (directPred_wf_of_valid B hV) b, hblk]
+  exact Finset.le_sup (f := fun q =>
+    blockDepthWF B (directPred_wf_of_valid B hV) q.1 + 1) (Finset.mem_attach _ ⟨p, hp⟩)
+
+/-- Depth strictly increases along every transitive predecessor path. -/
+theorem depth_strict_of_precedes (B : Blocklace) (hV : ValidBlocklace B) (b₁ b₂ : BlockId)
+    (h : Relation.TransGen (DirectPred B) b₁ b₂) :
+    blockDepth B hV b₂ < blockDepth B hV b₁ :=
+  h.head_induction_on
+    (fun {a} hac => Nat.lt_of_add_one_le (blockDepth_directPred B hV a b₂ hac))
+    (fun {a b} hab _hbc ihb =>
+      Nat.lt_trans ihb (Nat.lt_of_add_one_le (blockDepth_directPred B hV a b hab)))
+
+/-- Two blocks with the same depth and distinct ids cannot observe each other. -/
+theorem same_depth_incomparable (B : Blocklace) (hV : ValidBlocklace B) (b₁ b₂ : BlockId)
+    (hne : b₁ ≠ b₂) (hd : blockDepth B hV b₁ = blockDepth B hV b₂) :
+    ¬ Observes B b₁ b₂ ∧ ¬ Observes B b₂ b₁ := by
+  have aux : ∀ x y : BlockId, x ≠ y → blockDepth B hV x = blockDepth B hV y →
+      ¬ Observes B x y := by
+    intro x y hxy hdxy hobs
+    rcases (Relation.reflTransGen_iff_eq_or_transGen.mp hobs) with rfl | ht
+    · exact hxy rfl
+    · exact Nat.lt_irrefl _ (hdxy ▸ depth_strict_of_precedes B hV x y ht)
+  exact ⟨aux b₁ b₂ hne hd, aux b₂ b₁ (Ne.symm hne) hd.symm⟩
+
 /-! ### Forks, equivocation, and honesty -/
 
 /-- A structural fork: two present, distinct, incomparable blocks with the
