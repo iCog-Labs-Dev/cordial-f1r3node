@@ -49,6 +49,13 @@ def Approves (B : Blocklace) (approver target : BlockId) : Prop :=
 abbrev bondOf (bonds : NodeId → ℕ) (S : Finset NodeId) : ℕ :=
   ∑ v ∈ S, bonds v
 
+/-- `validators` contains every node with positive bond weight.
+Without this, a caller could hide bonded validators from the universe,
+inflating any subset's apparent share. Rust always passes the full
+validator set from the epoch config.  -/
+def ValidBonds (bonds : NodeId → ℕ) (validators : Finset NodeId) : Prop :=
+  ∀ v, 0 < bonds v → v ∈ validators
+
 /-- Strict two-thirds weighted supermajority of `validators` held by `S`:
   `3 * bondOf bonds S > 2 * bondOf bonds validators`.
 Cross-multiplication avoids division and matches `strict_two_thirds` in
@@ -56,6 +63,60 @@ Cross-multiplication avoids division and matches `strict_two_thirds` in
 def StrictTwoThirdsMaj (bonds : NodeId → ℕ) (validators : Finset NodeId)
     (S : Finset NodeId) : Prop :=
   3 * bondOf bonds S > 2 * bondOf bonds validators
+
+/-! ### Quorum-intersection helpers (Finset-based) -/
+
+/-- A non-empty Finset with positive total bond weight. -/
+lemma bondOf_pos_nonempty (bonds : NodeId → ℕ) (S : Finset NodeId)
+    (h : 0 < bondOf bonds S) : S.Nonempty := by
+  by_contra hemp
+  simp [Finset.not_nonempty_iff_eq_empty.mp hemp, bondOf] at h
+
+/-- Bond weight is monotone: a subset weighs at most the superset. -/
+lemma bondOf_mono (bonds : NodeId → ℕ) {A B : Finset NodeId} (h : A ⊆ B) :
+    bondOf bonds A ≤ bondOf bonds B :=
+  Finset.sum_le_sum_of_subset h
+
+/-- Inclusion-exclusion for bond weights. -/
+lemma bondOf_union_inter (bonds : NodeId → ℕ) (A B : Finset NodeId) :
+    bondOf bonds (A ∪ B) + bondOf bonds (A ∩ B) = bondOf bonds A + bondOf bonds B :=
+  Finset.sum_union_inter
+
+/-- If `H`, `A`, and `B` each hold a strict two-thirds majority of
+`validators`, their triple intersection is non-empty.
+This is the Finset-based analog of `Weights.honest_triple_intersection`. -/
+theorem finset_honest_triple_intersection
+    (bonds : NodeId → ℕ) (validators : Finset NodeId)
+    (H A B : Finset NodeId)
+    (hH : H ⊆ validators) (hA : A ⊆ validators) (hB : B ⊆ validators)
+    (hHmaj : StrictTwoThirdsMaj bonds validators H)
+    (hAmaj : StrictTwoThirdsMaj bonds validators A)
+    (hBmaj : StrictTwoThirdsMaj bonds validators B) :
+    (A ∩ B ∩ H).Nonempty := by
+  -- Name the sums as local Nat variables so omega can reason about them.
+  set u := bondOf bonds validators
+  set a := bondOf bonds A
+  set b := bondOf bonds B
+  set h := bondOf bonds H
+  set ab_union := bondOf bonds (A ∪ B)
+  set ab_inter := bondOf bonds (A ∩ B)
+  set abh_union := bondOf bonds (A ∩ B ∪ H)
+  set abh_inter := bondOf bonds (A ∩ B ∩ H)
+  -- Subset bounds
+  have hu_A : a ≤ u := bondOf_mono bonds hA
+  have hu_B : b ≤ u := bondOf_mono bonds hB
+  have hu_H : h ≤ u := bondOf_mono bonds hH
+  have hu_AB : ab_union ≤ u := bondOf_mono bonds (Finset.union_subset hA hB)
+  have hu_ABH : abh_union ≤ u :=
+    bondOf_mono bonds (Finset.union_subset (Finset.inter_subset_left.trans hA) hH)
+  -- Inclusion-exclusion
+  have hAB_ie : ab_union + ab_inter = a + b := bondOf_union_inter bonds A B
+  have hABH_ie : abh_union + abh_inter = ab_inter + h := bondOf_union_inter bonds (A ∩ B) H
+  -- Supermajority hypotheses (cross-multiplied, so no division)
+  unfold StrictTwoThirdsMaj at hAmaj hBmaj hHmaj
+  -- From the above, derive positivity by linear arithmetic.
+  have hABH_pos : 0 < abh_inter := by omega
+  exact bondOf_pos_nonempty bonds _ hABH_pos
 
 /-! ### Ratification -/
 
