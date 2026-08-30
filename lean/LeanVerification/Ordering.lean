@@ -78,7 +78,7 @@ Declared `opaque` because its computational definition lives in Rust.
 What matters formally is `tau_prefix_monotone` below. -/
 opaque tau (bonds : NodeId → ℕ) (validators : Finset NodeId)
     (B : Blocklace) (hV : ValidBlocklace B)
-    (wavelength : ℕ) (sel : ℕ → NodeId) : List BlockId
+    (wavelength : ℕ) (sel : ℕ → Option NodeId) : List BlockId
 
 /-! ### Prefix-safety -/
 
@@ -100,7 +100,7 @@ Rust: the `tau` append-only invariant is tested by
 axiom tau_prefix_monotone
     (bonds : NodeId → ℕ) (validators : Finset NodeId)
     (B B' : Blocklace) (hV : ValidBlocklace B) (hV' : ValidBlocklace B')
-    (wavelength : ℕ) (sel : ℕ → NodeId)
+    (wavelength : ℕ) (sel : ℕ → Option NodeId)
     (hsub : SubBlocklace B B') :
     List.IsPrefix
       (tau bonds validators B hV wavelength sel)
