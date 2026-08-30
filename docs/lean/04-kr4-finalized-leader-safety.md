@@ -13,10 +13,11 @@ guarantee — only Rust tests covering the scenarios that were thought of.
 This module provides the general proof, over all possible blocklace
 histories regardless of adversarial choice.
 
-The supporting module `Ordering.lean` adds the **append-only ledger
-property**: as the blocklace grows, the ordered output `tau` only
-extends, never retracts. This is what makes the output usable as a
-distributed ledger.
+The supporting module `Ordering.lean` adds two guarantees:
+- **Append-only ledger**: as the blocklace grows, the ordered output `tau`
+  only extends, never retracts.
+- **Finality monotonicity**: once a block is finalized in `B`, it stays
+  finalized in any superset `B'`.
 
 ---
 
@@ -117,9 +118,9 @@ Rust: `wave.rs:wave_of_round`, `first_round_of_wave`, `last_round_of_wave`.
 
 ```lean
 def leaderBlocksOfWave (B : Blocklace) (hV : ValidBlocklace B)
-    (wave wavelength : ℕ) (sel : ℕ → NodeId) : Set BlockId :=
+    (wave wavelength : ℕ) (sel : ℕ → Option NodeId) : Set BlockId :=
   {b | b ∈ B.keys ∧
-       creatorOf B b = some (sel wave) ∧
+       creatorOf B b = sel wave ∧
        blockDepth B hV b = leaderRoundOfWave wave wavelength}
 ```
 
@@ -127,29 +128,19 @@ Uses `Set BlockId` (propositional) rather than `Finset BlockId` to avoid
 requiring a decidable depth comparison. `blockDepth B hV b` is the DAG
 depth from `Equivocation.lean`, computed by well-founded recursion.
 
+`sel : ℕ → Option NodeId` mirrors Rust's `Fn(u64) → Option<NodeId>`:
+`sel wave = none` means no leader was elected for that wave (e.g. not
+enough blocks have arrived yet), so the leader-block set is empty.
+
 Rust: `wave.rs:leader_blocks_of_wave`.
-
-### Unique leader block
-
-```lean
-def IsUniqueLeaderBlock (B : Blocklace) (hV : ValidBlocklace B)
-    (wave wavelength : ℕ) (sel : ℕ → NodeId) (b : BlockId) : Prop :=
-  b ∈ leaderBlocksOfWave B hV wave wavelength sel ∧
-  ∀ b', b' ∈ leaderBlocksOfWave B hV wave wavelength sel → b' = b
-```
-
-An equivocating leader produces multiple blocks at the leader round, so
-`IsUniqueLeaderBlock` fails for all of them — which exactly mirrors
-`finality.rs:leader_block_for_wave` returning `None` when more than one
-leader block exists.
 
 ### `FinalLeader`
 
 ```lean
 def FinalLeader (bonds : NodeId → ℕ) (validators : Finset NodeId)
     (B : Blocklace) (hV : ValidBlocklace B)
-    (wave wavelength : ℕ) (sel : ℕ → NodeId) (b : BlockId) : Prop :=
-  IsUniqueLeaderBlock B hV wave wavelength sel b ∧
+    (wave wavelength : ℕ) (sel : ℕ → Option NodeId) (b : BlockId) : Prop :=
+  b ∈ leaderBlocksOfWave B hV wave wavelength sel ∧
   ∃ witness : Finset BlockId,
     (∀ s ∈ witness,
       s ∈ B.keys ∧
@@ -159,11 +150,32 @@ def FinalLeader (bonds : NodeId → ℕ) (validators : Finset NodeId)
 ```
 
 Encodes two conditions:
-1. **Uniqueness** — no equivocation in the leader role.
+1. **Leader-block membership** — `b` is present, has the correct creator
+   (`creatorOf B b = sel wave`), and sits at the leader depth.
 2. **Super-ratification** — a witness block set within the wave
-   super-ratifies the candidate under the given bond weights.
+   super-ratifies `b` under the given bond weights.
+
+Uniqueness is **not** an axiom here — it is a theorem (`no_conflicting_finals`)
+proved by the quorum-intersection argument from KR3.
 
 Rust: `finality.rs:is_weighted_final_leader` + `final_leader_for_wave`.
+
+### `leaderBlocks_equivocation`
+
+```lean
+lemma leaderBlocks_equivocation (B : Blocklace) (hV : ValidBlocklace B)
+    (wave wavelength : ℕ) (sel : ℕ → Option NodeId)
+    (b₁ b₂ : BlockId)
+    (hb₁ : b₁ ∈ leaderBlocksOfWave B hV wave wavelength sel)
+    (hb₂ : b₂ ∈ leaderBlocksOfWave B hV wave wavelength sel)
+    (hne : b₁ ≠ b₂) : Equivocation B hV b₁ b₂
+```
+
+Any two distinct leader blocks for the same wave form a KR2-`Equivocation`:
+they share creator (`sel wave`) and depth (`leaderRoundOfWave`), so
+`same_depth_incomparable` gives incomparability, which is exactly the
+equivocation condition. This lemma is the bridge from the leader-block
+structure to the quorum-intersection argument.
 
 ### The safety theorem
 
@@ -171,35 +183,37 @@ Rust: `finality.rs:is_weighted_final_leader` + `final_leader_for_wave`.
 theorem no_conflicting_finals
     (bonds : NodeId → ℕ) (validators : Finset NodeId)
     (B : Blocklace) (hV : ValidBlocklace B)
-    (wave wavelength : ℕ) (sel : ℕ → NodeId)
+    (wave wavelength : ℕ) (_hwl : 0 < wavelength)
+    (sel : ℕ → Option NodeId)
+    (honestNodes : Finset NodeId)
+    (hH_sub : honestNodes ⊆ validators)
+    (hH_maj : StrictTwoThirdsMaj bonds validators honestNodes)
+    (hHonest : ∀ v ∈ honestNodes, HonestIn B v)
     (b₁ b₂ : BlockId)
     (hb₁ : FinalLeader bonds validators B hV wave wavelength sel b₁)
     (hb₂ : FinalLeader bonds validators B hV wave wavelength sel b₂) :
     b₁ = b₂
 ```
 
-**Why it is true (proof).** Both `b₁` and `b₂` satisfy
-`IsUniqueLeaderBlock` for the same wave. The uniqueness clause in `hb₁`
-states that every leader block for the wave equals `b₁`. Since `b₂` is
-itself a leader block (from `hb₂.1.1`), applying that clause gives
-`b₂ = b₁`.
+**Proof sketch (by contradiction, assume `b₁ ≠ b₂`)**:
 
-**Why the encoding is sound.** The uniqueness condition is not a cheat —
-it captures the precise reason an equivocating leader cannot be
-finalized. From KR2's `equivocation_not_approved`, any block that
-acknowledges both branches of the equivocation (`Acknowledges B c b₁ b₂`)
-cannot vouch for either one (`¬ Approves B c b₁ ∧ ¬ Approves B c b₂`).
-So an equivocating leader can never accumulate the weighted supermajority
-of ratifiers that `SuperRatifies` requires — the exclusion property
-eliminates every potential approver that has seen both branches. The three-
-quorum argument from `Weights.lean:honest_triple_intersection` is the
-protocol-level justification for why honest validators collectively see
-both branches and why the intersection with the two ratifying quorums
-produces an honest, acknowledging witness.
+1. `leaderBlocks_equivocation` gives `Equivocation B hV b₁ b₂`.
+2. Extract ratifier sets `R₁` (from `hb₁`) and `R₂` (from `hb₂`).
+3. `finset_honest_triple_intersection` yields an honest ratifier
+   `v* ∈ R₁ ∩ R₂ ∩ honestNodes`.
+4. `v*` ratified `b₁` via `r₁` and `b₂` via `r₂`.
+5. Extract approver sets `S₁`, `S₂`; `finset_honest_triple_intersection`
+   again gives an honest approver `u* ∈ S₁ ∩ S₂ ∩ honestNodes`.
+6. `u*` approved both `b₁` and `b₂`; `honest_chain_linearity` gives
+   comparability of `u*`'s blocks, so `u*` has an approver block `a`
+   that observes both ratifier blocks and therefore both finalized blocks.
+7. `approves_exclusion` contradicts `u*` approving either branch of the
+   `b₁`/`b₂` equivocation.
 
-The Lean proof compresses this to one line precisely because the encoding
-already reflects the conclusion: uniqueness is the property that honest
-execution guarantees and that equivocation violates.
+**Why the encoding is sound.** The quorum-intersection argument at both
+the ratifier and approver levels uses the honest-kernel lemmas from KR3
+(`Weights.lean:honest_triple_intersection`). The equivocation exclusion
+(`approves_exclusion` from KR2) provides the final contradiction.
 
 ---
 
@@ -217,19 +231,61 @@ in `B'` with identical content (block content is immutable). From this,
 `observes_of_subBlocklace` follows: observation can only grow, it never
 shrinks.
 
+### Finality monotonicity
+
+```lean
+theorem FinalLeader_of_subBlocklace
+    (bonds : NodeId → ℕ) (validators : Finset NodeId)
+    (B B' : Blocklace) (hV : ValidBlocklace B) (hV' : ValidBlocklace B')
+    (wave wavelength : ℕ) (sel : ℕ → Option NodeId)
+    (hsub : SubBlocklace B B') (b : BlockId)
+    (hfin : FinalLeader bonds validators B hV wave wavelength sel b) :
+    FinalLeader bonds validators B' hV' wave wavelength sel b
+```
+
+If `b` is a finalized leader in `B`, it remains finalized in any monotone
+extension `B'`. The proof transfers each component of `FinalLeader`:
+
+| Component | Lemma used |
+|---|---|
+| `b ∈ B'.keys` | `keys_mono` |
+| `creatorOf B' b = sel wave` | `creatorOf_of_subBlocklace` |
+| `blockDepth B' hV' b = leaderRoundOfWave ...` | `blockDepth_of_subBlocklace` |
+| Witness depths preserved | `blockDepth_of_subBlocklace` |
+| `SuperRatifies ... B' witness b` | `superRatifies_of_subBlocklace` |
+
+**`blockDepth_of_subBlocklace`** is the most involved: well-founded
+induction over `directPred_wf_of_valid B hV`, using `Finset.sup_congr`
+at each step to equate the `blockDepthWF` recursive equation in `B` and
+`B'` (same lookup for B-resident blocks, `Closed B` bounds all
+predecessor lookups within `B.keys`).
+
+**`observes_stays_in_B`** is the key containment lemma: starting from
+`a ∈ B.keys`, any block reachable via `B'`'s predecessor relation stays
+in `B.keys`. New blocks added to `B'` cannot be reached from B-resident
+blocks because `Closed B` locks all predecessor lookups within `B.keys`,
+and `SubBlocklace` preserves those lookups unchanged.
+
+**`observes_iff_subBlocklace`** follows: for `a, b ∈ B.keys`,
+`Observes B a b ↔ Observes B' a b`. This allows lifting the
+`VouchesFor` fork-freedom condition (`Approves`) from `B` to `B'` and
+back, making `approves_of_subBlocklace` provable.
+
+Addresses reviewer concern 3 on PR #229: finality monotonicity was absent
+from the original formalization and is false under the old
+uniqueness-encoding definition.
+
 ### `tau`
 
 ```lean
 opaque tau (bonds : NodeId → ℕ) (validators : Finset NodeId)
     (B : Blocklace) (hV : ValidBlocklace B)
-    (wavelength : ℕ) (sel : ℕ → NodeId) : List BlockId
+    (wavelength : ℕ) (sel : ℕ → Option NodeId) : List BlockId
 ```
 
 Declared `opaque` because its computational definition lives in Rust
-(`ordering.rs:tau`, lines 391–). What matters formally is the prefix-
-safety property below. This follows the same tradition as `hashContent`
-in `Block.lean`: the function exists and has the stated type, but its
-implementation is a trusted Rust artifact.
+(`ordering.rs:tau`). What matters formally is the prefix-safety property
+below. `sel : ℕ → Option NodeId` matches Rust's `Fn(u64) → Option<NodeId>`.
 
 Rust: `ordering.rs:tau`.
 
@@ -239,29 +295,24 @@ Rust: `ordering.rs:tau`.
 axiom tau_prefix_monotone
     (bonds : NodeId → ℕ) (validators : Finset NodeId)
     (B B' : Blocklace) (hV : ValidBlocklace B) (hV' : ValidBlocklace B')
-    (wavelength : ℕ) (sel : ℕ → NodeId)
+    (wavelength : ℕ) (sel : ℕ → Option NodeId)
     (hsub : SubBlocklace B B') :
     List.IsPrefix
       (tau bonds validators B hV wavelength sel)
       (tau bonds validators B' hV' wavelength sel)
 ```
 
-Stated as an `axiom` — a deliberate trusted formal boundary, analogous
-to `hashInj` in `Block.lean`. The justification is a three-point proof
-sketch:
+Stated as an `axiom` — a deliberate trusted formal boundary. The
+justification is a three-point proof sketch:
 
-1. **`no_conflicting_finals`** (this file): the latest finalized leader
-   can only advance to a later wave, never regress.
-2. **`observes_of_subBlocklace`**: as `B` grows, every observation in
-   `B` is preserved in `B'`.
-3. **`approves_exclusion`**: once a block is approved in `B`, it stays
-   approved in `B'` — approval cannot be retroactively invalidated by new
-   blocks because new blocks cannot appear inside an approver's already-
-   fixed causal closure.
-
-Together these imply that the sequence of finalized-leader epochs in
-`B'` extends that in `B`, so `tau B'` appends a suffix to `tau B` rather
-than reordering it.
+1. **`FinalLeader_of_subBlocklace`** (proved): any finalized leader in
+   `B` is still finalized in `B'`, so the sequence of finalized-leader
+   epochs can only advance forward.
+2. **`no_conflicting_finals`**: the finalized leader for each wave is
+   unique, so there is no ambiguity in what `tau` appends.
+3. **`observes_of_subBlocklace`**: as `B` grows, every observation is
+   preserved, so `tau B'` appends a suffix to `tau B` rather than
+   reordering it.
 
 ---
 
@@ -277,9 +328,10 @@ than reordering it.
 | `leaderRoundOfWave` | `wave.rs:first_round_of_wave` / `leader_round_of_wave` (35–69) |
 | `lastRoundOfWave` | `wave.rs:last_round_of_wave` (44–47) |
 | `leaderBlocksOfWave` | `wave.rs:leader_blocks_of_wave` (79–100) |
-| `IsUniqueLeaderBlock` | `finality.rs:leader_block_for_wave` (23–43) |
 | `FinalLeader` | `finality.rs:is_weighted_final_leader` (196–245) + `final_leader_for_wave` (251–267) |
+| `leaderBlocks_equivocation` | Structural precondition for KR2 exclusion |
 | `no_conflicting_finals` | Safety invariant — no single Rust function; proved by contradiction |
 | `SubBlocklace` | Append-only blocklace growth model |
+| `FinalLeader_of_subBlocklace` | Finality monotonicity — once final, always final |
 | `tau` | `ordering.rs:tau` (419–) |
 | `tau_prefix_monotone` | Ledger append-only invariant; tested by `test_finality.rs:finalized_order_excludes_equivocations_the_leader_acknowledged` |
