@@ -730,6 +730,7 @@ dependencies = [
  "blake2",
  "casper",
  "clap",
+ "cordial-app-runtime",
  "cordial-f1r3space-adapter",
  "cordial-miners-core",
  "criterion",

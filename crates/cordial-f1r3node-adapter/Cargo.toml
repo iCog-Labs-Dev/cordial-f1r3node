@@ -7,6 +7,7 @@ edition.workspace = true
 [dependencies]
 cordial-miners-core = { path = "../cordial-miners-core" }
 cordial-f1r3space-adapter = { path = "../cordial-f1r3space-adapter" }
+cordial-app-runtime = { path = "../cordial-app-runtime" }
 
 # Shared deps we use internally for translation, hashing, etc.
 sha2.workspace = true
