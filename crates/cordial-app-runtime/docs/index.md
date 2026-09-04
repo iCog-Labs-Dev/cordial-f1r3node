@@ -23,16 +23,16 @@ instead of depending directly on consensus or `f1r3node` adapter internals.
    - Records why the runtime uses stable collections such as `BTreeMap` and
      `BTreeSet`
    - Lists the verification commands for this implementation slice
+3. [03-event-envelope.md](./03-event-envelope.md)
+   - Defines the runtime-side meaning of the `AppEvent` envelope
+   - Explains `event_id`, `ordered_index`, payload, signature, and anchor
+     semantics
+   - Clarifies that extraction belongs outside the generic runtime
 
 ## Planned Documents
 
 Future notes should be added here as the crate grows:
 
-3. `03-event-envelope.md`
-   - App event encoding
-   - App IDs and event types
-   - Payload versioning
-   - Deploy/signature metadata
 4. `04-replay-and-persistence.md`
    - Snapshot format
    - Replay from finalized ordered history
