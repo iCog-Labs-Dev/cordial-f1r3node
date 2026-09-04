@@ -67,10 +67,16 @@ and easy to extend as new implementation notes are added.
 19. [17-persistence-and-restart-semantics.md](./17-persistence-and-restart-semantics.md)
     - Wires `RSpaceBlocklaceRepository` into `LiveIngress` via `with_persistent_store`, `ingest_and_persist`, and `persist_finalized_cursor`
     - Documents exactly what survives a restart and what is recomputed, plus the startup lifecycle callers should follow
-19. [19-application-interface-layer.md](./19-application-interface-layer.md)
+20. [19-application-interface-layer.md](./19-application-interface-layer.md)
     - Defines a generic application runtime boundary above finalized ordered output
     - Describes app events, receipts, cursors, replay, rejection handling, and multi-app routing
     - Positions future applications, including an AI marketplace, outside consensus and adapter internals
+21. [20-e2e-rholang-execution-test.md](./20-e2e-rholang-execution-test.md)
+    - Documents the ignored end-to-end Rholang execution test suite
+    - Explains how the f1r3space adapter reaches real f1r3node runtime machinery
+22. [21-app-event-extraction-boundary.md](./21-app-event-extraction-boundary.md)
+    - Documents the adapter-side extractor from `OrderedFinalizedOutput` plus app deploy metadata into `AppEvent`s
+    - Explains deterministic event IDs, app-event ordered indexes, and crate ownership boundaries
 
 ## Scope Of This Track
 
@@ -89,4 +95,4 @@ Future notes in this folder are expected to cover:
 - transport wiring for ordered output (gRPC / IPC serving of `OrderedFinalizedOutput`)
 - push / notification delivery for ordered output consumers
 - proposer-facing integration only after the consumer boundary is validated
-- first `cordial-app-runtime` crate with in-memory replay and app receipts
+- concrete app-event envelope parsing from deploy terms or deploy metadata
