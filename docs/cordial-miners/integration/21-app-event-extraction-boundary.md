@@ -57,8 +57,10 @@ ordering, or PoR internals.
 | `crates/cordial-f1r3node-adapter/tests/test_app_event_extractor.rs` | Boundary behavior tests |
 | `crates/cordial-f1r3node-adapter/src/app_event_envelope.rs` | Minimal deploy-envelope parser that can produce `ExtractableAppDeploy` |
 | `crates/cordial-f1r3node-adapter/tests/test_app_event_envelope.rs` | Parser behavior tests |
+| `crates/cordial-f1r3node-adapter/src/app_event_block_scan.rs` | Scans block messages into `deploys_by_block_hash` |
+| `crates/cordial-f1r3node-adapter/tests/test_app_event_block_scan.rs` | Scanner behavior tests |
 | `crates/cordial-f1r3node-adapter/Cargo.toml` | Adds the adapter dependency on `cordial-app-runtime` |
-| `crates/cordial-f1r3node-adapter/src/lib.rs` | Exports `app_event_extractor` and `app_event_envelope` |
+| `crates/cordial-f1r3node-adapter/src/lib.rs` | Exports app-event parser, scanner, and extractor modules |
 
 ## Input Model
 
@@ -80,7 +82,9 @@ must be preserved.
 The extractor does not inspect block payloads directly. The minimal envelope
 parser documented in
 [22-app-event-envelope-parser.md](./22-app-event-envelope-parser.md) can produce
-`ExtractableAppDeploy` values from deploy terms.
+`ExtractableAppDeploy` values from deploy terms. The scanner documented in
+[23-app-event-block-scan.md](./23-app-event-block-scan.md) can group those
+parsed values by block hash.
 
 ## Extractable App Deploy
 
@@ -247,6 +251,5 @@ cargo test -p cordial-f1r3node-adapter --test test_app_event_extractor
 
 ## Next Step
 
-The next implementation slice should scan processed deploys from finalized
-blocks, parse any `cordial_app` envelopes, and build the
-`deploys_by_block_hash` input expected by this extractor.
+The next implementation slice should compose scanned block deploy metadata with
+`OrderedFinalizedOutput` in one convenience helper that returns `Vec<AppEvent>`.
