@@ -6,7 +6,8 @@
 
 use std::collections::BTreeMap;
 
-use cordial_app_runtime::{AppEvent, AppId};
+use cordial_app_runtime::{AppEvent, AppEventId, AppId};
+use sha2::{Digest, Sha256};
 
 use crate::ordered_output::OrderedFinalizedOutput;
 
@@ -35,13 +36,67 @@ pub struct AppEventExtractionInput {
 }
 
 /// Extract app events from an ordered finalized output fragment.
-///
-/// This first slice only establishes the boundary and empty-output behavior.
-/// Event emission for non-empty finalized outputs is added in the next slice.
 pub fn extract_app_events(input: AppEventExtractionInput) -> Vec<AppEvent> {
-    if input.ordered_output.is_empty() {
-        return Vec::new();
+    let finalized_anchor = input.ordered_output.anchor_hash().unwrap_or_default();
+    let mut events = Vec::new();
+
+    for block in &input.ordered_output.blocks {
+        let block_hash = block.content_hash.to_vec();
+        let Some(deploys) = input.deploys_by_block_hash.get(&block_hash) else {
+            continue;
+        };
+
+        for (deploy_index, deploy) in deploys.iter().enumerate() {
+            events.push(AppEvent {
+                event_id: event_id_for(&block_hash, deploy_index, deploy),
+                app_id: deploy.app_id.clone(),
+                event_type: deploy.event_type.clone(),
+                payload: deploy.payload.clone(),
+                submitter: deploy.submitter.clone(),
+                ordered_index: events.len() as u64,
+                block_hash: block_hash.clone(),
+                deploy_signature: deploy.deploy_signature.clone(),
+                finalized_anchor: finalized_anchor.clone(),
+            });
+        }
     }
 
-    Vec::new()
+    events
+}
+
+fn event_id_for(
+    block_hash: &[u8],
+    deploy_index: usize,
+    deploy: &ExtractableAppDeploy,
+) -> AppEventId {
+    let mut encoded = Vec::new();
+    put_bytes(&mut encoded, b"cordial-app-event:v1");
+    put_bytes(&mut encoded, block_hash);
+    put_u64(&mut encoded, deploy_index as u64);
+    put_bytes(&mut encoded, deploy.app_id.0.as_bytes());
+    put_bytes(&mut encoded, deploy.event_type.as_bytes());
+    put_bytes(&mut encoded, &deploy.payload);
+    put_bytes(&mut encoded, &deploy.submitter);
+    put_optional_bytes(&mut encoded, deploy.deploy_signature.as_deref());
+
+    AppEventId(hex::encode(Sha256::digest(encoded)))
+}
+
+fn put_u64(encoded: &mut Vec<u8>, value: u64) {
+    encoded.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_bytes(encoded: &mut Vec<u8>, value: &[u8]) {
+    put_u64(encoded, value.len() as u64);
+    encoded.extend_from_slice(value);
+}
+
+fn put_optional_bytes(encoded: &mut Vec<u8>, value: Option<&[u8]>) {
+    match value {
+        Some(bytes) => {
+            encoded.push(1);
+            put_bytes(encoded, bytes);
+        }
+        None => encoded.push(0),
+    }
 }
