@@ -80,6 +80,9 @@ and easy to extend as new implementation notes are added.
 23. [22-app-event-envelope-parser.md](./22-app-event-envelope-parser.md)
     - Documents the minimal JSON `cordial_app` deploy-envelope parser
     - Explains `Result<Option<T>, E>`, field mapping into `ExtractableAppDeploy`, and parser error semantics
+24. [23-app-event-block-scan.md](./23-app-event-block-scan.md)
+    - Documents scanning adapter block messages into `deploys_by_block_hash`
+    - Explains block-local deploy ordering, scanner errors, and the parser/extractor relationship
 
 ## Scope Of This Track
 
@@ -98,4 +101,4 @@ Future notes in this folder are expected to cover:
 - transport wiring for ordered output (gRPC / IPC serving of `OrderedFinalizedOutput`)
 - push / notification delivery for ordered output consumers
 - proposer-facing integration only after the consumer boundary is validated
-- scanning finalized block deploys into `deploys_by_block_hash` for app-event extraction
+- one-call composition from finalized ordered output plus block messages into `Vec<AppEvent>`

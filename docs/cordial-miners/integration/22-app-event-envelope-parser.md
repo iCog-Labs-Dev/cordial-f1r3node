@@ -234,8 +234,7 @@ This parser does not implement:
 - app-specific payload decoding
 - app-specific validation
 - final production envelope format
-- scanning finalized blocks for deploys
-- building `deploys_by_block_hash`
+- one-call extraction from finalized output plus block messages
 
 Those are separate follow-up slices.
 
@@ -259,6 +258,5 @@ cargo test -p cordial-f1r3node-adapter --test test_app_event_envelope
 
 ## Next Step
 
-The next implementation slice should scan processed deploys from finalized
-blocks, parse any `cordial_app` envelopes, and build the
-`deploys_by_block_hash` input expected by the extractor.
+The next implementation slice should compose scanned block deploy metadata with
+`OrderedFinalizedOutput` in one convenience helper that returns `Vec<AppEvent>`.
