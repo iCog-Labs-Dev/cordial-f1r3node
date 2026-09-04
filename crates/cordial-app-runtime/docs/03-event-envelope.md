@@ -17,6 +17,12 @@ finalized ordered Cordial output
 The runtime does not know how an event was encoded inside a deploy. It only
 requires a stable `AppEvent` value.
 
+The current adapter-side producer is documented in:
+
+```text
+docs/cordial-miners/integration/22-app-event-envelope-parser.md
+```
+
 ## Event Shape
 
 The current event type is:
