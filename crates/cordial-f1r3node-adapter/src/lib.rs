@@ -19,6 +19,7 @@
 //! | [`crypto_bridge`]    | 3.4     | Blake2b + Secp256k1 alignment              |
 //! | [`rspace_runtime`]   | 2.3*    | Real `RuntimeManager` impl against RSpace  |
 
+pub mod app_event_envelope;
 pub mod app_event_extractor;
 pub mod block_translation;
 pub mod casper_adapter;
