@@ -58,9 +58,12 @@ pub struct AppEvent {
 ## Runtime Boundary
 
 `cordial-app-runtime` consumes `AppEvent`s but does not extract them from
-blocks. Extraction currently belongs to:
+blocks. Extraction currently belongs to the adapter-side parser, scanner, and
+extractor:
 
 ```text
+crates/cordial-f1r3node-adapter/src/app_event_envelope.rs
+crates/cordial-f1r3node-adapter/src/app_event_block_scan.rs
 crates/cordial-f1r3node-adapter/src/app_event_extractor.rs
 ```
 
