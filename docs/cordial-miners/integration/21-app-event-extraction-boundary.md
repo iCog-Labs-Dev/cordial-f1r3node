@@ -55,8 +55,10 @@ ordering, or PoR internals.
 |------|------|
 | `crates/cordial-f1r3node-adapter/src/app_event_extractor.rs` | Extraction module |
 | `crates/cordial-f1r3node-adapter/tests/test_app_event_extractor.rs` | Boundary behavior tests |
+| `crates/cordial-f1r3node-adapter/src/app_event_envelope.rs` | Minimal deploy-envelope parser that can produce `ExtractableAppDeploy` |
+| `crates/cordial-f1r3node-adapter/tests/test_app_event_envelope.rs` | Parser behavior tests |
 | `crates/cordial-f1r3node-adapter/Cargo.toml` | Adds the adapter dependency on `cordial-app-runtime` |
-| `crates/cordial-f1r3node-adapter/src/lib.rs` | Exports `app_event_extractor` |
+| `crates/cordial-f1r3node-adapter/src/lib.rs` | Exports `app_event_extractor` and `app_event_envelope` |
 
 ## Input Model
 
@@ -75,9 +77,10 @@ pub struct AppEventExtractionInput {
 hash. The deploy vector for each block is already in the block-local order that
 must be preserved.
 
-The extractor does not inspect block payloads directly in this slice. A future
-envelope parser can produce `ExtractableAppDeploy` values from deploy terms,
-deploy metadata, or a Cordial-specific wrapper.
+The extractor does not inspect block payloads directly. The minimal envelope
+parser documented in
+[22-app-event-envelope-parser.md](./22-app-event-envelope-parser.md) can produce
+`ExtractableAppDeploy` values from deploy terms.
 
 ## Extractable App Deploy
 
@@ -215,7 +218,6 @@ This keeps extraction and application execution separate.
 
 This boundary does not implement:
 
-- parsing app envelopes from Rholang terms
 - deciding the final app envelope format
 - validating signatures
 - validating app payload semantics
@@ -245,6 +247,6 @@ cargo test -p cordial-f1r3node-adapter --test test_app_event_extractor
 
 ## Next Step
 
-The next implementation issue should define the concrete app-event envelope
-parser. That parser can turn real deploy terms or deploy metadata into
-`ExtractableAppDeploy` values for this extractor.
+The next implementation slice should scan processed deploys from finalized
+blocks, parse any `cordial_app` envelopes, and build the
+`deploys_by_block_hash` input expected by this extractor.

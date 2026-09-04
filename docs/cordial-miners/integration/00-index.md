@@ -77,6 +77,9 @@ and easy to extend as new implementation notes are added.
 22. [21-app-event-extraction-boundary.md](./21-app-event-extraction-boundary.md)
     - Documents the adapter-side extractor from `OrderedFinalizedOutput` plus app deploy metadata into `AppEvent`s
     - Explains deterministic event IDs, app-event ordered indexes, and crate ownership boundaries
+23. [22-app-event-envelope-parser.md](./22-app-event-envelope-parser.md)
+    - Documents the minimal JSON `cordial_app` deploy-envelope parser
+    - Explains `Result<Option<T>, E>`, field mapping into `ExtractableAppDeploy`, and parser error semantics
 
 ## Scope Of This Track
 
@@ -95,4 +98,4 @@ Future notes in this folder are expected to cover:
 - transport wiring for ordered output (gRPC / IPC serving of `OrderedFinalizedOutput`)
 - push / notification delivery for ordered output consumers
 - proposer-facing integration only after the consumer boundary is validated
-- concrete app-event envelope parsing from deploy terms or deploy metadata
+- scanning finalized block deploys into `deploys_by_block_hash` for app-event extraction
