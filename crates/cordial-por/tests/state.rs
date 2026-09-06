@@ -234,3 +234,58 @@ fn reputation_weights_omits_ejected_nodes() {
     assert!(!weights.contains_key(&NodeId(vec![1])));
     assert_eq!(weights[&NodeId(vec![2])], 2_000);
 }
+
+// ============================================================
+// Regression tests for reviewer bugs (Johnnas12)
+// ============================================================
+
+/// Bug 1: ejected node absent from new vector could be resurrected.
+///
+/// If `apply_reputation_vector` is called with a vector that omits an ejected
+/// node, and then `set_reputation` is called for that same node, the old
+/// implementation would silently re-insert it as active because it was no
+/// longer present in the list. The `excluded_keys` registry must prevent this.
+#[test]
+fn ejected_node_absent_from_new_vector_cannot_be_resurrected_via_set_reputation() {
+    let mut state = ReputationState::new(0);
+    state.set_reputation(NodeId(vec![1]), 1_000);
+    state.set_reputation(NodeId(vec![2]), 2_000);
+    state.eject_validator(&NodeId(vec![1])).unwrap();
+
+    // New vector deliberately omits node 1.
+    state
+        .apply_reputation_vector(vector(1, vec![entry(2, 1_500)]))
+        .unwrap();
+
+    // Attempt to re-insert ejected node via set_reputation — must be a no-op.
+    state.set_reputation(NodeId(vec![1]), 9_999);
+
+    // The permanent registry must still mark node 1 as ejected.
+    assert!(state.is_ejected(&NodeId(vec![1])));
+
+    // reputation_weights must not expose node 1 with any weight.
+    let weights = reputation_weights(&state);
+    assert!(!weights.contains_key(&NodeId(vec![1])));
+}
+
+/// Bug 2: `is_ejected` consults the permanent registry, not the list flag.
+///
+/// Callers must be able to rely on `is_ejected` returning `true` even when
+/// the `reputation_list` entry is absent or its `is_excluded` flag is somehow
+/// inconsistent. The `excluded_keys` set is the sole source of truth.
+#[test]
+fn is_ejected_consults_permanent_registry_not_list_flag() {
+    let mut state = ReputationState::new(0);
+    state.set_reputation(NodeId(vec![1]), 500);
+    state.eject_validator(&NodeId(vec![1])).unwrap();
+
+    // Apply a vector that omits node 1 — its list entry disappears.
+    state
+        .apply_reputation_vector(vector(1, vec![entry(2, 800)]))
+        .unwrap();
+
+    // is_ejected must still return true via the permanent registry.
+    assert!(state.is_ejected(&NodeId(vec![1])));
+    // Node 2 must remain unaffected.
+    assert!(!state.is_ejected(&NodeId(vec![2])));
+}
