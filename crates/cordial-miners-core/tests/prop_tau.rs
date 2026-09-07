@@ -4,8 +4,10 @@
 //! - `xsort` determinism and topological validity over generated block sets.
 //! - closure/ancestor consistency between `Blocklace::observe` and
 //!   `Blocklace::precedes`.
-//! - `tau` prefix preservation: computing `tau` again after each additional
-//!   block is inserted must reproduce the earlier output as a strict prefix.
+//! - `tau` prefix preservation over chain-valid growth prefixes: computing
+//!   `tau` again after each additional block is inserted must reproduce the
+//!   earlier output as a strict prefix while the generated blocklace still
+//!   satisfies the chain axiom.
 //!
 //! ## Generator
 //!
@@ -28,6 +30,12 @@
 //! any point starts a brand new, independent component).
 //!
 //! Not covered:
+//! - `tau` monotonicity after the generated DAG violates the chain axiom.
+//!   The arbitrary generator can create incomparable blocks by the same
+//!   validator. After that point it is no longer modelling an honest protocol
+//!   growth prefix, so the paper's finality monotonicity assumptions do not
+//!   apply. The `xsort` and closure tests still use those shapes because they
+//!   are valid stress cases for local ordering and graph traversal.
 //! - Pruning/checkpointed histories. `Blocklace::checkpoint()`,
 //!   `checkpoint_order_prefix()`, and `checkpoint_weighted_order_prefix()`
 //!   are never populated by this generator, even though
@@ -283,12 +291,12 @@ proptest! {
         }
     }
 
-    /// `tau`'s output only ever grows: recomputing it after inserting the
-    /// next block (in generation order, which — thanks to the "strictly
-    /// earlier index" sanitization — is always a valid closure-respecting
-    /// insertion order) must reproduce the previous output as a strict
-    /// prefix. This is the safety property that lets nodes stream finalized
-    /// order incrementally instead of recomputing from scratch.
+    /// `tau`'s output only ever grows while the generated prefix still
+    /// satisfies the chain axiom: recomputing it after inserting the next
+    /// block must reproduce the previous output as a strict prefix. Once the
+    /// arbitrary generator creates an incomparable same-validator branch, the
+    /// prefix is no longer an honest protocol-growth witness, so this property
+    /// stops making monotonicity claims for the remaining generated suffix.
     #[test]
     fn tau_output_is_prefix_stable_as_dag_grows(
         spec in dag_spec_strategy(),
@@ -314,6 +322,10 @@ proptest! {
 
         for block in &dag.blocks {
             insert(&mut blocklace, block);
+
+            if !blocklace.satisfies_chain_axiom_all() {
+                break;
+            }
 
             match tau(&blocklace, wavelength, n, f, leader_selection) {
                 Ok(current) => {
