@@ -12,36 +12,26 @@ sequence by:
 3. Emitting each epoch's approved blocks in deterministic topological
    order, excluding blocks already emitted by earlier recursion.
 
-Implementing `tau` concretely in Lean would require a decidable
-topological sort over an opaque `Blocklace`. Instead we declare `tau` as
-an `opaque` constant — the implementation lives in Rust; what matters
-formally is the **prefix-safety** property below.
+The earlier KR4 theorem surface keeps `tau` abstract below. Issue #188 adds
+an independently executable algorithm in `CMRef.computeTau`: it evaluates the proved finite
+approval/ratification/finality predicates over the concrete `Blocklace` and
+runs a deterministic topological sort. Replay uses that Lean implementation,
+not the Rust result, as its exact ordering oracle. There is currently NO
+refinement theorem connecting this algorithm to the abstract `tau` below.
+Its signature also omits the canonical hash tie-break key and replay horizon.
+This is an unresolved KR4 specification/Issue #188 acceptance gap.
 
-`tau_prefix_monotone` is stated as an `axiom` — a deliberate trusted
-formal boundary, in the same tradition as `hashInj` in `Block.lean`.
+`tau_prefix_monotone` remains stated as an `axiom` — a deliberate trusted
+formal boundary from the earlier KR4 work.
 It captures the append-only ledger invariant: as the blocklace grows,
 `tau` only extends its output list, never retracts.
 
-## Proof sketch for `tau_prefix_monotone`
-
-The axiom follows from three ingredients already proved in this library:
-
-1. **`no_conflicting_finals`** (`Finality.lean`): the latest finalized
-   leader can only advance to a later wave, never regress to an earlier
-   one.
-
-2. **Observation monotonicity** (`Observe.lean:observes_mono`): when
-   `B ⊆ B'`, every edge in `B` is present in `B'`, so
-   `Observes B a b → Observes B' a b`.
-
-3. **Approval exclusion** (`Approval.lean:approves_exclusion`): once a
-   block is approved in `B`, it remains approved in `B'` (observation
-   grows; the exclusion condition cannot be newly violated by blocks
-   added outside the approver's closure).
-
-Together they imply that the list of finalized-leader epochs in `B'`
-extends the list in `B`, so the topological suffix in `B'` appends to,
-not reorders, the suffix in `B`.
+The proved finality/observation monotonicity lemmas below are ingredients
+for a future ordering proof, not a justification of this axiom: an opaque
+function with no defining equation cannot be related to a concrete sequence
+by those lemmas. A complete specification must define leader recursion,
+membership, topological order, canonical tie-breaking, and the assumptions
+under which extending the DAG preserves its ordered prefix.
 
 Owned by Issue 04 (KR4 — Finalized Leader Safety).
 Rust: `consensus/ordering.rs`.
@@ -265,8 +255,8 @@ theorem FinalLeader_of_subBlocklace
 /-- The deterministic ordered output of the protocol, anchored on the latest
 finalized leader and recursively expanded through all ratified ancestors.
 
-Declared `opaque` because its computational definition lives in Rust.
-What matters formally is `tau_prefix_monotone` below. -/
+Declared `opaque` on the KR4 theorem surface. The separate executable algorithm
+used for trace conformance is `CMRef.computeTau`; equivalence is not proved. -/
 opaque tau (bonds : NodeId → ℕ) (validators : Finset NodeId)
     (B : Blocklace) (hV : ValidBlocklace B)
     (wavelength : ℕ) (sel : ℕ → Option NodeId) : List BlockId
@@ -281,10 +271,11 @@ This is the property that makes the system usable as an append-only
 ledger — once a block is ordered by `tau`, it stays ordered at the same
 position in every future state.
 
-**Stated as an axiom** (a trusted formal boundary, analogous to `hashInj`
-in `Block.lean`) because proving it concretely requires implementing `tau`
-and the decidable topological sort, which are in Rust. The justification
-is the three-point proof sketch in the module doc.
+**Stated as an axiom** (the existing KR4 trust boundary) because the earlier
+issue did not prove the executable ordering implementation prefix-monotone.
+Issue #188 does not use this axiom to accept trace output; it recomputes the
+exact order through `CMRef.computeTau`. This assumption does not specify that
+algorithm or establish its correctness, as explained in the module doc.
 
 Rust: the `tau` append-only invariant is tested by
 `test_finality.rs:finalized_order_excludes_equivocations_the_leader_acknowledged`. -/

@@ -4,9 +4,13 @@ use tokio::sync::Mutex;
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
+#[cfg(feature = "trace")]
+use crate::consensus::round::candidate_depth;
 use crate::crypto::CryptoVerifier;
 use crate::network::message::Message;
 use crate::network::peer::Peer;
+#[cfg(feature = "trace")]
+use crate::trace::{self, BlockLifecycleEvent, PackageEvent, TraceEvent};
 use crate::types::BlockIdentity;
 
 /// A blocklace network node — owns a Peer (networking) and a Blocklace (state).
@@ -42,11 +46,30 @@ impl<V: CryptoVerifier> Node<V> {
     where
         V::Error: std::fmt::Debug,
     {
+        #[cfg(feature = "trace")]
+        {
+            let blocklace = self.blocklace.lock().await;
+            let round = candidate_depth(&blocklace, &block.content);
+            trace::emit(TraceEvent::CreateBlock(BlockLifecycleEvent {
+                node_id: trace::hex(self.peer.node_id()),
+                wave: None,
+                round,
+                block_hash: trace::hex(&block.identity.content_hash),
+                parent_hashes: trace::sorted_block_hashes(&block.content.predecessors),
+                missing_parent_hashes: vec![],
+                creator: trace::hex(&block.identity.creator.0),
+                weight_table_hash: None,
+            }));
+        }
         // Insert into local blocklace
-        self.blocklace
-            .lock()
-            .await
-            .insert(block.clone(), &self.verifier)?;
+        {
+            // Validation and commit share one lock acquisition so the closure
+            // check cannot race a concurrent insertion. The lock is released
+            // before broadcasting, keeping network I/O outside the state
+            // critical section.
+            let mut blocklace = self.blocklace.lock().await;
+            blocklace.insert(block.clone(), &self.verifier)?;
+        }
 
         // Broadcast to all connected peers
         let peers = self.peer.connected_peer_addrs().await;
@@ -54,6 +77,12 @@ impl<V: CryptoVerifier> Node<V> {
             let msg = Message::BroadcastBlock {
                 block: block.clone(),
             };
+            #[cfg(feature = "trace")]
+            trace::emit(TraceEvent::SendPackage(PackageEvent {
+                node_id: trace::hex(self.peer.node_id()),
+                peer_id: addr.to_string(),
+                block_hashes: vec![trace::hex(&block.identity.content_hash)],
+            }));
             let _ = self.peer.send(addr, &msg).await;
         }
         Ok(())
@@ -66,6 +95,12 @@ impl<V: CryptoVerifier> Node<V> {
             Message::Ping => Some(Message::Pong),
 
             Message::BroadcastBlock { block } => {
+                #[cfg(feature = "trace")]
+                trace::emit(TraceEvent::DeliverPackage(PackageEvent {
+                    node_id: trace::hex(self.peer.node_id()),
+                    peer_id: from.to_string(),
+                    block_hashes: vec![trace::hex(&block.identity.content_hash)],
+                }));
                 self.receive_block(block, from).await;
                 None
             }

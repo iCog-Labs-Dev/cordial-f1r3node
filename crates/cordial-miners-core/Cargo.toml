@@ -4,6 +4,14 @@ description = "Cordial Miners consensus on a blocklace DAG"
 version.workspace = true
 edition.workspace = true
 
+# Enable consensus event tracing. Zero overhead when absent.
+# Activate with: cargo test --features trace
+[features]
+trace = []
+# Deliberately incorrect quorum rule used only by the Issue #188 mutation
+# harness. Never enable this feature in a production build.
+trace-threshold-mutation = ["trace"]
+
 [dependencies]
 sha2.workspace = true
 ed25519-dalek.workspace = true

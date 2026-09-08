@@ -24,6 +24,8 @@ use crate::consensus::round::depth;
 use crate::consensus::wave::wave_of_round;
 use crate::consensus::{OrderingError, ValidationConfig};
 use crate::simulation::dissemination::{DeliveryOutcome, SimNode};
+#[cfg(feature = "trace")]
+use crate::trace::{self, PackageEvent, SchedulerTickEvent, TraceEvent};
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 use crate::{Block, Blocklace};
 
@@ -481,6 +483,12 @@ impl AdversarialNetwork {
     pub fn broadcast(&mut self, block: &Block) {
         let creator = block.identity.creator.clone();
         for recipient in self.validators.clone() {
+            #[cfg(feature = "trace")]
+            trace::emit(TraceEvent::SendPackage(PackageEvent {
+                node_id: trace::hex(&creator.0),
+                peer_id: trace::hex(&recipient.0),
+                block_hashes: vec![trace::hex(&block.identity.content_hash)],
+            }));
             let delay = self.delays.get(&recipient).copied().unwrap_or(0);
             let seq = self.next_seq();
             let msg = InFlight {
@@ -505,6 +513,12 @@ impl AdversarialNetwork {
     /// another, which no honest broadcast would ever do.
     pub fn send_to(&mut self, block: &Block, recipients: &[NodeId]) {
         for recipient in recipients {
+            #[cfg(feature = "trace")]
+            trace::emit(TraceEvent::SendPackage(PackageEvent {
+                node_id: trace::hex(&block.identity.creator.0),
+                peer_id: trace::hex(&recipient.0),
+                block_hashes: vec![trace::hex(&block.identity.content_hash)],
+            }));
             let seq = self.next_seq();
             self.inflight.push(InFlight {
                 recipient: recipient.clone(),
@@ -545,6 +559,12 @@ impl AdversarialNetwork {
         let mut outcomes = Vec::with_capacity(eligible.len());
         for msg in eligible {
             if let Some(node) = self.nodes.get_mut(&msg.recipient) {
+                #[cfg(feature = "trace")]
+                trace::emit(TraceEvent::DeliverPackage(PackageEvent {
+                    node_id: trace::hex(&msg.recipient.0),
+                    peer_id: trace::hex(&msg.block.identity.creator.0),
+                    block_hashes: vec![trace::hex(&msg.block.identity.content_hash)],
+                }));
                 let outcome = node.receive_block(msg.block);
                 outcomes.push((msg.recipient, outcome));
             }
@@ -561,6 +581,12 @@ impl AdversarialNetwork {
 
     pub fn advance(&mut self, steps: u64) {
         self.step += steps;
+        #[cfg(feature = "trace")]
+        trace::emit(TraceEvent::SchedulerTick(SchedulerTickEvent {
+            node_id: "scheduler".into(),
+            tick: self.step,
+            wave: None,
+        }));
     }
 
     /// Deliver everything currently eligible and resolve buffers, repeating

@@ -608,6 +608,10 @@ pub struct BufferStats {
 pub struct PendingBlockBuffer {
     /// Blocks that are buffered, indexed by their identity.
     pub buffered_blocks: HashMap<BlockIdentity, Block>,
+    /// The exact predecessor set that was missing when each block was buffered.
+    /// This is protocol state, not trace-only bookkeeping, so resolution events
+    /// and retry logic observe the same source of truth.
+    missing_predecessors: HashMap<BlockIdentity, HashSet<BlockIdentity>>,
     policy: BufferPolicy,
     /// Arrival order, used to choose an eviction victim deterministically.
     arrival: HashMap<BlockIdentity, u64>,
@@ -635,6 +639,7 @@ impl PendingBlockBuffer {
     pub fn with_policy(policy: BufferPolicy) -> Self {
         Self {
             buffered_blocks: HashMap::new(),
+            missing_predecessors: HashMap::new(),
             policy,
             arrival: HashMap::new(),
             retry_passes: HashMap::new(),
@@ -676,6 +681,7 @@ impl PendingBlockBuffer {
 
     fn forget(&mut self, id: &BlockIdentity) {
         self.buffered_blocks.remove(id);
+        self.missing_predecessors.remove(id);
         self.arrival.remove(id);
         self.retry_passes.remove(id);
     }
@@ -686,6 +692,16 @@ impl PendingBlockBuffer {
     /// and a full buffer evicts its oldest entry to make room. The return value
     /// says which happened; callers that do not care may ignore it.
     pub fn buffer_block_with_missing_predecessors(&mut self, block: Block) -> BufferOutcome {
+        self.buffer_block_with_missing_predecessors_known(block, HashSet::new())
+    }
+
+    /// Buffer a block and retain the complete predecessor set missing from the
+    /// receiver's local blocklace at admission time.
+    pub fn buffer_block_with_missing_predecessors_known(
+        &mut self,
+        block: Block,
+        missing: HashSet<BlockIdentity>,
+    ) -> BufferOutcome {
         if self.policy.max_entries == 0 {
             return BufferOutcome::RejectedZeroCapacity;
         }
@@ -698,6 +714,7 @@ impl PendingBlockBuffer {
             self.buffered_blocks.entry(id.clone())
         {
             held.insert(block);
+            self.missing_predecessors.insert(id, missing);
             return BufferOutcome::AlreadyBuffered;
         }
 
@@ -719,12 +736,35 @@ impl PendingBlockBuffer {
         self.arrival.insert(id.clone(), self.next_arrival);
         self.next_arrival += 1;
         self.retry_passes.insert(id.clone(), 0);
+        self.missing_predecessors.insert(id.clone(), missing);
         self.buffered_blocks.insert(id, block);
 
         match evicted {
             Some(victim) => BufferOutcome::BufferedEvicting(victim),
             None => BufferOutcome::Buffered,
         }
+    }
+
+    /// Return and remove parents that have become available for buffered blocks.
+    /// The caller emits any diagnostic/event records using the returned pairs.
+    pub fn take_resolved_predecessors(
+        &mut self,
+        blocklace: &Blocklace,
+    ) -> Vec<(BlockIdentity, BlockIdentity)> {
+        let mut resolved = Vec::new();
+        for (block_id, missing) in &mut self.missing_predecessors {
+            let parents: Vec<_> = missing
+                .iter()
+                .filter(|parent| blocklace.content(parent).is_some())
+                .cloned()
+                .collect();
+            for parent in parents {
+                missing.remove(&parent);
+                resolved.push((block_id.clone(), parent));
+            }
+        }
+        resolved.sort();
+        resolved
     }
 
     /// Drop entries that have failed to resolve for more than

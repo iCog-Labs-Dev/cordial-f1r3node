@@ -3,11 +3,19 @@ use std::collections::HashMap;
 use crate::Block;
 use crate::blocklace::Blocklace;
 use crate::consensus::OrderingError;
+#[cfg(feature = "trace")]
+use crate::consensus::round::{candidate_depth, compute_all_depths};
+#[cfg(feature = "trace")]
+use crate::consensus::wave::wave_of_round;
 use crate::consensus::{
     CordialEquivocationEvidence, CordialEvidencePool, EvidencePool, InvalidBlock,
     PendingBlockBuffer, ProposalError, ValidationConfig, ValidationResult, build_block_candidate,
     latest_final_leader, latest_weighted_final_leader, record_rejected_equivocation, tau,
     validated_insert, weighted_tau,
+};
+#[cfg(feature = "trace")]
+use crate::trace::{
+    self, BlockLifecycleEvent, ResolveMissingParentEvent, TraceEvent, WaveTaskEvent,
 };
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 
@@ -46,6 +54,21 @@ pub struct SimNode {
 }
 
 impl SimNode {
+    #[cfg(feature = "trace")]
+    fn emit_wave_task(&self, wavelength: u64, task: &str) {
+        let Some(max_round) = compute_all_depths(&self.blocklace).values().copied().max() else {
+            return;
+        };
+        let Some(wave) = wave_of_round(max_round, wavelength) else {
+            return;
+        };
+        trace::emit(TraceEvent::RunWaveTask(WaveTaskEvent {
+            node_id: trace::hex(&self.id.0),
+            wave,
+            task: task.into(),
+        }));
+    }
+
     pub fn new(
         id: NodeId,
         bonds: HashMap<NodeId, u64>,
@@ -84,7 +107,28 @@ impl SimNode {
                     .iter()
                     .all(|error| matches!(error, InvalidBlock::MissingPredecessors { .. }))
                 {
-                    self.pending.buffer_block_with_missing_predecessors(block);
+                    let missing: std::collections::HashSet<_> = block
+                        .content
+                        .predecessors
+                        .iter()
+                        .filter(|parent| self.blocklace.content(parent).is_none())
+                        .cloned()
+                        .collect();
+                    #[cfg(feature = "trace")]
+                    {
+                        trace::emit(TraceEvent::BufferBlock(BlockLifecycleEvent {
+                            node_id: trace::hex(&self.id.0),
+                            wave: None,
+                            round: candidate_depth(&self.blocklace, &block.content),
+                            block_hash: trace::hex(&block.identity.content_hash),
+                            parent_hashes: trace::sorted_block_hashes(&block.content.predecessors),
+                            missing_parent_hashes: trace::sorted_block_hashes(&missing),
+                            creator: trace::hex(&block.identity.creator.0),
+                            weight_table_hash: Some(trace::weight_table_hash(&self.bonds)),
+                        }));
+                    }
+                    self.pending
+                        .buffer_block_with_missing_predecessors_known(block, missing);
                     DeliveryOutcome::Buffered
                 } else {
                     DeliveryOutcome::Rejected(errors)
@@ -100,6 +144,19 @@ impl SimNode {
     /// rejection happens — so proof is captured here too, exactly as in
     /// `receive_block`, before the rejected block is dropped.
     pub fn retry_buffered_blocks(&mut self) {
+        let resolved = self.pending.take_resolved_predecessors(&self.blocklace);
+        #[cfg(not(feature = "trace"))]
+        let _ = resolved;
+        #[cfg(feature = "trace")]
+        for (block_id, parent) in resolved {
+            trace::emit(TraceEvent::ResolveMissingParent(
+                ResolveMissingParentEvent {
+                    node_id: trace::hex(&self.id.0),
+                    block_hash: trace::hex(&block_id.content_hash),
+                    resolved_parent_hash: trace::hex(&parent.content_hash),
+                },
+            ));
+        }
         let rejected = self.pending.retry_buffered_blocks(
             &mut self.blocklace,
             &self.bonds,
@@ -143,6 +200,8 @@ impl SimNode {
     where
         F: Fn(u64) -> Option<NodeId> + Copy,
     {
+        #[cfg(feature = "trace")]
+        self.emit_wave_task(wavelength, "finalize");
         latest_final_leader(&self.blocklace, wavelength, n, f, leader_selection)
     }
 
@@ -167,6 +226,8 @@ impl SimNode {
     where
         F: Fn(u64) -> Option<NodeId> + Copy,
     {
+        #[cfg(feature = "trace")]
+        self.emit_wave_task(wavelength, "finalize");
         latest_weighted_final_leader(&self.blocklace, wavelength, &self.bonds, leader_selection)
     }
 

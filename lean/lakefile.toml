@@ -9,3 +9,11 @@ rev = "v4.33.0"
 
 [[lean_lib]]
 name = "LeanVerification"
+
+[[lean_exe]]
+name = "replay_runner"
+root = "replay_runner"
+
+[[lean_exe]]
+name = "conformance_tests"
+root = "conformance_tests"

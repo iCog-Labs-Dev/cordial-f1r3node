@@ -53,6 +53,25 @@ lean-check-sorry:
     cd lean && lake build 2>&1 | tee /tmp/lean-build.log
     ! grep -q "declaration uses 'sorry'" /tmp/lean-build.log
 
+# Issue #188: generate deterministic Rust traces, then independently replay
+# the positive and deliberately-invalid cases through the Lean CMRef.
+issue188-rust:
+    cargo +{{toolchain}} build -j 2 -p cordial-miners-core
+    cargo +{{toolchain}} test -j 2 -p cordial-miners-core
+    cargo +{{toolchain}} test -j 2 -p cordial-miners-core --features trace
+    cargo +{{toolchain}} test -j 2 -p cordial-miners-core --features trace --test generate_trace_fixtures generate_all_fixtures -- --exact --nocapture --test-threads=1
+
+issue188-lean:
+    cd lean && lake build replay_runner conformance_tests
+    cd lean && lake exe replay_runner
+    cd lean && lake exe conformance_tests
+    just lean-check-sorry
+
+issue188-mutation:
+    bash scripts/issue188_mutation_test.sh
+
+issue188-conformance: issue188-rust issue188-lean issue188-mutation
+
 demo-cordial-env:
     cp -n docker/.env.example {{docker_env}}
 

@@ -1,5 +1,9 @@
 use crate::block::Block;
+#[cfg(feature = "trace")]
+use crate::consensus::round::{candidate_depth, depth};
 use crate::crypto::CryptoVerifier;
+#[cfg(feature = "trace")]
+use crate::trace::{self, BlockLifecycleEvent, TraceEvent};
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
@@ -56,8 +60,31 @@ impl Blocklace {
     /// The caller is responsible for having validated the block; this is the
     /// commit step only.
     pub(crate) fn commit_validated(&mut self, id: BlockIdentity, content: BlockContent) {
+        #[cfg(feature = "trace")]
+        let (block_hash, creator, parent_hashes) = (
+            trace::hex(&id.content_hash),
+            trace::hex(&id.creator.0),
+            trace::sorted_block_hashes(&content.predecessors),
+        );
+        #[cfg(feature = "trace")]
+        let inserted_id = id.clone();
         self.blocks.insert(id, content);
         self.generation += 1;
+        // This low-level commit API has no local-node, wave, or validator-table
+        // context. The block creator is therefore the commit actor; absent
+        // protocol context is represented as JSON null rather than fabricated
+        // defaults.
+        #[cfg(feature = "trace")]
+        trace::emit(TraceEvent::InsertBlock(BlockLifecycleEvent {
+            node_id: creator.clone(),
+            wave: None,
+            round: depth(self, &inserted_id),
+            block_hash,
+            parent_hashes,
+            missing_parent_hashes: vec![],
+            creator,
+            weight_table_hash: None,
+        }));
     }
 
     /// Remove a block, bumping the generation if anything was removed.
@@ -156,16 +183,40 @@ impl Blocklace {
             .map_err(|e| format!("Invalid signature: {e:?}"))?;
 
         // 2. Closure Axiom Enforcement (Issue 1)
-        for pred_id in &block.content.predecessors {
-            if !self.blocks.contains_key(pred_id) {
-                return Err(format!(
-                    "Closure violation: predecessor {pred_id:?} not in blocklace"
-                ));
+        let missing: Vec<&BlockIdentity> = block
+            .content
+            .predecessors
+            .iter()
+            .filter(|pred_id| !self.blocks.contains_key(*pred_id))
+            .collect();
+
+        if !missing.is_empty() {
+            #[cfg(feature = "trace")]
+            {
+                // A generic Blocklace has no wavelength or bond table, so
+                // wave and weight_table_hash remain explicitly unavailable.
+                let round = candidate_depth(self, &block.content);
+                trace::emit(TraceEvent::BufferBlock(BlockLifecycleEvent {
+                    node_id: trace::hex(&block.identity.creator.0),
+                    wave: None,
+                    round,
+                    block_hash: trace::hex(&block.identity.content_hash),
+                    parent_hashes: trace::sorted_block_hashes(&block.content.predecessors),
+                    missing_parent_hashes: trace::sorted_block_hashes(missing.iter().copied()),
+                    creator: trace::hex(&block.identity.creator.0),
+                    weight_table_hash: None,
+                }));
             }
+            return Err(format!(
+                "Closure violation: predecessor {:?} not in blocklace",
+                missing[0]
+            ));
         }
 
-        // 3. Commit to state
+        // 3. Commit to state. The commit method is the single insertion trace
+        // site shared with `validated_insert`.
         self.commit_validated(block.identity.clone(), block.content);
+
         Ok(())
     }
     // pub fn insert(&mut self, block: Block) -> Result<(), String> {

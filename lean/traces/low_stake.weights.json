@@ -1,0 +1,69 @@
+{
+  "hash_algorithm": "fnv1a64-v1",
+  "weight_table_hash": "f433ffe93be34e3a",
+  "wavelength": 3,
+  "validators": [
+    {
+      "node_id": "01",
+      "weight": 1000
+    },
+    {
+      "node_id": "02",
+      "weight": 1000
+    },
+    {
+      "node_id": "03",
+      "weight": 1000
+    },
+    {
+      "node_id": "04",
+      "weight": 1
+    },
+    {
+      "node_id": "05",
+      "weight": 1
+    },
+    {
+      "node_id": "06",
+      "weight": 1
+    },
+    {
+      "node_id": "07",
+      "weight": 1
+    }
+  ],
+  "leaders": [
+    {
+      "wave": 0,
+      "node_id": "01"
+    },
+    {
+      "wave": 1,
+      "node_id": "02"
+    },
+    {
+      "wave": 2,
+      "node_id": "03"
+    },
+    {
+      "wave": 3,
+      "node_id": "04"
+    },
+    {
+      "wave": 4,
+      "node_id": "05"
+    },
+    {
+      "wave": 5,
+      "node_id": "06"
+    },
+    {
+      "wave": 6,
+      "node_id": "07"
+    },
+    {
+      "wave": 7,
+      "node_id": "01"
+    }
+  ]
+}

@@ -2,37 +2,115 @@ name: Lean
 
 on:
   push:
-    branches: ["lean-q1"]
-    paths: ["lean/**"]
+    branches: ["lean-q1", "lean-q1-kr5-trace-replay"]
+    paths:
+      - "lean/**"
+      - "crates/cordial-miners-core/**"
+      - "docs/lean/05*.md"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/config.toml"
+      - "crates/*/Cargo.toml"
+      - "rust-toolchain.toml"
+      - "Justfile"
+      - "scripts/issue188_mutation_test.sh"
+      - ".github/workflows/lean.yml"
   pull_request:
     branches: ["lean-q1", "dev", "master"]
-    paths: ["lean/**"]
+    paths:
+      - "lean/**"
+      - "crates/cordial-miners-core/**"
+      - "docs/lean/05*.md"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/config.toml"
+      - "crates/*/Cargo.toml"
+      - "rust-toolchain.toml"
+      - "Justfile"
+      - "scripts/issue188_mutation_test.sh"
+      - ".github/workflows/lean.yml"
     types: [opened, synchronize, reopened]
 
 jobs:
-  build:
+  conformance:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: blocklace
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: blocklace
+
+      # Cargo resolves path dependencies of every workspace member even with
+      # -p cordial-miners-core. Keep the same sibling layout as rust.yml.
+      - name: Checkout workspace path dependencies
+        uses: actions/checkout@v4
+        with:
+          repository: F1R3FLY-io/f1r3node
+          ref: 3507ce3daab1946cdda2050a6dbeedd0f0898575 # rust-v0.4.15
+          path: f1r3node
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Check workspace layout
+        run: |
+          cargo metadata --format-version 1 --no-deps > /dev/null
+
+      - name: Check available memory
+        run: free -h
+
+      - name: Rust default build
+        run: cargo build -p cordial-miners-core
+
+      - name: Rust default tests
+        run: cargo test -p cordial-miners-core
+
+      - name: Rust trace tests
+        run: cargo test -p cordial-miners-core --features trace
+
+      - name: Generate deterministic canonical traces
+        run: |
+          cargo test -p cordial-miners-core --features trace \
+            --test generate_trace_fixtures generate_all_fixtures -- \
+            --exact --nocapture --test-threads=1
+          git diff --exit-code -- lean/traces
 
       - name: Cache Mathlib build artifacts
         uses: actions/cache@v4
         with:
           path: |
             ~/.elan
-            lean/.lake
-          key: lean-${{ hashFiles('lean/lean-toolchain', 'lean/lake-manifest.json') }}
+            blocklace/lean/.lake
+          key: lean-${{ hashFiles('blocklace/lean/lean-toolchain', 'blocklace/lean/lake-manifest.json') }}
 
       - name: Build
         uses: leanprover/lean-action@v1
         with:
-          lake-package-directory: lean
+          lake-package-directory: blocklace/lean
           build-args: "--log-level=info"
 
+      - name: Build replay executables
+        working-directory: blocklace/lean
+        run: lake build replay_runner conformance_tests
+
+      - name: Replay positive Rust traces
+        working-directory: blocklace/lean
+        run: lake exe replay_runner
+
+      - name: Reject parser and semantic negative traces
+        working-directory: blocklace/lean
+        run: lake exe conformance_tests
+
+      - name: Reject actual weakened Rust threshold
+        run: bash scripts/issue188_mutation_test.sh
+
       - name: Fail on sorry
-        working-directory: lean
+        working-directory: blocklace/lean
         run: |
           lake build 2>&1 | tee build.log
           ! grep -q "declaration uses 'sorry'" build.log

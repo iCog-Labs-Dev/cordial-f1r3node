@@ -1,0 +1,15 @@
+{"event":"create_block","node_id":"01","wave":0,"round":0,"block_hash":"aa","parent_hashes":[],"missing_parent_hashes":[],"creator":"01","weight_table_hash":null}
+{"event":"validate_block","node_id":"01","wave":null,"round":0,"block_hash":"aa","parent_hashes":[],"creator":"01","weight_table_hash":null,"outcome":"valid","errors":[]}
+{"event":"insert_block","node_id":"01","wave":0,"round":0,"block_hash":"aa","parent_hashes":[],"missing_parent_hashes":[],"creator":"01","weight_table_hash":null}
+{"event":"buffer_block","node_id":"02","wave":null,"round":null,"block_hash":"bb","parent_hashes":["aa","cc"],"missing_parent_hashes":["cc"],"creator":"02","weight_table_hash":"weights"}
+{"event":"resolve_missing_parent","node_id":"02","block_hash":"bb","resolved_parent_hash":"cc"}
+{"event":"detect_equivocation","node_id":"03","equivocator":"02","round":4,"conflicting_block_hashes":["bb","dd"]}
+{"event":"accept_approval","node_id":"03","wave":1,"round":4,"approver":"03","approver_hash":"ee","target_hash":"aa"}
+{"event":"build_threshold_certificate","node_id":"01","wave":0,"kind":"super_ratification","leader_hash":"aa","ratifier_hash":null,"certificate_id":"cert","approver_hashes":["ee"],"approvers":["03"],"approver_count":1,"approver_weight":3,"total_weight":4,"weight_table_hash":"weights"}
+{"event":"compute_finality","node_id":"01","wave":0,"wavelength":3,"block_hash":"aa","decision":"finalized","certificate_id":"cert","output_prefix_hash":null,"weight_table_hash":"weights"}
+{"event":"run_tau_order","node_id":"01","wave":0,"wavelength":3,"latest_leader_hash":"aa","ordered_block_hashes":["aa"],"output_len":1}
+{"event":"emit_output","node_id":"01","wave":0,"block_hash":"aa","output_index":0,"output_prefix_hash":"prefix"}
+{"event":"send_package","node_id":"01","peer_id":"02","block_hashes":["aa"]}
+{"event":"deliver_package","node_id":"02","peer_id":"01","block_hashes":["aa"]}
+{"event":"scheduler_tick","node_id":"scheduler","tick":7,"wave":null}
+{"event":"run_wave_task","node_id":"01","wave":2,"task":"finalize"}

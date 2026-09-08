@@ -13,9 +13,10 @@ pub mod wave;
 pub use approval::{approves, approving_blocks, weighted_approving_creators};
 pub use cordiality::{
     Equivocation, HiddenEquivocation, acknowledges_equivocation, all_equivocations,
-    creator_blocks_at_round, equivocation_blocks_at_round, hidden_equivocations, is_cordial_block,
-    is_supermajority, is_weighted_supermajority, missing_known_tips, observed_block_ids, ratifies,
-    super_ratifies, weighted_ratifies, weighted_super_ratifies,
+    all_equivocations_for_observer, creator_blocks_at_round, equivocation_blocks_at_round,
+    hidden_equivocations, is_cordial_block, is_supermajority, is_weighted_supermajority,
+    missing_known_tips, observed_block_ids, ratifies, super_ratifies, weighted_ratifies,
+    weighted_super_ratifies,
 };
 pub use dissemination::{
     BufferOutcome, BufferPolicy, BufferStats, PendingBlockBuffer, PredecessorSelectionMode,

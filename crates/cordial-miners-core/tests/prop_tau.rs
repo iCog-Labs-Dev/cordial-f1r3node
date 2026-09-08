@@ -315,6 +315,14 @@ proptest! {
         for block in &dag.blocks {
             insert(&mut blocklace, block);
 
+            // Prefix stability is a property of an honest, chain-axiom-valid
+            // history.  The general DAG generator also produces deliberate
+            // same-round forks; once one is inserted, stop this honest-prefix
+            // check and leave equivocation behavior to the dedicated tests.
+            if !blocklace.satisfies_chain_axiom_all() {
+                break;
+            }
+
             match tau(&blocklace, wavelength, n, f, leader_selection) {
                 Ok(current) => {
                     prop_assert!(

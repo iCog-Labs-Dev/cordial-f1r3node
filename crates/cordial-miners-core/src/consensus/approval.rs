@@ -10,6 +10,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
+#[cfg(feature = "trace")]
+use crate::consensus::round::depth;
+#[cfg(feature = "trace")]
+use crate::trace::{self, AcceptApprovalEvent, TraceEvent};
 use crate::types::{BlockIdentity, NodeId};
 
 #[derive(Default)]
@@ -43,6 +47,17 @@ pub(crate) fn approves_with_memo(
     }
 
     let result = approves_uncached(blocklace, approver, target, memo);
+    #[cfg(feature = "trace")]
+    if result && let Some(approver_block) = blocklace.get(approver) {
+        trace::emit(TraceEvent::AcceptApproval(AcceptApprovalEvent {
+            node_id: trace::hex(&approver_block.identity.creator.0),
+            wave: None,
+            round: depth(blocklace, approver).unwrap_or(0),
+            approver: trace::hex(&approver_block.identity.creator.0),
+            approver_hash: trace::hex(&approver_block.identity.content_hash),
+            target_hash: trace::hex(&target.content_hash),
+        }));
+    }
     memo.approves_cache.insert(cache_key, result);
     result
 }
@@ -141,8 +156,20 @@ pub(crate) fn weighted_approving_creators_with_memo(
     bonds: &HashMap<NodeId, u64>,
     memo: &mut ApprovalMemo,
 ) -> HashSet<NodeId> {
-    blocks
-        .iter()
+    // Approval checks emit trace evidence. Never let HashSet's randomized
+    // iteration order leak into the canonical event stream. The returned value
+    // is a HashSet, so this ordering changes only trace record order, not the
+    // approval result or its weighted support.
+    #[cfg(feature = "trace")]
+    let ordered_blocks = {
+        let mut blocks = blocks.iter().collect::<Vec<_>>();
+        blocks.sort_by_key(|block| block.identity.clone());
+        blocks
+    };
+    #[cfg(not(feature = "trace"))]
+    let ordered_blocks: Vec<_> = blocks.iter().collect();
+    ordered_blocks
+        .into_iter()
         .filter(|block| approves_with_memo(blocklace, &block.identity, target, memo))
         .filter_map(|block| {
             let creator = &block.identity.creator;

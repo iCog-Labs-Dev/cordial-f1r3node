@@ -10,5 +10,6 @@ import LeanVerification.Equivocation
 import LeanVerification.Approval
 import LeanVerification.Finality
 import LeanVerification.Ordering
+import LeanVerification.CMRef
 import LeanVerification.Trace
 import LeanVerification.Replay

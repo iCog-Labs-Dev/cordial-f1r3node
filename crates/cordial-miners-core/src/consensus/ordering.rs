@@ -12,6 +12,8 @@ use crate::consensus::finality::{
 };
 use crate::consensus::round::depth;
 use crate::consensus::wave::wave_of_round;
+#[cfg(feature = "trace")]
+use crate::trace::{self, EmitOutputEvent, TauOrderEvent, TraceEvent};
 use crate::types::{BlockIdentity, NodeId};
 
 #[derive(Debug, Clone, Default)]
@@ -443,6 +445,42 @@ where
         ordered: Vec::new(),
     };
     tau_from_leader(blocklace, &latest_leader, &config, &mut state)?;
+
+    #[cfg(feature = "trace")]
+    {
+        let wave = depth(blocklace, &latest_leader)
+            .and_then(|r| wave_of_round(r, wavelength))
+            .unwrap_or(0);
+
+        trace::emit(TraceEvent::RunTauOrder(TauOrderEvent {
+            node_id: trace::hex(&latest_leader.creator.0),
+            wave,
+            wavelength,
+            latest_leader_hash: trace::hex(&latest_leader.content_hash),
+            ordered_block_hashes: state
+                .ordered
+                .iter()
+                .map(|id| trace::hex(&id.content_hash))
+                .collect(),
+            output_len: state.ordered.len(),
+        }));
+
+        // Emit one EmitOutput per block, with a Lean-recomputable prefix hash.
+        let mut prefix_hashes: Vec<String> = Vec::new();
+        for (idx, id) in state.ordered.iter().enumerate() {
+            prefix_hashes.push(trace::hex(&id.content_hash));
+            let prefix_hash = trace::output_prefix_hash(&prefix_hashes);
+
+            trace::emit(TraceEvent::EmitOutput(EmitOutputEvent {
+                node_id: trace::hex(&id.creator.0),
+                wave,
+                block_hash: trace::hex(&id.content_hash),
+                output_index: idx,
+                output_prefix_hash: prefix_hash,
+            }));
+        }
+    }
+
     Ok(state.ordered)
 }
 
@@ -535,6 +573,35 @@ where
         ordered: Vec::new(),
     };
     weighted_tau_from_leader(blocklace, &latest_leader, &config, &mut state)?;
+
+    #[cfg(feature = "trace")]
+    {
+        let wave = depth(blocklace, &latest_leader)
+            .and_then(|round| wave_of_round(round, wavelength))
+            .unwrap_or(0);
+        let ordered_block_hashes: Vec<String> = state
+            .ordered
+            .iter()
+            .map(|id| trace::hex(&id.content_hash))
+            .collect();
+        trace::emit(TraceEvent::RunTauOrder(TauOrderEvent {
+            node_id: trace::hex(&latest_leader.creator.0),
+            wave,
+            wavelength,
+            latest_leader_hash: trace::hex(&latest_leader.content_hash),
+            ordered_block_hashes: ordered_block_hashes.clone(),
+            output_len: state.ordered.len(),
+        }));
+        for (idx, id) in state.ordered.iter().enumerate() {
+            trace::emit(TraceEvent::EmitOutput(EmitOutputEvent {
+                node_id: trace::hex(&id.creator.0),
+                wave,
+                block_hash: trace::hex(&id.content_hash),
+                output_index: idx,
+                output_prefix_hash: trace::output_prefix_hash(&ordered_block_hashes[..=idx]),
+            }));
+        }
+    }
     Ok(state.ordered)
 }
 

@@ -8,6 +8,7 @@ pub mod execution;
 pub mod finality;
 pub mod network;
 pub mod simulation;
+pub mod trace;
 pub mod types;
 pub mod wave;
 

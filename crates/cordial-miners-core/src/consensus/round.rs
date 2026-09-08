@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-use crate::types::BlockIdentity;
+use crate::types::{BlockContent, BlockIdentity};
 
 /// Compute the depth (round number) of a single block.
 ///
@@ -28,6 +28,24 @@ use crate::types::BlockIdentity;
 /// Returns `None` if the block is not in the blocklace.
 pub fn depth(blocklace: &Blocklace, block_id: &BlockIdentity) -> Option<u64> {
     depth_recursive(blocklace, block_id, &mut HashMap::new())
+}
+
+/// Compute the depth a not-yet-inserted block would have in `blocklace`.
+/// Returns `None` when any predecessor is unavailable, because in that case
+/// the round is not derivable from the local DAG and must be represented as
+/// `null` in the canonical trace.
+pub fn candidate_depth(blocklace: &Blocklace, content: &BlockContent) -> Option<u64> {
+    if content.predecessors.is_empty() {
+        return Some(0);
+    }
+
+    content
+        .predecessors
+        .iter()
+        .map(|predecessor| depth(blocklace, predecessor))
+        .collect::<Option<Vec<_>>>()
+        .and_then(|depths| depths.into_iter().max())
+        .and_then(|maximum| maximum.checked_add(1))
 }
 
 /// Memoized recursive depth computation.
