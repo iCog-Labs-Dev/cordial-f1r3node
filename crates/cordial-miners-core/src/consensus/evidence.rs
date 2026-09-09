@@ -63,6 +63,23 @@ pub trait EvidencePool<V, P, Id> {
 
     /// Return all evidence known for a validator in deterministic order.
     fn evidence_for(&self, validator: &V) -> Vec<EquivocationEvidence<V, P, Id>>;
+
+    /// Return all equivocation evidence recorded in round `k`, across all
+    /// validators, in deterministic (BTreeMap insertion) order.
+    ///
+    /// The caller is responsible for summing the returned validators' reputation
+    /// weights from an external `ReputationState` to compute `CorrelatedRatio(k)`.
+    /// This method intentionally does not import `cordial-por` types to preserve
+    /// core/adapter isolation.
+    fn evidence_by_round(&self, round: u64) -> Vec<&EquivocationEvidence<V, P, Id>>;
+
+    /// Return the deduplicated list of validator IDs that equivocated in round
+    /// `k`, in deterministic (BTreeMap key) order.
+    ///
+    /// Use this to look up each validator's reputation weight in `ReputationState`
+    /// and compute the equivocating weight fraction required by the tiered
+    /// slashing penalty formula.
+    fn equivocating_validators_in_round(&self, round: u64) -> Vec<&V>;
 }
 
 /// In-memory evidence pool keyed first by validator, then by round.
@@ -150,6 +167,22 @@ where
             .into_iter()
             .flat_map(|rounds| rounds.values())
             .flat_map(|bucket| bucket.values().cloned())
+            .collect()
+    }
+
+    fn evidence_by_round(&self, round: u64) -> Vec<&EquivocationEvidence<V, P, Id>> {
+        self.records
+            .values()
+            .filter_map(|rounds| rounds.get(&round))
+            .flat_map(|bucket| bucket.values())
+            .collect()
+    }
+
+    fn equivocating_validators_in_round(&self, round: u64) -> Vec<&V> {
+        self.records
+            .iter()
+            .filter(|(_, rounds)| rounds.contains_key(&round))
+            .map(|(validator, _)| validator)
             .collect()
     }
 }
