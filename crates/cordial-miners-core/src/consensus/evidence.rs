@@ -181,7 +181,7 @@ where
     fn equivocating_validators_in_round(&self, round: u64) -> Vec<&V> {
         self.records
             .iter()
-            .filter(|(_, rounds)| rounds.contains_key(&round))
+            .filter(|(_, rounds)| rounds.get(&round).map_or(false, |b| !b.is_empty()))
             .map(|(validator, _)| validator)
             .collect()
     }
