@@ -35,6 +35,9 @@ pub enum PorError {
     MissingReputationBlockEntry,
     UnexpectedReputationBlockEntry,
     ReputationValueMismatch,
+    // Key-ejection errors
+    /// The requested node is not present in the current `ReputationState`.
+    UnknownNode,
 }
 
 impl fmt::Display for PorError {
@@ -127,6 +130,7 @@ impl fmt::Display for PorError {
                 f,
                 "reputation block entry does not match the replayed reputation value"
             ),
+            Self::UnknownNode => write!(f, "node is not present in the current reputation state"),
         }
     }
 }

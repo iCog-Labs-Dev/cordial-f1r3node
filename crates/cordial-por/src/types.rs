@@ -77,17 +77,37 @@ pub struct RatingBatch {
 // ============================================================
 
 /// Reputation value assigned to one node.
+///
+/// `is_excluded` is set to `true` when the node key has been permanently
+/// ejected following a slashing event. Excluded entries always export a
+/// weight of `0` and cannot be re-activated under the same key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReputationEntry {
     pub node_id: NodeId,
     pub reputation: ReputationWeight,
+    /// Permanent key ejection flag.
+    ///
+    /// Once `true`, this can never be reset to `false` for the same key.
+    /// The operator must register a new `NodeId` to resume validation.
+    pub is_excluded: bool,
 }
 
 impl ReputationEntry {
+    /// Create a new active (non-excluded) reputation entry.
     pub fn new(node_id: NodeId, reputation: ReputationWeight) -> Self {
         Self {
             node_id,
             reputation,
+            is_excluded: false,
+        }
+    }
+
+    /// Create a permanently ejected reputation entry with zero weight.
+    pub fn ejected(node_id: NodeId) -> Self {
+        Self {
+            node_id,
+            reputation: 0,
+            is_excluded: true,
         }
     }
 }
