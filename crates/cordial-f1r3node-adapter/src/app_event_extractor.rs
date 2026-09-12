@@ -33,27 +33,67 @@ pub struct ExtractableAppDeploy {
 pub struct AppEventExtractionInput {
     pub ordered_output: OrderedFinalizedOutput,
     pub deploys_by_block_hash: BTreeMap<Vec<u8>, Vec<ExtractableAppDeploy>>,
+    pub starting_ordered_index: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppEventExtractionError {
+    MissingFinalizedBlockDeploys {
+        block_hash: Vec<u8>,
+    },
+    OrderedIndexOverflow {
+        starting_ordered_index: u64,
+        emitted_count: usize,
+    },
+}
+
+impl std::fmt::Display for AppEventExtractionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingFinalizedBlockDeploys { block_hash } => write!(
+                f,
+                "missing scanned deploy data for finalized block {}",
+                hex::encode(block_hash)
+            ),
+            Self::OrderedIndexOverflow {
+                starting_ordered_index,
+                emitted_count,
+            } => write!(
+                f,
+                "app event ordered_index overflow for start {} and emitted count {}",
+                starting_ordered_index, emitted_count
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AppEventExtractionError {}
+
 /// Extract app events from an ordered finalized output fragment.
-pub fn extract_app_events(input: AppEventExtractionInput) -> Vec<AppEvent> {
+pub fn extract_app_events(
+    input: AppEventExtractionInput,
+) -> Result<Vec<AppEvent>, AppEventExtractionError> {
     let finalized_anchor = input.ordered_output.anchor_hash().unwrap_or_default();
     let mut events = Vec::new();
 
     for block in &input.ordered_output.blocks {
         let block_hash = block.content_hash.to_vec();
-        let Some(deploys) = input.deploys_by_block_hash.get(&block_hash) else {
-            continue;
-        };
+        let deploys = input
+            .deploys_by_block_hash
+            .get(&block_hash)
+            .ok_or_else(|| AppEventExtractionError::MissingFinalizedBlockDeploys {
+                block_hash: block_hash.clone(),
+            })?;
 
         for (deploy_index, deploy) in deploys.iter().enumerate() {
+            let ordered_index = next_ordered_index(input.starting_ordered_index, events.len())?;
             events.push(AppEvent {
                 event_id: event_id_for(&block_hash, deploy_index, deploy),
                 app_id: deploy.app_id.clone(),
                 event_type: deploy.event_type.clone(),
                 payload: deploy.payload.clone(),
                 submitter: deploy.submitter.clone(),
-                ordered_index: events.len() as u64,
+                ordered_index,
                 block_hash: block_hash.clone(),
                 deploy_signature: deploy.deploy_signature.clone(),
                 finalized_anchor: finalized_anchor.clone(),
@@ -61,7 +101,26 @@ pub fn extract_app_events(input: AppEventExtractionInput) -> Vec<AppEvent> {
         }
     }
 
-    events
+    Ok(events)
+}
+
+fn next_ordered_index(
+    starting_ordered_index: u64,
+    emitted_count: usize,
+) -> Result<u64, AppEventExtractionError> {
+    let emitted_count_u64 = u64::try_from(emitted_count).map_err(|_| {
+        AppEventExtractionError::OrderedIndexOverflow {
+            starting_ordered_index,
+            emitted_count,
+        }
+    })?;
+
+    starting_ordered_index.checked_add(emitted_count_u64).ok_or(
+        AppEventExtractionError::OrderedIndexOverflow {
+            starting_ordered_index,
+            emitted_count,
+        },
+    )
 }
 
 fn event_id_for(
