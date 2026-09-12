@@ -81,8 +81,8 @@ and easy to extend as new implementation notes are added.
     - Documents the minimal JSON `cordial_app` deploy-envelope parser
     - Explains `Result<Option<T>, E>`, field mapping into `ExtractableAppDeploy`, and parser error semantics
 24. [23-app-event-block-scan.md](./23-app-event-block-scan.md)
-    - Documents scanning adapter block messages into `deploys_by_block_hash`
-    - Explains block-local deploy ordering, scanner errors, and the parser/extractor relationship
+    - Documents scanning adapter block messages into `AppEventBlockScan`
+    - Explains block-local deploy ordering, non-fatal envelope errors, and the parser/extractor relationship
 
 ## Scope Of This Track
 

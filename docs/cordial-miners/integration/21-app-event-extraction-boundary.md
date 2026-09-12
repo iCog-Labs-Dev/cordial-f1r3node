@@ -70,6 +70,7 @@ The extractor receives:
 pub struct AppEventExtractionInput {
     pub ordered_output: OrderedFinalizedOutput,
     pub deploys_by_block_hash: BTreeMap<Vec<u8>, Vec<ExtractableAppDeploy>>,
+    pub starting_ordered_index: u64,
 }
 ```
 
@@ -78,6 +79,15 @@ pub struct AppEventExtractionInput {
 `deploys_by_block_hash` provides app deploy metadata keyed by block content
 hash. The deploy vector for each block is already in the block-local order that
 must be preserved.
+
+Every finalized block in `ordered_output.blocks` must have an entry in
+`deploys_by_block_hash`. An empty vector means "this block was scanned and had
+no valid app deploys." A missing map entry means "the finalized block was not
+scanned," so extraction returns `AppEventExtractionError::MissingFinalizedBlockDeploys`.
+
+`starting_ordered_index` is the first app-event index to emit for this
+extraction fragment. This lets callers process finalized output in chunks
+without resetting event indexes to zero for every chunk.
 
 The extractor does not inspect block payloads directly. The minimal envelope
 parser documented in
@@ -110,14 +120,16 @@ or anything else.
 
 1. Iterate `OrderedFinalizedOutput.blocks` exactly as provided.
 2. For each block, look up app deploy metadata by block hash.
-3. Skip blocks with no app deploy metadata.
-4. Preserve deploy order within each block.
-5. Create one `AppEvent` per `ExtractableAppDeploy`.
-6. Copy the finalized anchor hash into each emitted event.
-7. Copy the containing block hash into each emitted event.
-8. Assign contiguous app-event `ordered_index` values.
-9. Generate deterministic `AppEventId` values.
-10. Leave payload bytes untouched.
+3. Reject the extraction if finalized block deploy data is missing.
+4. Skip blocks whose scanned deploy vector is empty.
+5. Preserve deploy order within each block.
+6. Create one `AppEvent` per `ExtractableAppDeploy`.
+7. Copy the finalized anchor hash into each emitted event.
+8. Copy the containing block hash into each emitted event.
+9. Assign contiguous app-event `ordered_index` values starting at
+   `starting_ordered_index`.
+10. Generate deterministic `AppEventId` values.
+11. Leave payload bytes untouched.
 
 The extractor does not sort finalized blocks. It trusts the caller to provide
 `OrderedFinalizedOutput` from the already-finalized adapter path.
@@ -143,9 +155,21 @@ A1 -> ordered_index 1
 C0 -> ordered_index 2
 ```
 
+If the same fragment is extracted with `starting_ordered_index = 10`, the
+emitted indexes are:
+
+```text
+A0 -> ordered_index 10
+A1 -> ordered_index 11
+C0 -> ordered_index 12
+```
+
 This matches `AppRuntime`, which consumes a stream of app events rather than a
 stream of blocks. Blocks with no app events do not create cursor gaps at the
 application layer.
+
+The extractor checks for `u64` overflow before assigning an index. Overflow is
+reported as `AppEventExtractionError::OrderedIndexOverflow`.
 
 ## Event ID
 
@@ -242,6 +266,8 @@ The extractor behavior tests cover:
 - event IDs are deterministic across repeated extraction
 - opaque payload bytes are not decoded or mutated
 - event fields are projected from `ExtractableAppDeploy`
+- missing finalized block scan data is rejected
+- `starting_ordered_index` offsets emitted event indexes
 
 Run:
 
