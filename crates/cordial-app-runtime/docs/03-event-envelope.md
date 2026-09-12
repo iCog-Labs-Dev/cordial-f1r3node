@@ -101,6 +101,10 @@ The app-event indexes are:
 This gives the runtime a contiguous cursor over the event stream it actually
 processes.
 
+Adapter extractors may process finalized output in chunks. In that case, the
+extractor must receive the next global app-event index as its starting point so
+the second chunk does not emit `ordered_index = 0` again.
+
 ## Event ID Requirements
 
 `AppEventId` must be deterministic. Given the same finalized output and the

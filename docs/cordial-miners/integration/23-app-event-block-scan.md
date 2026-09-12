@@ -9,8 +9,8 @@ The implemented path is now:
 
 ```text
 Vec<BlockMessage>
-  -> app_event_block_scan::collect_app_deploys_by_block_hash
-  -> BTreeMap<block_hash, Vec<ExtractableAppDeploy>>
+  -> app_event_block_scan::scan_app_deploys_by_block_hash
+  -> AppEventBlockScan
   + OrderedFinalizedOutput
   -> app_event_extractor::extract_app_events
   -> Vec<AppEvent>
@@ -33,9 +33,18 @@ already-implemented extraction boundary.
 The scanner accepts borrowed adapter block messages:
 
 ```rust
-pub fn collect_app_deploys_by_block_hash(
+pub fn scan_app_deploys_by_block_hash(
     blocks: &[BlockMessage],
-) -> Result<BTreeMap<Vec<u8>, Vec<ExtractableAppDeploy>>, AppEventBlockScanError>
+) -> Result<AppEventBlockScan, AppEventBlockScanError>
+```
+
+The successful scan result is:
+
+```rust
+pub struct AppEventBlockScan {
+    pub deploys_by_block_hash: BTreeMap<Vec<u8>, Vec<ExtractableAppDeploy>>,
+    pub envelope_errors: Vec<AppEventEnvelopeScanError>,
+}
 ```
 
 For each block, it reads:
@@ -50,8 +59,13 @@ Each processed deploy is passed to:
 parse_app_deploy_envelope(&processed_deploy.deploy)
 ```
 
-Only `Ok(Some(app_deploy))` values are inserted into the result map. Ordinary
-non-app deploys return `Ok(None)` from the parser and are skipped.
+Only `Ok(Some(app_deploy))` values are inserted into that block's deploy vector.
+Ordinary non-app deploys return `Ok(None)` from the parser and are skipped.
+
+The scanner inserts a map entry for every scanned block. If a block has no valid
+app deploys, its value is an empty vector. This is important because the
+extractor treats an empty vector as "scanned and empty," while a missing entry
+means the finalized block body was not available to the scanner.
 
 ## Ordering Rules
 
@@ -90,20 +104,26 @@ The scanner returns:
 Result<_, AppEventBlockScanError>
 ```
 
-It fails fast for two cases:
+It fails fast only for errors that make the scan map ambiguous:
 
 | Error | Meaning |
 |------|---------|
 | `DuplicateBlockHash` | The same block hash appeared twice in the scanned block list |
-| `Envelope` | A deploy declared `cordial_app` data but its envelope was malformed |
 
-Envelope errors include both:
+Malformed app envelopes are non-fatal. They are recorded in:
+
+```rust
+AppEventBlockScan::envelope_errors
+```
+
+Each envelope scan error includes:
 
 - the containing block hash
 - the deploy index within that block
+- the parser error from `app_event_envelope`
 
-That context makes malformed app deploys traceable without changing the app
-runtime's deterministic processing model.
+That means one malformed app deploy cannot block unrelated valid finalized app
+events from being extracted.
 
 ## Rust Concepts
 
@@ -118,28 +138,29 @@ blocks: &[BlockMessage]
 That means it borrows the block list. The caller keeps ownership of the blocks,
 and the scanner clones only the fields needed in the returned map.
 
-### `?` Error Propagation
+### Matching Parser Outcomes
 
-The scanner calls the parser like this:
+The scanner calls the parser and handles the three parser outcomes explicitly:
 
 ```rust
-let parsed = parse_app_deploy_envelope(&processed_deploy.deploy).map_err(|source| {
-    AppEventBlockScanError::Envelope {
+match parse_app_deploy_envelope(&processed_deploy.deploy) {
+    Ok(Some(app_deploy)) => app_deploys.push(app_deploy),
+    Ok(None) => {}
+    Err(source) => envelope_errors.push(AppEventEnvelopeScanError {
         block_hash: block.block_hash.clone(),
         deploy_index,
         source,
-    }
-})?;
+    }),
+}
 ```
 
-The `?` operator means:
+This is deliberately more forgiving than `?` propagation. `?` would return from
+the whole scan on the first malformed app envelope. Here, malformed app
+envelopes are collected for reporting while valid deploys from other blocks
+remain available to the extractor.
 
-```text
-if Ok(value), keep going with value
-if Err(error), return that error immediately
-```
-
-`map_err` adds scanner-specific context before the error leaves the function.
+Duplicate block hashes are still fatal because they could otherwise overwrite a
+previous map entry for the same hash.
 
 ### `BTreeSet`
 
@@ -155,7 +176,7 @@ Scanner tests cover:
 - skipping ordinary non-app deploys
 - grouping app deploys by block hash
 - preserving app-deploy order inside a block
-- reporting malformed envelopes with block hash and deploy index
+- reporting malformed envelopes without discarding unrelated valid deploys
 - rejecting duplicate block hashes
 
 Run:
