@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use cordial_app_runtime::AppId;
 use cordial_f1r3node_adapter::app_event_extractor::{
-    AppEventExtractionInput, ExtractableAppDeploy, extract_app_events,
+    AppEventExtractionError, AppEventExtractionInput, ExtractableAppDeploy, extract_app_events,
 };
 use cordial_f1r3node_adapter::ordered_output::OrderedFinalizedOutput;
 use cordial_miners_core::types::{BlockIdentity, NodeId};
@@ -12,9 +12,10 @@ fn empty_ordered_output_produces_no_app_events() {
     let input = AppEventExtractionInput {
         ordered_output: OrderedFinalizedOutput::default(),
         deploys_by_block_hash: BTreeMap::new(),
+        starting_ordered_index: 0,
     };
 
-    let events = extract_app_events(input);
+    let events = extract_app_events(input).unwrap();
 
     assert!(events.is_empty());
 }
@@ -43,9 +44,10 @@ fn ordered_blocks_produce_events_in_finalized_order() {
                 vec![deploy("alpha", "FirstBlockEvent", b"first", Some(vec![11]))],
             ),
         ]),
+        starting_ordered_index: 0,
     };
 
-    let events = extract_app_events(input);
+    let events = extract_app_events(input).unwrap();
 
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].app_id, app_id("alpha"));
@@ -72,9 +74,10 @@ fn multiple_deploys_in_one_block_preserve_deploy_order() {
                 deploy("alpha", "SecondDeploy", b"second", Some(vec![2])),
             ],
         )]),
+        starting_ordered_index: 0,
     };
 
-    let events = extract_app_events(input);
+    let events = extract_app_events(input).unwrap();
 
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].event_type, "FirstDeploy");
@@ -91,16 +94,25 @@ fn blocks_without_app_deploys_are_skipped() {
     let later_empty_block = block(3);
     let input = AppEventExtractionInput {
         ordered_output: output(
-            vec![empty_block, app_block.clone(), later_empty_block],
+            vec![
+                empty_block.clone(),
+                app_block.clone(),
+                later_empty_block.clone(),
+            ],
             Some(block(9)),
         ),
-        deploys_by_block_hash: deploys_by_block_hash(vec![(
-            app_block.content_hash.to_vec(),
-            vec![deploy("alpha", "OnlyAppEvent", b"payload", None)],
-        )]),
+        deploys_by_block_hash: deploys_by_block_hash(vec![
+            (empty_block.content_hash.to_vec(), vec![]),
+            (
+                app_block.content_hash.to_vec(),
+                vec![deploy("alpha", "OnlyAppEvent", b"payload", None)],
+            ),
+            (later_empty_block.content_hash.to_vec(), vec![]),
+        ]),
+        starting_ordered_index: 0,
     };
 
-    let events = extract_app_events(input);
+    let events = extract_app_events(input).unwrap();
 
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].event_type, "OnlyAppEvent");
@@ -121,9 +133,10 @@ fn finalized_anchor_is_copied_into_each_event() {
                 deploy("beta", "Second", b"second", None),
             ],
         )]),
+        starting_ordered_index: 0,
     };
 
-    let events = extract_app_events(input);
+    let events = extract_app_events(input).unwrap();
 
     assert_eq!(events.len(), 2);
     assert!(
@@ -145,10 +158,11 @@ fn event_ids_are_deterministic_across_repeated_extraction() {
                 deploy("alpha", "Second", b"second", Some(vec![3, 4])),
             ],
         )]),
+        starting_ordered_index: 0,
     };
 
-    let first = extract_app_events(input.clone());
-    let second = extract_app_events(input);
+    let first = extract_app_events(input.clone()).unwrap();
+    let second = extract_app_events(input).unwrap();
 
     assert_eq!(first, second);
     assert!(first.iter().all(|event| event.event_id.0.len() == 64));
@@ -164,9 +178,10 @@ fn opaque_payload_bytes_are_not_decoded_or_mutated() {
             ordered_block.content_hash.to_vec(),
             vec![deploy("alpha", "OpaquePayload", &payload, Some(vec![6]))],
         )]),
+        starting_ordered_index: 0,
     };
 
-    let events = extract_app_events(input);
+    let events = extract_app_events(input).unwrap();
 
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].payload, payload);
@@ -186,9 +201,10 @@ fn event_fields_are_projected_from_extractable_deploy_metadata() {
                 Some(vec![7, 7, 7]),
             )],
         )]),
+        starting_ordered_index: 0,
     };
 
-    let events = extract_app_events(input);
+    let events = extract_app_events(input).unwrap();
     let event = events.first().expect("one app event");
 
     assert_eq!(event.app_id, app_id("identity.registry"));
@@ -196,6 +212,46 @@ fn event_fields_are_projected_from_extractable_deploy_metadata() {
     assert_eq!(event.payload, b"alice");
     assert_eq!(event.submitter, vec![42]);
     assert_eq!(event.deploy_signature, Some(vec![7, 7, 7]));
+}
+
+#[test]
+fn missing_finalized_block_deploys_are_rejected() {
+    let finalized_block = block(8);
+    let input = AppEventExtractionInput {
+        ordered_output: output(vec![finalized_block.clone()], Some(block(9))),
+        deploys_by_block_hash: BTreeMap::new(),
+        starting_ordered_index: 0,
+    };
+
+    let err = extract_app_events(input).unwrap_err();
+
+    assert_eq!(
+        err,
+        AppEventExtractionError::MissingFinalizedBlockDeploys {
+            block_hash: finalized_block.content_hash.to_vec()
+        }
+    );
+}
+
+#[test]
+fn starting_ordered_index_offsets_emitted_events() {
+    let ordered_block = block(10);
+    let input = AppEventExtractionInput {
+        ordered_output: output(vec![ordered_block.clone()], Some(block(11))),
+        deploys_by_block_hash: deploys_by_block_hash(vec![(
+            ordered_block.content_hash.to_vec(),
+            vec![
+                deploy("alpha", "First", b"first", None),
+                deploy("alpha", "Second", b"second", None),
+            ],
+        )]),
+        starting_ordered_index: 2,
+    };
+
+    let events = extract_app_events(input).unwrap();
+
+    assert_eq!(events[0].ordered_index, 2);
+    assert_eq!(events[1].ordered_index, 3);
 }
 
 fn output(blocks: Vec<BlockIdentity>, anchor: Option<BlockIdentity>) -> OrderedFinalizedOutput {
