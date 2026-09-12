@@ -1,6 +1,6 @@
 use cordial_app_runtime::AppId;
 use cordial_f1r3node_adapter::app_event_block_scan::{
-    AppEventBlockScanError, collect_app_deploys_by_block_hash,
+    AppEventBlockScanError, scan_app_deploys_by_block_hash,
 };
 use cordial_f1r3node_adapter::app_event_envelope::AppEventEnvelopeError;
 use cordial_f1r3node_adapter::block_translation::{
@@ -9,21 +9,26 @@ use cordial_f1r3node_adapter::block_translation::{
 
 #[test]
 fn empty_block_list_produces_empty_map() {
-    let deploys = collect_app_deploys_by_block_hash(&[]).unwrap();
+    let scan = scan_app_deploys_by_block_hash(&[]).unwrap();
 
-    assert!(deploys.is_empty());
+    assert!(scan.deploys_by_block_hash.is_empty());
+    assert!(scan.envelope_errors.is_empty());
 }
 
 #[test]
-fn non_app_deploys_are_skipped() {
+fn non_app_deploys_create_empty_scanned_block_entry() {
     let blocks = vec![block(
         1,
         vec!["@0!(\"regular rholang\")", r#"{"ordinary":"json"}"#],
     )];
 
-    let deploys = collect_app_deploys_by_block_hash(&blocks).unwrap();
+    let scan = scan_app_deploys_by_block_hash(&blocks).unwrap();
 
-    assert!(deploys.is_empty());
+    assert_eq!(
+        scan.deploys_by_block_hash.get(&block_hash(1)),
+        Some(&Vec::new())
+    );
+    assert!(scan.envelope_errors.is_empty());
 }
 
 #[test]
@@ -43,17 +48,18 @@ fn app_deploys_are_grouped_by_block_hash() {
         ),
     ];
 
-    let deploys = collect_app_deploys_by_block_hash(&blocks).unwrap();
+    let scan = scan_app_deploys_by_block_hash(&blocks).unwrap();
 
-    assert_eq!(deploys.len(), 2);
+    assert_eq!(scan.deploys_by_block_hash.len(), 2);
     assert_eq!(
-        deploys.get(&block_hash(1)).unwrap()[0].app_id,
+        scan.deploys_by_block_hash.get(&block_hash(1)).unwrap()[0].app_id,
         AppId("identity.registry".to_owned())
     );
     assert_eq!(
-        deploys.get(&block_hash(2)).unwrap()[0].app_id,
+        scan.deploys_by_block_hash.get(&block_hash(2)).unwrap()[0].app_id,
         AppId("payments.ledger".to_owned())
     );
+    assert!(scan.envelope_errors.is_empty());
 }
 
 #[test]
@@ -67,8 +73,11 @@ fn multiple_app_deploys_in_one_block_preserve_deploy_order() {
         ],
     )];
 
-    let deploys = collect_app_deploys_by_block_hash(&blocks).unwrap();
-    let block_deploys = deploys.get(&block_hash(7)).expect("block app deploys");
+    let scan = scan_app_deploys_by_block_hash(&blocks).unwrap();
+    let block_deploys = scan
+        .deploys_by_block_hash
+        .get(&block_hash(7))
+        .expect("block app deploys");
 
     assert_eq!(block_deploys.len(), 2);
     assert_eq!(block_deploys[0].event_type, "First");
@@ -79,32 +88,46 @@ fn multiple_app_deploys_in_one_block_preserve_deploy_order() {
     assert_eq!(block_deploys[1].payload, vec![2]);
     assert_eq!(block_deploys[1].submitter, vec![7, 2]);
     assert_eq!(block_deploys[1].deploy_signature, Some(vec![7, 12]));
+    assert!(scan.envelope_errors.is_empty());
 }
 
 #[test]
-fn malformed_app_envelope_reports_block_hash_and_deploy_index() {
-    let blocks = vec![block(
-        9,
-        vec![
-            "@0!(\"ordinary\")".to_owned(),
-            r#"{"cordial_app":"#.to_owned(),
-        ],
-    )];
+fn malformed_app_envelope_is_reported_without_discarding_valid_deploys() {
+    let blocks = vec![
+        block(
+            8,
+            vec![app_term(
+                "identity.registry",
+                "NameRegistered",
+                "616c696365",
+            )],
+        ),
+        block(
+            9,
+            vec![
+                "@0!(\"ordinary\")".to_owned(),
+                r#"{"cordial_app":"#.to_owned(),
+            ],
+        ),
+    ];
 
-    let err = collect_app_deploys_by_block_hash(&blocks).unwrap_err();
+    let scan = scan_app_deploys_by_block_hash(&blocks).unwrap();
 
-    match err {
-        AppEventBlockScanError::Envelope {
-            block_hash: reported_block_hash,
-            deploy_index,
-            source,
-        } => {
-            assert_eq!(reported_block_hash, block_hash(9));
-            assert_eq!(deploy_index, 1);
-            assert!(matches!(source, AppEventEnvelopeError::InvalidJson(_)));
-        }
-        other => panic!("expected envelope error, got {other:?}"),
-    }
+    assert_eq!(
+        scan.deploys_by_block_hash.get(&block_hash(8)).unwrap()[0].app_id,
+        AppId("identity.registry".to_owned())
+    );
+    assert_eq!(
+        scan.deploys_by_block_hash.get(&block_hash(9)),
+        Some(&Vec::new())
+    );
+    assert_eq!(scan.envelope_errors.len(), 1);
+    assert_eq!(scan.envelope_errors[0].block_hash, block_hash(9));
+    assert_eq!(scan.envelope_errors[0].deploy_index, 1);
+    assert!(matches!(
+        scan.envelope_errors[0].source,
+        AppEventEnvelopeError::InvalidJson(_)
+    ));
 }
 
 #[test]
@@ -114,7 +137,7 @@ fn duplicate_block_hashes_are_rejected() {
         block(5, vec![app_term("app", "Event", "00")]),
     ];
 
-    let err = collect_app_deploys_by_block_hash(&blocks).unwrap_err();
+    let err = scan_app_deploys_by_block_hash(&blocks).unwrap_err();
 
     assert_eq!(
         err,
