@@ -225,3 +225,99 @@ fn por_weights_drive_cordial_miners_weighted_finality() {
 
     assert!(weighted_super_ratifies(&bl, &witnesses, &leader, &weights));
 }
+
+/// Required assertion: weighted consensus results must actually change
+/// according to PoR-derived reputation, not just accept a weights map
+/// without using it. Constructs a scenario where a count-based
+/// supermajority of witnesses fails the weight-based check.
+#[test]
+fn weighted_finality_diverges_from_unweighted_supermajority() {
+    let a = node(1);
+    let b = node(2);
+    let c = node(3);
+    let d = node(4);
+
+    let previous = ReputationVector {
+        round: 0,
+        values: vec![
+            ReputationEntry::new(a.clone(), 50),
+            ReputationEntry::new(b.clone(), 50),
+            ReputationEntry::new(c.clone(), 50),
+            ReputationEntry::new(d.clone(), 50),
+        ],
+    };
+
+    let config = PorConfig {
+        scale: 100,
+        initial_reputation: 50,
+        liquid_rank_alpha: 60,
+        minimum_rating: 0,
+        maximum_rating: 100,
+        missing_entry_policy: MissingEntryPolicy::CarryForward,
+    };
+
+    // A has three raters (B, C, D all agree at the max) -> three summed
+    // weighted terms. B, C, D each have only a single rater (A) -> one
+    // term each. Since agreement always normalizes to `scale`, it's rater
+    // count that creates the separation here, not the score value.
+    let skewed_ratings = vec![
+        RatingRecord::new(1, node(2), node(1), 100, vec![0xCD]), // B rates A
+        RatingRecord::new(1, node(3), node(1), 100, vec![0xCD]), // C rates A
+        RatingRecord::new(1, node(4), node(1), 100, vec![0xCD]), // D rates A
+        RatingRecord::new(1, node(1), node(2), 100, vec![0xCD]), // A rates B
+        RatingRecord::new(1, node(1), node(3), 100, vec![0xCD]), // A rates C
+        RatingRecord::new(1, node(1), node(4), 100, vec![0xCD]), // A rates D
+    ];
+
+    let skewed = replay_reputation_transition(&previous, &skewed_ratings, 1, &config)
+        .expect("replay successful");
+
+    let mut skewed_state = ReputationState::new(0);
+    skewed_state
+        .apply_reputation_vector(ReputationVector {
+            round: 1,
+            values: skewed.entries,
+        })
+        .expect("canonical vector");
+
+    // All four validators remain active in this scenario (no ejection).
+    let skewed_weights: HashMap<NodeId, u64> = reputation_weights(&skewed_state);
+    assert_eq!(skewed_weights.len(), 4);
+
+    let leader2 = block(1, 10, HashSet::new()); // A leads
+    let mut bl2 = Blocklace::new();
+    insert(&mut bl2, &leader2);
+
+    let wb2 = block(2, 11, HashSet::from([leader2.identity.clone()]));
+    let wc2 = block(3, 12, HashSet::from([leader2.identity.clone()]));
+    let wd2 = block(4, 13, HashSet::from([leader2.identity.clone()]));
+    insert(&mut bl2, &wb2);
+    insert(&mut bl2, &wc2);
+    insert(&mut bl2, &wd2);
+
+    let preds2 = HashSet::from([
+        wb2.identity.clone(),
+        wc2.identity.clone(),
+        wd2.identity.clone(),
+    ]);
+    let rb2 = block(2, 14, preds2.clone());
+    let rc2 = block(3, 15, preds2.clone());
+    let rd2 = block(4, 16, preds2);
+    insert(&mut bl2, &rb2);
+    insert(&mut bl2, &rc2);
+    insert(&mut bl2, &rd2);
+
+    let witnesses2 = HashSet::from([rb2, rc2, rd2]);
+
+    // By count: 3 of 4 witnesses is a supermajority regardless of stake.
+    assert!(is_supermajority(&witnesses2, 4, 0));
+    assert!(super_ratifies(&bl2, &witnesses2, &leader2, 4, 0));
+
+    // By PoR-derived stake: B+C+D hold far less than two-thirds once A dominates.
+    assert!(!weighted_super_ratifies(
+        &bl2,
+        &witnesses2,
+        &leader2,
+        &skewed_weights
+    ));
+}
