@@ -30,10 +30,10 @@
 use std::collections::{HashMap, HashSet};
 
 use cordial_por::{
-    blend_reputation_transition, build_rating_batch, build_rating_matrix,
+    MissingEntryPolicy, PorConfig, RatingRecord, ReputationEntry, ReputationState,
+    ReputationVector, blend_reputation_transition, build_rating_batch, build_rating_matrix,
     clamp_reputation_transition, compute_liquid_rank_contribution, normalize_rating_matrix,
-    replay_reputation_transition, reputation_weights, MissingEntryPolicy, PorConfig, RatingRecord,
-    ReputationEntry, ReputationState, ReputationVector,
+    replay_reputation_transition, reputation_weights,
 };
 
 use cordial_miners_core::consensus::{is_supermajority, super_ratifies, weighted_super_ratifies};
