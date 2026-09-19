@@ -9,6 +9,7 @@ pub mod pruning;
 pub mod round;
 pub mod validation;
 pub mod wave;
+pub mod weight_snapshot;
 
 pub use approval::{approves, approving_blocks, weighted_approving_creators};
 pub use cordiality::{
@@ -54,3 +55,4 @@ pub use wave::{
     first_round_of_wave, is_first_round_of_wave, last_round_of_wave, leader_blocks_of_wave,
     leader_round_of_wave, round_is_in_wave, rounds_of_wave, wave_of_round,
 };
+pub use weight_snapshot::{WeightSnapshot, WeightSnapshotId};
