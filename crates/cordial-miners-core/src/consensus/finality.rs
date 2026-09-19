@@ -3,7 +3,8 @@ use std::collections::HashSet;
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-use crate::consensus::cordiality::{super_ratifies, weighted_super_ratifies};
+use crate::consensus::cordiality::{super_ratifies, weighted_super_ratifies_with_snapshot};
+use crate::consensus::weight_snapshot::WeightSnapshot;
 use crate::consensus::round::{blocks_at_depth, compute_all_depths, depth};
 use crate::consensus::wave::{last_round_of_wave, leader_blocks_of_wave, wave_of_round};
 #[cfg(feature = "trace")]
@@ -261,7 +262,13 @@ where
         .flat_map(|round| blocks_at_depth(blocklace, round))
         .collect();
 
-    let result = weighted_super_ratifies(blocklace, &witness_blocks, &candidate_block, bonds);
+    let weights = WeightSnapshot::from_bonds(bonds);
+    let result = weighted_super_ratifies_with_snapshot(
+        blocklace,
+        &witness_blocks,
+        &candidate_block,
+        &weights,
+    );
 
     #[cfg(feature = "trace")]
     {
@@ -279,7 +286,7 @@ where
             certificate_id: result
                 .then(|| trace::certificate_id("super_ratification", &block_hash, None)),
             output_prefix_hash: None,
-            weight_table_hash: Some(trace::weight_table_hash(bonds)),
+            weight_table_hash: Some(weights.id().to_string()),
         }));
     }
 
@@ -329,6 +336,9 @@ where
     let max_round = depths.values().copied().max()?;
     let rounds = build_round_index(blocklace, &depths);
     let latest_wave = wave_of_round(max_round, wavelength)?;
+    // One capture governs the whole scan: every wave below is judged against
+    // the same table, so a weight change mid-scan cannot split the decision.
+    let weights = WeightSnapshot::from_bonds(bonds);
 
     for wave in (0..=latest_wave).rev() {
         let Some(leader) =
@@ -351,7 +361,8 @@ where
         };
 
         let witness_blocks = witness_blocks_from_index(&rounds, candidate_round, last_round);
-        let result = weighted_super_ratifies(blocklace, &witness_blocks, &leader, bonds);
+        let result =
+            weighted_super_ratifies_with_snapshot(blocklace, &witness_blocks, &leader, &weights);
         #[cfg(feature = "trace")]
         {
             let block_hash = trace::hex(&leader.identity.content_hash);
@@ -368,7 +379,7 @@ where
                 certificate_id: result
                     .then(|| trace::certificate_id("super_ratification", &block_hash, None)),
                 output_prefix_hash: None,
-                weight_table_hash: Some(trace::weight_table_hash(bonds)),
+                weight_table_hash: Some(weights.id().to_string()),
             }));
         }
         if result {
