@@ -91,9 +91,9 @@ impl WeightSnapshot {
     /// Total bonded stake, or `None` on overflow — fail-closed, matching the
     /// checked accumulation the quorum predicates already use.
     pub fn total(&self) -> Option<u128> {
-        self.bonds
-            .values()
-            .try_fold(0u128, |total, weight| total.checked_add(u128::from(*weight)))
+        self.bonds.values().try_fold(0u128, |total, weight| {
+            total.checked_add(u128::from(*weight))
+        })
     }
 
     pub fn len(&self) -> usize {
@@ -213,7 +213,10 @@ mod tests {
         let snapshot = WeightSnapshot::from_bonds(&HashMap::new());
         assert!(snapshot.is_empty());
         assert_eq!(snapshot.total(), Some(0));
-        assert_eq!(snapshot.id().as_str(), trace::weight_table_hash(&HashMap::new()));
+        assert_eq!(
+            snapshot.id().as_str(),
+            trace::weight_table_hash(&HashMap::new())
+        );
     }
 
     #[test]

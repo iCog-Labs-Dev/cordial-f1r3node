@@ -17,12 +17,12 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-use crate::consensus::certificate::{CertificateKind, ThresholdCertificate};
-use crate::consensus::weight_snapshot::WeightSnapshot;
 use crate::consensus::approval::{
     ApprovalMemo, approves, approves_with_memo, weighted_approving_creators_with_memo,
 };
+use crate::consensus::certificate::{CertificateKind, ThresholdCertificate};
 use crate::consensus::round::{blocks_at_depth, depth};
+use crate::consensus::weight_snapshot::WeightSnapshot;
 #[cfg(feature = "trace")]
 use crate::trace::{self, DetectEquivocationEvent, ThresholdCertificateEvent, TraceEvent};
 use crate::types::{BlockIdentity, NodeId};
@@ -518,8 +518,7 @@ fn weighted_super_ratification_certificate_with_memo(
     weights: &WeightSnapshot,
     memo: &mut WeightedRatificationMemo,
 ) -> Option<ThresholdCertificate> {
-    let certificate =
-        weighted_super_ratification_outcome(blocklace, blocks, target, weights, memo);
+    let certificate = weighted_super_ratification_outcome(blocklace, blocks, target, weights, memo);
 
     #[cfg(feature = "trace")]
     if let Some(certificate) = &certificate {

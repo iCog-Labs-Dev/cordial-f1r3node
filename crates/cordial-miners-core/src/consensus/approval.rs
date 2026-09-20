@@ -10,9 +10,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-use crate::consensus::weight_snapshot::WeightSnapshot;
 #[cfg(feature = "trace")]
 use crate::consensus::round::depth;
+use crate::consensus::weight_snapshot::WeightSnapshot;
 #[cfg(feature = "trace")]
 use crate::trace::{self, AcceptApprovalEvent, TraceEvent};
 use crate::types::{BlockIdentity, NodeId};

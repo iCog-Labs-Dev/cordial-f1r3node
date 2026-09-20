@@ -7,9 +7,9 @@ use crate::consensus::certificate::ThresholdCertificate;
 use crate::consensus::cordiality::{
     super_ratifies, weighted_super_ratifies_certificate_with_snapshot,
 };
-use crate::consensus::weight_snapshot::WeightSnapshot;
 use crate::consensus::round::{blocks_at_depth, compute_all_depths, depth};
 use crate::consensus::wave::{last_round_of_wave, leader_blocks_of_wave, wave_of_round};
+use crate::consensus::weight_snapshot::WeightSnapshot;
 #[cfg(feature = "trace")]
 use crate::trace::{self, ComputeFinalityEvent, TraceEvent};
 use crate::types::{BlockIdentity, NodeId};
