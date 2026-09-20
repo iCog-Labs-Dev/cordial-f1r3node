@@ -132,8 +132,10 @@ accepts it, or if rejection occurs for an unrelated reason.
 
 `.github/workflows/lean.yml` runs on relevant pushes and pull requests. It:
 
-0. checks the pinned sibling dependency layout and all 117 named KR theorem/
-   lemma mapping rows, including exact Rust source and test links;
+0. checks the pinned sibling dependency layout with `cargo metadata`;
+   the 05b mapping rows are *not* machine-checked — their line anchors are
+   maintained by hand and reviewed when declarations move (see the
+   2026-09-20 triage entry);
 
 1. builds and tests the default, non-tracing core;
 2. tests the trace-enabled core, including runtime instrumentation coverage;
@@ -194,6 +196,8 @@ or deriving the expected answer from the trace's result field.
 | 2026-09-07 | A proposed mutation check only flipped a parsed finality result, so it did not prove CI caught broken Rust code. | test-oracle bug | Added opt-in compilation of the actual weaker Rust predicate and an ephemeral execution harness; Lean rejects its first bad certificate at support 400/700. |
 | 2026-09-07 | Replaying an opaque Rust digest by assigning an arbitrary formal id would drop KR1's `Block.id_eq` premise. | Lean adapter/model bug | Restored `id_eq`, retained executable injective `hashContent`, and construct each replay block with `id := hashContent creator content`; Rust digest association stays separate and checked. |
 | 2026-09-07 | The trace intentionally omits payload bytes and signatures. | documented boundary | Lean models payload with an injective opaque tag and verifies all DAG/consensus semantics. Rust remains responsible for cryptographic digest/signature validation; documentation does not claim otherwise. |
+| 2026-09-20 | Super-ratification sorted its witness blocks only under `#[cfg(feature = "trace")]`. Default builds walked a randomized `HashSet` order while trace builds walked a sorted one, so the two configurations evaluated ratification in different orders. | trace determinism bug | Issue #189 moved the sort out of the `cfg` block; both configurations now sort. No semantic change — the resulting creator set is order-independent — but the traced and untraced paths no longer differ. |
+| 2026-09-20 | 05b line anchors had rotted: several pointed above their own declaration (`cordiality::all_equivocations` resolved to a bare `///` line) independently of any recent edit, and CI was documented as checking them when it does not. | documentation bug | Issue #189 re-resolved every anchor into the files it touched by symbol name rather than line number, and corrected the CI claim above. A mapping-link checker remains unbuilt; until it exists these anchors decay silently on any edit above a linked declaration. |
 
 The GitHub workflow contains the mutation gate, but no throwaway remote PR is
 created by this repository command. A hosted branch-protection demonstration
