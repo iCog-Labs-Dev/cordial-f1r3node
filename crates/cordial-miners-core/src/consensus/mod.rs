@@ -1,4 +1,5 @@
 pub mod approval;
+pub mod certificate;
 pub mod cordiality;
 pub mod dissemination;
 pub mod evidence;
@@ -9,14 +10,16 @@ pub mod pruning;
 pub mod round;
 pub mod validation;
 pub mod wave;
+pub mod weight_snapshot;
 
 pub use approval::{approves, approving_blocks, weighted_approving_creators};
+pub use certificate::{CertificateKind, ThresholdCertificate};
 pub use cordiality::{
     Equivocation, HiddenEquivocation, acknowledges_equivocation, all_equivocations,
     all_equivocations_for_observer, creator_blocks_at_round, equivocation_blocks_at_round,
     hidden_equivocations, is_cordial_block, is_supermajority, is_weighted_supermajority,
     missing_known_tips, observed_block_ids, ratifies, super_ratifies, weighted_ratifies,
-    weighted_super_ratifies,
+    weighted_ratifies_certificate, weighted_super_ratifies, weighted_super_ratifies_certificate,
 };
 pub use dissemination::{
     BufferOutcome, BufferPolicy, BufferStats, PendingBlockBuffer, PredecessorSelectionMode,
@@ -32,7 +35,8 @@ pub use evidence::{
 };
 pub use finality::{
     final_leader_for_wave, is_final_leader, is_weighted_final_leader, latest_final_leader,
-    latest_weighted_final_leader, leader_block_for_wave, weighted_final_leader_for_wave,
+    latest_weighted_final_leader, leader_block_for_wave, weighted_final_leader_certificate,
+    weighted_final_leader_for_wave,
 };
 pub use fork_choice::{ForkChoice, collect_validator_tips, fork_choice, is_cordial};
 pub use ordering::{
@@ -54,3 +58,4 @@ pub use wave::{
     first_round_of_wave, is_first_round_of_wave, last_round_of_wave, leader_blocks_of_wave,
     leader_round_of_wave, round_is_in_wave, rounds_of_wave, wave_of_round,
 };
+pub use weight_snapshot::{WeightSnapshot, WeightSnapshotId};

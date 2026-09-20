@@ -17,10 +17,12 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-#[cfg(feature = "trace")]
-use crate::consensus::approval::approves_with_memo;
-use crate::consensus::approval::{ApprovalMemo, approves, weighted_approving_creators_with_memo};
+use crate::consensus::approval::{
+    ApprovalMemo, approves, approves_with_memo, weighted_approving_creators_with_memo,
+};
+use crate::consensus::certificate::{CertificateKind, ThresholdCertificate};
 use crate::consensus::round::{blocks_at_depth, depth};
+use crate::consensus::weight_snapshot::WeightSnapshot;
 #[cfg(feature = "trace")]
 use crate::trace::{self, DetectEquivocationEvent, ThresholdCertificateEvent, TraceEvent};
 use crate::types::{BlockIdentity, NodeId};
@@ -320,15 +322,93 @@ pub fn weighted_ratifies(
     target: &Block,
     bonds: &HashMap<NodeId, u64>,
 ) -> bool {
+    let weights = WeightSnapshot::from_bonds(bonds);
     let mut memo = WeightedRatificationMemo::default();
-    weighted_ratifies_with_memo(blocklace, ratifier, target, bonds, &mut memo)
+    weighted_ratifies_with_memo(blocklace, ratifier, target, &weights, &mut memo)
+}
+
+/// Evaluate weighted ratification and, when it passes, return the evidence
+/// that justified it.
+///
+/// This is the single place ratification evidence is assembled. The boolean
+/// entry point and the canonical trace both read what it produces, so the
+/// returned object and the emitted event cannot describe different quorums.
+fn weighted_ratification_outcome(
+    blocklace: &Blocklace,
+    ratifier: &Block,
+    target: &Block,
+    weights: &WeightSnapshot,
+    memo: &mut WeightedRatificationMemo,
+) -> Option<ThresholdCertificate> {
+    if blocklace.get(&ratifier.identity).is_none() || blocklace.get(&target.identity).is_none() {
+        return None;
+    }
+
+    let observed_ids = blocklace.observe(&ratifier.identity);
+    let observed_blocks: HashSet<Block> = observed_ids
+        .iter()
+        .filter_map(|id| blocklace.get(id))
+        .collect();
+
+    let approving_creators = weighted_approving_creators_with_memo(
+        blocklace,
+        &observed_blocks,
+        &target.identity,
+        weights,
+        &mut memo.approval_memo,
+    );
+
+    if !is_weighted_supermajority_snapshot(&approving_creators, weights) {
+        return None;
+    }
+
+    // Every pair was evaluated immediately above. Reuse the memoized result so
+    // gathering evidence does not re-walk the approval relation.
+    let approver_blocks: Vec<BlockIdentity> = observed_blocks
+        .iter()
+        .filter(|block| {
+            approves_with_memo(
+                blocklace,
+                &block.identity,
+                &target.identity,
+                &mut memo.approval_memo,
+            ) && weights.weight_of(&block.identity.creator) > 0
+        })
+        .map(|block| block.identity.clone())
+        .collect();
+
+    Some(ThresholdCertificate::new(
+        CertificateKind::Ratification,
+        &target.identity,
+        Some(&ratifier.identity),
+        approver_blocks,
+        approving_creators.into_iter().collect(),
+        weights,
+    ))
+}
+
+fn weighted_ratification_certificate_with_memo(
+    blocklace: &Blocklace,
+    ratifier: &Block,
+    target: &Block,
+    weights: &WeightSnapshot,
+    memo: &mut WeightedRatificationMemo,
+) -> Option<ThresholdCertificate> {
+    let certificate = weighted_ratification_outcome(blocklace, ratifier, target, weights, memo);
+
+    #[cfg(feature = "trace")]
+    if let Some(certificate) = &certificate {
+        emit_certificate(&ratifier.identity.creator, certificate);
+    }
+
+    certificate
 }
 
 fn weighted_ratifies_with_memo(
     blocklace: &Blocklace,
     ratifier: &Block,
     target: &Block,
-    bonds: &HashMap<NodeId, u64>,
+    weights: &WeightSnapshot,
     memo: &mut WeightedRatificationMemo,
 ) -> bool {
     let cache_key = (ratifier.identity.clone(), target.identity.clone());
@@ -336,90 +416,28 @@ fn weighted_ratifies_with_memo(
         return *result;
     }
 
-    let result = if blocklace.get(&ratifier.identity).is_none()
-        || blocklace.get(&target.identity).is_none()
-    {
-        false
-    } else {
-        let observed_ids = blocklace.observe(&ratifier.identity);
-        let observed_blocks: HashSet<Block> = observed_ids
-            .iter()
-            .filter_map(|id| blocklace.get(id))
-            .collect();
-
-        let approving_creators = weighted_approving_creators_with_memo(
-            blocklace,
-            &observed_blocks,
-            &target.identity,
-            bonds,
-            &mut memo.approval_memo,
-        );
-
-        let passed = is_weighted_supermajority(&approving_creators, bonds);
-
-        #[cfg(feature = "trace")]
-        if passed {
-            let mut ordered_observed: Vec<_> = observed_blocks.iter().collect();
-            ordered_observed.sort_by_key(|block| block.identity.clone());
-            let approver_blocks: Vec<_> = ordered_observed
-                .into_iter()
-                .filter(|block| {
-                    // Every pair was evaluated immediately above. Reuse that
-                    // memoized result so formatting certificate evidence does
-                    // not emit duplicate, HashSet-ordered approval events.
-                    approves_with_memo(
-                        blocklace,
-                        &block.identity,
-                        &target.identity,
-                        &mut memo.approval_memo,
-                    ) && bonds.get(&block.identity.creator).copied().unwrap_or(0) > 0
-                })
-                .collect();
-            let mut creators: Vec<_> = approving_creators.iter().collect();
-            creators.sort();
-            let support = checked_bond_weight(
-                approving_creators
-                    .iter()
-                    .filter_map(|creator| bonds.get(creator))
-                    .copied(),
-            )
-            .unwrap_or(0);
-            let total = checked_bond_weight(bonds.values().copied()).unwrap_or(0);
-            let leader_hash = trace::hex(&target.identity.content_hash);
-            let ratifier_hash = trace::hex(&ratifier.identity.content_hash);
-            trace::emit(TraceEvent::BuildThresholdCertificate(
-                ThresholdCertificateEvent {
-                    node_id: trace::hex(&ratifier.identity.creator.0),
-                    wave: None,
-                    kind: "ratification".into(),
-                    leader_hash: leader_hash.clone(),
-                    ratifier_hash: Some(ratifier_hash.clone()),
-                    certificate_id: trace::certificate_id(
-                        "ratification",
-                        &leader_hash,
-                        Some(&ratifier_hash),
-                    ),
-                    approver_hashes: approver_blocks
-                        .iter()
-                        .map(|block| trace::hex(&block.identity.content_hash))
-                        .collect(),
-                    approvers: creators
-                        .iter()
-                        .map(|creator| trace::hex(&creator.0))
-                        .collect(),
-                    approver_count: approving_creators.len(),
-                    approver_weight: support,
-                    total_weight: total,
-                    weight_table_hash: trace::weight_table_hash(bonds),
-                },
-            ));
-        }
-
-        passed
-    };
+    let result =
+        weighted_ratification_certificate_with_memo(blocklace, ratifier, target, weights, memo)
+            .is_some();
 
     memo.weighted_ratifies_cache.insert(cache_key, result);
     result
+}
+
+/// Weighted ratification with the certificate that justifies it.
+///
+/// The boolean [`weighted_ratifies`] answers whether the quorum was reached;
+/// this answers the same question and hands back the evidence, so a caller can
+/// re-check the decision without re-deriving it from the blocklace.
+pub fn weighted_ratifies_certificate(
+    blocklace: &Blocklace,
+    ratifier: &Block,
+    target: &Block,
+    bonds: &HashMap<NodeId, u64>,
+) -> Option<ThresholdCertificate> {
+    let weights = WeightSnapshot::from_bonds(bonds);
+    let mut memo = WeightedRatificationMemo::default();
+    weighted_ratification_certificate_with_memo(blocklace, ratifier, target, &weights, &mut memo)
 }
 
 /// Check whether the supplied witness set super-ratifies `target` using bonded
@@ -434,83 +452,154 @@ pub fn weighted_super_ratifies(
     target: &Block,
     bonds: &HashMap<NodeId, u64>,
 ) -> bool {
-    let mut memo = WeightedRatificationMemo::default();
-    weighted_super_ratifies_with_memo(blocklace, blocks, target, bonds, &mut memo)
+    let weights = WeightSnapshot::from_bonds(bonds);
+    weighted_super_ratifies_with_snapshot(blocklace, blocks, target, &weights)
 }
 
-fn weighted_super_ratifies_with_memo(
+/// Snapshot-carrying entry point for callers that already captured the weight
+/// table for this decision, so the fingerprint is computed once per decision
+/// rather than once per wave.
+pub(crate) fn weighted_super_ratifies_with_snapshot(
     blocklace: &Blocklace,
     blocks: &HashSet<Block>,
     target: &Block,
-    bonds: &HashMap<NodeId, u64>,
-    memo: &mut WeightedRatificationMemo,
+    weights: &WeightSnapshot,
 ) -> bool {
-    // Ratification recursively emits approvals and certificates.  Evaluate
-    // witnesses in identity order so equivalent executions have byte-stable
-    // traces despite HashSet's randomized iteration order.
-    #[cfg(feature = "trace")]
-    let ordered_blocks = {
-        let mut blocks = blocks.iter().collect::<Vec<_>>();
-        blocks.sort_by_key(|block| block.identity.clone());
-        blocks
-    };
-    #[cfg(not(feature = "trace"))]
-    let ordered_blocks: Vec<_> = blocks.iter().collect();
+    let mut memo = WeightedRatificationMemo::default();
+    weighted_super_ratifies_with_memo(blocklace, blocks, target, weights, &mut memo)
+}
+
+/// Evaluate weighted super-ratification and, when it passes, return the
+/// evidence that justified it.
+fn weighted_super_ratification_outcome(
+    blocklace: &Blocklace,
+    blocks: &HashSet<Block>,
+    target: &Block,
+    weights: &WeightSnapshot,
+    memo: &mut WeightedRatificationMemo,
+) -> Option<ThresholdCertificate> {
+    // Ratification recursively evaluates approvals and emits certificates.
+    // Evaluate witnesses in identity order so equivalent executions produce
+    // byte-stable traces despite HashSet's randomized iteration order.
+    let mut ordered_blocks: Vec<&Block> = blocks.iter().collect();
+    ordered_blocks.sort_by_key(|block| block.identity.clone());
+
     let ratifying_blocks: Vec<&Block> = ordered_blocks
         .into_iter()
-        .filter(|block| weighted_ratifies_with_memo(blocklace, block, target, bonds, memo))
-        .filter(|block| {
-            let creator = &block.identity.creator;
-            bonds.get(creator).copied().unwrap_or(0) > 0
-        })
+        .filter(|block| weighted_ratifies_with_memo(blocklace, block, target, weights, memo))
+        .filter(|block| weights.weight_of(&block.identity.creator) > 0)
         .collect();
     let ratifying_creators: HashSet<NodeId> = ratifying_blocks
         .iter()
         .map(|block| block.identity.creator.clone())
         .collect();
 
-    let passed = is_weighted_supermajority(&ratifying_creators, bonds);
-
-    #[cfg(feature = "trace")]
-    if passed {
-        let mut evidence = ratifying_blocks;
-        evidence.sort_by_key(|block| block.identity.clone());
-        let mut creators: Vec<_> = ratifying_creators.iter().collect();
-        creators.sort();
-        let support = checked_bond_weight(
-            ratifying_creators
-                .iter()
-                .filter_map(|creator| bonds.get(creator))
-                .copied(),
-        )
-        .unwrap_or(0);
-        let total = checked_bond_weight(bonds.values().copied()).unwrap_or(0);
-        let leader_hash = trace::hex(&target.identity.content_hash);
-        trace::emit(TraceEvent::BuildThresholdCertificate(
-            ThresholdCertificateEvent {
-                node_id: trace::hex(&target.identity.creator.0),
-                wave: None,
-                kind: "super_ratification".into(),
-                leader_hash: leader_hash.clone(),
-                ratifier_hash: None,
-                certificate_id: trace::certificate_id("super_ratification", &leader_hash, None),
-                approver_hashes: evidence
-                    .iter()
-                    .map(|block| trace::hex(&block.identity.content_hash))
-                    .collect(),
-                approvers: creators
-                    .iter()
-                    .map(|creator| trace::hex(&creator.0))
-                    .collect(),
-                approver_count: ratifying_creators.len(),
-                approver_weight: support,
-                total_weight: total,
-                weight_table_hash: trace::weight_table_hash(bonds),
-            },
-        ));
+    if !is_weighted_supermajority_snapshot(&ratifying_creators, weights) {
+        return None;
     }
 
-    passed
+    Some(ThresholdCertificate::new(
+        CertificateKind::SuperRatification,
+        &target.identity,
+        None,
+        ratifying_blocks
+            .into_iter()
+            .map(|block| block.identity.clone())
+            .collect(),
+        ratifying_creators.into_iter().collect(),
+        weights,
+    ))
+}
+
+fn weighted_super_ratification_certificate_with_memo(
+    blocklace: &Blocklace,
+    blocks: &HashSet<Block>,
+    target: &Block,
+    weights: &WeightSnapshot,
+    memo: &mut WeightedRatificationMemo,
+) -> Option<ThresholdCertificate> {
+    let certificate = weighted_super_ratification_outcome(blocklace, blocks, target, weights, memo);
+
+    #[cfg(feature = "trace")]
+    if let Some(certificate) = &certificate {
+        emit_certificate(&target.identity.creator, certificate);
+    }
+
+    certificate
+}
+
+fn weighted_super_ratifies_with_memo(
+    blocklace: &Blocklace,
+    blocks: &HashSet<Block>,
+    target: &Block,
+    weights: &WeightSnapshot,
+    memo: &mut WeightedRatificationMemo,
+) -> bool {
+    weighted_super_ratification_certificate_with_memo(blocklace, blocks, target, weights, memo)
+        .is_some()
+}
+
+/// Snapshot-carrying form of [`weighted_super_ratifies_certificate`], for
+/// callers that already captured the weight table for this decision.
+pub(crate) fn weighted_super_ratifies_certificate_with_snapshot(
+    blocklace: &Blocklace,
+    blocks: &HashSet<Block>,
+    target: &Block,
+    weights: &WeightSnapshot,
+) -> Option<ThresholdCertificate> {
+    let mut memo = WeightedRatificationMemo::default();
+    weighted_super_ratification_certificate_with_memo(blocklace, blocks, target, weights, &mut memo)
+}
+
+/// Weighted super-ratification with the certificate that justifies it.
+///
+/// This is the object a finality decision rests on: which validators ratified
+/// the target, with which blocks, for how much stake, out of what total, and
+/// against which weight table.
+pub fn weighted_super_ratifies_certificate(
+    blocklace: &Blocklace,
+    blocks: &HashSet<Block>,
+    target: &Block,
+    bonds: &HashMap<NodeId, u64>,
+) -> Option<ThresholdCertificate> {
+    let weights = WeightSnapshot::from_bonds(bonds);
+    weighted_super_ratifies_certificate_with_snapshot(blocklace, blocks, target, &weights)
+}
+
+/// Serialize a certificate into the canonical trace.
+///
+/// `node` is the actor the event is attributed to. The event is built purely
+/// from the certificate, so the recorded evidence is by construction the
+/// evidence the decision actually used.
+#[cfg(feature = "trace")]
+fn emit_certificate(node: &NodeId, certificate: &ThresholdCertificate) {
+    trace::emit(TraceEvent::BuildThresholdCertificate(
+        ThresholdCertificateEvent {
+            node_id: trace::hex(&node.0),
+            wave: None,
+            kind: certificate.kind.as_str().into(),
+            leader_hash: trace::hex(&certificate.leader.content_hash),
+            ratifier_hash: certificate
+                .ratifier
+                .as_ref()
+                .map(|identity| trace::hex(&identity.content_hash)),
+            certificate_id: certificate.certificate_id.clone(),
+            approver_hashes: certificate
+                .approver_blocks
+                .iter()
+                .map(|identity| trace::hex(&identity.content_hash))
+                .collect(),
+            approvers: certificate
+                .approvers
+                .iter()
+                .map(|creator| trace::hex(&creator.0))
+                .collect(),
+            approver_count: certificate.approver_count(),
+            approver_weight: certificate.approver_weight,
+            total_weight: certificate.total_weight,
+            weight_table_hash: certificate.weight_snapshot.to_string(),
+        },
+    ));
 }
 
 /// Check whether `creators` hold strictly more than two-thirds of total bonded
@@ -519,7 +608,17 @@ fn weighted_super_ratifies_with_memo(
 /// `bonds` is the full active validator set for the decision context. Unknown
 /// creators do not contribute support. Overflow returns `false`.
 pub fn is_weighted_supermajority(creators: &HashSet<NodeId>, bonds: &HashMap<NodeId, u64>) -> bool {
-    let Some(total_weight) = checked_bond_weight(bonds.values().copied()) else {
+    is_weighted_supermajority_snapshot(creators, &WeightSnapshot::from_bonds(bonds))
+}
+
+/// Snapshot-carrying form of [`is_weighted_supermajority`]. Unknown creators
+/// weigh zero, so they contribute no support — the same treatment the map-based
+/// form gave them by skipping absent keys.
+pub(crate) fn is_weighted_supermajority_snapshot(
+    creators: &HashSet<NodeId>,
+    weights: &WeightSnapshot,
+) -> bool {
+    let Some(total_weight) = weights.total() else {
         return false;
     };
 
@@ -527,12 +626,9 @@ pub fn is_weighted_supermajority(creators: &HashSet<NodeId>, bonds: &HashMap<Nod
         return false;
     }
 
-    let Some(support_weight) = checked_bond_weight(
-        creators
-            .iter()
-            .filter_map(|creator| bonds.get(creator))
-            .copied(),
-    ) else {
+    let Some(support_weight) =
+        checked_bond_weight(creators.iter().map(|creator| weights.weight_of(creator)))
+    else {
         return false;
     };
 

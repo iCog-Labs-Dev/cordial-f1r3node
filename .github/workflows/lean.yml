@@ -6,7 +6,7 @@ on:
     paths:
       - "lean/**"
       - "crates/cordial-miners-core/**"
-      - "docs/lean/05*.md"
+      - "docs/lean/*.md"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".cargo/config.toml"
@@ -14,13 +14,14 @@ on:
       - "rust-toolchain.toml"
       - "Justfile"
       - "scripts/issue188_mutation_test.sh"
+      - "scripts/issue188_benchmark.sh"
       - ".github/workflows/lean.yml"
   pull_request:
     branches: ["lean-q1", "dev", "master"]
     paths:
       - "lean/**"
       - "crates/cordial-miners-core/**"
-      - "docs/lean/05*.md"
+      - "docs/lean/*.md"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".cargo/config.toml"
@@ -28,6 +29,7 @@ on:
       - "rust-toolchain.toml"
       - "Justfile"
       - "scripts/issue188_mutation_test.sh"
+      - "scripts/issue188_benchmark.sh"
       - ".github/workflows/lean.yml"
     types: [opened, synchronize, reopened]
 

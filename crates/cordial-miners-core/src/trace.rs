@@ -349,7 +349,17 @@ pub fn sorted_block_hashes<'a>(
 pub fn weight_table_hash(bonds: &std::collections::HashMap<crate::types::NodeId, u64>) -> String {
     let mut entries: Vec<_> = bonds.iter().collect();
     entries.sort_by_key(|(node, _)| node.0.as_slice());
+    weight_table_hash_sorted(entries)
+}
 
+/// The same fingerprint, for callers that already hold the table in canonical
+/// order: byte-lexicographic by `NodeId`, which is exactly `BTreeMap`'s
+/// iteration order. `weight_table_hash` sorts and delegates here, so the two
+/// paths produce identical bytes by construction rather than by coincidence.
+pub fn weight_table_hash_sorted<'a, I>(entries: I) -> String
+where
+    I: IntoIterator<Item = (&'a crate::types::NodeId, &'a u64)>,
+{
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     for (node, weight) in entries {
         let row = format!("{}:{}\n", hex(&node.0), weight);

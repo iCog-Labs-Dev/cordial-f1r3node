@@ -12,6 +12,7 @@ use crate::block::Block;
 use crate::blocklace::Blocklace;
 #[cfg(feature = "trace")]
 use crate::consensus::round::depth;
+use crate::consensus::weight_snapshot::WeightSnapshot;
 #[cfg(feature = "trace")]
 use crate::trace::{self, AcceptApprovalEvent, TraceEvent};
 use crate::types::{BlockIdentity, NodeId};
@@ -145,15 +146,16 @@ pub fn weighted_approving_creators(
     target: &BlockIdentity,
     bonds: &HashMap<NodeId, u64>,
 ) -> HashSet<NodeId> {
+    let weights = WeightSnapshot::from_bonds(bonds);
     let mut memo = ApprovalMemo::default();
-    weighted_approving_creators_with_memo(blocklace, blocks, target, bonds, &mut memo)
+    weighted_approving_creators_with_memo(blocklace, blocks, target, &weights, &mut memo)
 }
 
 pub(crate) fn weighted_approving_creators_with_memo(
     blocklace: &Blocklace,
     blocks: &HashSet<Block>,
     target: &BlockIdentity,
-    bonds: &HashMap<NodeId, u64>,
+    weights: &WeightSnapshot,
     memo: &mut ApprovalMemo,
 ) -> HashSet<NodeId> {
     // Approval checks emit trace evidence. Never let HashSet's randomized
@@ -173,10 +175,7 @@ pub(crate) fn weighted_approving_creators_with_memo(
         .filter(|block| approves_with_memo(blocklace, &block.identity, target, memo))
         .filter_map(|block| {
             let creator = &block.identity.creator;
-            match bonds.get(creator).copied() {
-                Some(weight) if weight > 0 => Some(creator.clone()),
-                _ => None,
-            }
+            (weights.weight_of(creator) > 0).then(|| creator.clone())
         })
         .collect()
 }

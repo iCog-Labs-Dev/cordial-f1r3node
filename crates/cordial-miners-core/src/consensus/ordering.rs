@@ -1,6 +1,5 @@
-use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
@@ -12,6 +11,7 @@ use crate::consensus::finality::{
 };
 use crate::consensus::round::depth;
 use crate::consensus::wave::wave_of_round;
+use crate::consensus::weight_snapshot::WeightSnapshotId;
 #[cfg(feature = "trace")]
 use crate::trace::{self, EmitOutputEvent, TauOrderEvent, TraceEvent};
 use crate::types::{BlockIdentity, NodeId};
@@ -50,7 +50,7 @@ struct PreviousLeaderCacheKey {
 struct WeightedPreviousLeaderCacheKey {
     current_leader: BlockIdentity,
     wavelength: u64,
-    bonds_fingerprint: u64,
+    weight_snapshot: WeightSnapshotId,
     leader_selection_id: u64,
 }
 
@@ -67,7 +67,7 @@ struct TauOutputCacheKey {
 struct WeightedTauOutputCacheKey {
     latest_leader: BlockIdentity,
     wavelength: u64,
-    bonds_fingerprint: u64,
+    weight_snapshot: WeightSnapshotId,
     leader_selection_id: u64,
 }
 
@@ -209,18 +209,6 @@ fn sync_cache_generation(blocklace: &Blocklace, cache: &mut OrderingCache) {
     }
 }
 
-fn bonds_fingerprint(bonds: &HashMap<NodeId, u64>) -> u64 {
-    let mut entries: Vec<_> = bonds.iter().collect();
-    entries.sort_by_key(|(left, _)| *left);
-
-    let mut hasher = DefaultHasher::new();
-    for (node, weight) in entries {
-        node.hash(&mut hasher);
-        weight.hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
 fn approved_blocks_for_leader_cached(
     blocklace: &Blocklace,
     leader: &BlockIdentity,
@@ -307,7 +295,7 @@ where
     let key = WeightedPreviousLeaderCacheKey {
         current_leader: current_leader.clone(),
         wavelength: config.wavelength,
-        bonds_fingerprint: bonds_fingerprint(config.bonds),
+        weight_snapshot: WeightSnapshotId::of_bonds(config.bonds),
         leader_selection_id: config.leader_selection_id,
     };
 
@@ -632,7 +620,7 @@ where
     let key = WeightedTauOutputCacheKey {
         latest_leader: latest_leader.clone(),
         wavelength,
-        bonds_fingerprint: bonds_fingerprint(bonds),
+        weight_snapshot: WeightSnapshotId::of_bonds(bonds),
         leader_selection_id,
     };
     if let Some(ordered) = cache.weighted_tau_output_by_latest_leader.get(&key) {
