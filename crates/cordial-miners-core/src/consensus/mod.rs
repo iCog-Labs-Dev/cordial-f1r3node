@@ -12,8 +12,8 @@ pub mod validation;
 pub mod wave;
 pub mod weight_snapshot;
 
-pub use certificate::{CertificateKind, ThresholdCertificate};
 pub use approval::{approves, approving_blocks, weighted_approving_creators};
+pub use certificate::{CertificateKind, ThresholdCertificate};
 pub use cordiality::{
     Equivocation, HiddenEquivocation, acknowledges_equivocation, all_equivocations,
     all_equivocations_for_observer, creator_blocks_at_round, equivocation_blocks_at_round,

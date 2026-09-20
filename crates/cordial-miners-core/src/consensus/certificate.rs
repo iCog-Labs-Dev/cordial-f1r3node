@@ -152,8 +152,7 @@ mod tests {
     }
 
     fn weights(per_validator: u64, count: u8) -> WeightSnapshot {
-        let bonds: HashMap<NodeId, u64> =
-            (1..=count).map(|id| (node(id), per_validator)).collect();
+        let bonds: HashMap<NodeId, u64> = (1..=count).map(|id| (node(id), per_validator)).collect();
         WeightSnapshot::from_bonds(&bonds)
     }
 

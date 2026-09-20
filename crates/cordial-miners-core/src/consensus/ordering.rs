@@ -10,8 +10,8 @@ use crate::consensus::finality::{
     weighted_final_leader_for_wave,
 };
 use crate::consensus::round::depth;
-use crate::consensus::weight_snapshot::WeightSnapshotId;
 use crate::consensus::wave::wave_of_round;
+use crate::consensus::weight_snapshot::WeightSnapshotId;
 #[cfg(feature = "trace")]
 use crate::trace::{self, EmitOutputEvent, TauOrderEvent, TraceEvent};
 use crate::types::{BlockIdentity, NodeId};
