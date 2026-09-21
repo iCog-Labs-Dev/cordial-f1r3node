@@ -227,7 +227,6 @@ pub fn system_deploy_to_f1r3node(
         } => SystemDeployEnum::Slash(SlashDeploy {
             invalid_block_hash: prost::bytes::Bytes::copy_from_slice(invalid_block_hash),
             pk: PublicKey::from_bytes(&validator.0),
-            target_activation_epoch: 0,
             initial_rand: rand_seed,
         }),
         SystemDeployRequest::CloseBlock => SystemDeployEnum::Close(CloseBlockDeploy {

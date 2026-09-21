@@ -39,7 +39,6 @@ fn expected_slash_bytes(invalid_block_hash: [u8; 32], issuer_public_key: &[u8]) 
                 SlashSystemDeployDataProto {
                     invalid_block_hash: Bytes::copy_from_slice(&invalid_block_hash),
                     issuer_public_key: Bytes::copy_from_slice(issuer_public_key),
-                    target_activation_epoch: 0,
                 },
             )),
         }),
