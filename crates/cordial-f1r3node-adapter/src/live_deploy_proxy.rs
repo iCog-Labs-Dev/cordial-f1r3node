@@ -303,4 +303,15 @@ impl DeployService for LiveDeployProxy {
     ) -> Result<tonic::Response<StatusResponse>, tonic::Status> {
         self.upstream.lock().await.status(request).await
     }
+
+    async fn get_pending_deploys(
+        &self,
+        request: tonic::Request<models::casper::PendingDeploysQuery>,
+    ) -> Result<tonic::Response<models::casper::v1::PendingDeploysResponse>, tonic::Status> {
+        self.upstream
+            .lock()
+            .await
+            .get_pending_deploys(request)
+            .await
+    }
 }

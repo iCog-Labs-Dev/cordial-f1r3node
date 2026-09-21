@@ -222,6 +222,7 @@ fn succeeded_slash_translates_with_validator() {
         system_deploy: SystemDeployData::Slash {
             invalid_block_hash: prost::bytes::Bytes::from(vec![0u8; 32]),
             issuer_public_key: PublicKey::from_bytes(&validator_bytes),
+            target_activation_epoch: 0,
         },
     };
     let ours = system_deploy_from_f1r3node(&f1);

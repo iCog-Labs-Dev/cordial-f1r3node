@@ -204,6 +204,15 @@ impl DeployService for RecordingUpstream {
             message: Some(status_response::Message::Status(status)),
         }))
     }
+
+    async fn get_pending_deploys(
+        &self,
+        _request: tonic::Request<models::casper::PendingDeploysQuery>,
+    ) -> Result<tonic::Response<models::casper::v1::PendingDeploysResponse>, tonic::Status> {
+        Ok(tonic::Response::new(
+            models::casper::v1::PendingDeploysResponse::default(),
+        ))
+    }
 }
 
 async fn spawn_upstream(service: RecordingUpstream) -> SocketAddr {

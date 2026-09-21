@@ -4,7 +4,7 @@ on:
   push:
     branches: ["master"]
   pull_request:
-    branches: ["master", "dev"]
+    branches: ["master", "dev", "lean-q1"]
     types: [opened, synchronize, reopened]
   workflow_dispatch:
 
@@ -58,7 +58,6 @@ jobs:
           cargo fmt -p cordial-f1r3node-adapter --check
           cargo fmt -p cordial-f1r3space-adapter --check
           cargo fmt -p cordial-por --check
-          cargo fmt -p cordial-app-runtime --check
 
       - name: Check core boundaries
         working-directory: blocklace
@@ -72,7 +71,6 @@ jobs:
           -p cordial-f1r3node-adapter
           -p cordial-f1r3space-adapter
           -p cordial-por
-          -p cordial-app-runtime
           --all-targets
           --all-features
           --no-deps

@@ -106,6 +106,7 @@ fn encode_slash_processed_system_deploy(
                 SlashSystemDeployDataProto {
                     invalid_block_hash: Bytes::copy_from_slice(&invalid_block_hash),
                     issuer_public_key: Bytes::copy_from_slice(issuer_public_key),
+                    target_activation_epoch: 0,
                 },
             )),
         }),
