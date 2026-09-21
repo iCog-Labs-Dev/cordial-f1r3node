@@ -1,6 +1,6 @@
 /-
 Tau ordering: the deterministic total order derived from finalized leader
-blocks, and its prefix-safety property.
+blocks, and the structural lemmas needed for its prefix-safety proof.
 
 ## Design
 
@@ -12,31 +12,17 @@ sequence by:
 3. Emitting each epoch's approved blocks in deterministic topological
    order, excluding blocks already emitted by earlier recursion.
 
-The earlier KR4 theorem surface keeps `tau` abstract below. Issue #188 adds
-an independently executable algorithm in `CMRef.computeTau`: it evaluates the proved finite
-approval/ratification/finality predicates over the concrete `Blocklace` and
-runs a deterministic topological sort. Replay uses that Lean implementation,
-not the Rust result, as its exact ordering oracle. There is currently NO
-refinement theorem connecting this algorithm to the abstract `tau` below.
-Its signature also omits the canonical hash tie-break key and replay horizon.
-This is an unresolved KR4 specification/Issue #188 acceptance gap.
-
-`tau_prefix_monotone` remains stated as an `axiom` — a deliberate trusted
-formal boundary from the earlier KR4 work.
-It captures the append-only ledger invariant: as the blocklace grows,
-`tau` only extends its output list, never retracts.
-
-The proved finality/observation monotonicity lemmas below are ingredients
-for a future ordering proof, not a justification of this axiom: an opaque
-function with no defining equation cannot be related to a concrete sequence
-by those lemmas. A complete specification must define leader recursion,
-membership, topological order, canonical tie-breaking, and the assumptions
-under which extending the DAG preserves its ordered prefix.
+Issue #244 removes the former opaque `tau` and prefix axiom.  `tauRef` below
+is executable and delegates to the same CMRef approval, ratification, and
+finality decisions used by trace replay.  Its explicit `domain`, canonical
+tie-break `key`, and `throughWave` arguments are required to model the Rust
+call rather than hide replay inputs in an opaque constant.  Correctness and
+prefix theorems are in `OrderingProofs.lean`.
 
 Owned by Issue 04 (KR4 — Finalized Leader Safety).
 Rust: `consensus/ordering.rs`.
 -/
-import LeanVerification.Finality
+import LeanVerification.CMRef
 import Mathlib.Data.List.Defs
 
 namespace CordialMiners
@@ -250,42 +236,25 @@ theorem FinalLeader_of_subBlocklace
   exact ⟨hb_lead', witness, hW',
     superRatifies_of_subBlocklace hV hsub hb_keys hW_keys hsr⟩
 
-/-! ### Tau -/
+/-! ### Executable τ -/
 
-/-- The deterministic ordered output of the protocol, anchored on the latest
-finalized leader and recursively expanded through all ratified ancestors.
+/-- The executable τ reference result.  `CMRef.computeTauPlan` mirrors the
+Rust recursion and exposes leader epochs; this wrapper flattens the plan and
+refuses any result that is not duplicate-free and predecessor-respecting.
 
-Declared `opaque` on the KR4 theorem surface. The separate executable algorithm
-used for trace conformance is `CMRef.computeTau`; equivalence is not proved. -/
-opaque tau (bonds : NodeId → ℕ) (validators : Finset NodeId)
-    (B : Blocklace) (hV : ValidBlocklace B)
-    (wavelength : ℕ) (sel : ℕ → Option NodeId) : List BlockId
-
-/-! ### Prefix-safety -/
-
-/-- **Prefix-safety (tau_prefix_monotone).** When the blocklace grows
-monotonically (`SubBlocklace B B'`), the output of `tau` only extends:
-`tau B` is a prefix of `tau B'`.
-
-This is the property that makes the system usable as an append-only
-ledger — once a block is ordered by `tau`, it stays ordered at the same
-position in every future state.
-
-**Stated as an axiom** (the existing KR4 trust boundary) because the earlier
-issue did not prove the executable ordering implementation prefix-monotone.
-Issue #188 does not use this axiom to accept trace output; it recomputes the
-exact order through `CMRef.computeTau`. This assumption does not specify that
-algorithm or establish its correctness, as explained in the module doc.
-
-Rust: the `tau` append-only invariant is tested by
-`test_finality.rs:finalized_order_excludes_equivocations_the_leader_acknowledged`. -/
-axiom tau_prefix_monotone
+An execution with no finalized leader has the valid empty output. -/
+def tauRef
     (bonds : NodeId → ℕ) (validators : Finset NodeId)
-    (B B' : Blocklace) (hV : ValidBlocklace B) (hV' : ValidBlocklace B')
+    (B : Blocklace) (hV : ValidBlocklace B)
     (wavelength : ℕ) (sel : ℕ → Option NodeId)
-    (hsub : SubBlocklace B B') :
-    List.IsPrefix
-      (tau bonds validators B hV wavelength sel)
-      (tau bonds validators B' hV' wavelength sel)
+    (domain : List BlockId) (key : BlockId → String)
+    (throughWave : ℕ) : Except String (List BlockId) := do
+  let (_, epochs) ← CMRef.computeTauPlan bonds validators B hV wavelength sel
+    domain key throughWave
+  let output := CMRef.flattenEpochs epochs
+  if CMRef.checkTopological (CMRef.blockParents B) output output then
+    pure output
+  else
+    throw "tau output failed duplicate/predecessor validation"
 
 end CordialMiners

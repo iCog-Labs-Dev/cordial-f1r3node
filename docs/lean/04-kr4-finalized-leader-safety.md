@@ -13,9 +13,9 @@ guarantee — only Rust tests covering the scenarios that were thought of.
 This module provides the general proof, over all possible blocklace
 histories regardless of adversarial choice.
 
-The supporting module `Ordering.lean` adds two guarantees:
-- **Append-only ledger**: as the blocklace grows, the ordered output `tau`
-  only extends, never retracts.
+The supporting `Ordering.lean` and `OrderingProofs.lean` modules add two guarantees:
+- **Append-only ledger under a valid append**: when earlier finality decisions
+  and emitted leader fragments remain stable, `tauRef` only extends its output.
 - **Finality monotonicity**: once a block is finalized in `B`, it stays
   finalized in any superset `B'`.
 
@@ -275,44 +275,56 @@ Addresses reviewer concern 3 on PR #229: finality monotonicity was absent
 from the original formalization and is false under the old
 uniqueness-encoding definition.
 
-### `tau`
+### Executable `tauRef`
 
 ```lean
-opaque tau (bonds : NodeId → ℕ) (validators : Finset NodeId)
+def tauRef (bonds : NodeId → ℕ) (validators : Finset NodeId)
     (B : Blocklace) (hV : ValidBlocklace B)
-    (wavelength : ℕ) (sel : ℕ → Option NodeId) : List BlockId
+    (wavelength : ℕ) (sel : ℕ → Option NodeId)
+    (domain : List BlockId) (key : BlockId → String)
+    (throughWave : ℕ) : Except String (List BlockId)
 ```
 
-Declared `opaque` because its computational definition lives in Rust
-(`ordering.rs:tau`). What matters formally is the prefix-safety property
-below. `sel : ℕ → Option NodeId` matches Rust's `Fn(u64) → Option<NodeId>`.
+`CMRef.computeTauPlan` mirrors the Rust flow:
+
+1. find the latest finalized leader through the executable `FinalLeader` check;
+2. recursively find the latest earlier finalized leader ratified by it;
+3. select the leader's newly approved fragment;
+4. run deterministic Kahn sorting with the canonical block key;
+5. flatten the leader epochs into the τ output.
+
+The previous-final recursion is structurally recursive on explicit fuel, so
+Lean checks termination. `xsortRef` validates that every successful sort has
+the requested domain, contains no duplicates, and places selected predecessors
+before children. It rejects cyclic input.
 
 Rust: `ordering.rs:tau`.
 
 ### Prefix-safety
 
 ```lean
-axiom tau_prefix_monotone
-    (bonds : NodeId → ℕ) (validators : Finset NodeId)
-    (B B' : Blocklace) (hV : ValidBlocklace B) (hV' : ValidBlocklace B')
-    (wavelength : ℕ) (sel : ℕ → Option NodeId)
-    (hsub : SubBlocklace B B') :
-    List.IsPrefix
-      (tau bonds validators B hV wavelength sel)
-      (tau bonds validators B' hV' wavelength sel)
+theorem tauRef_prefix_of_validAppend
+    (append : ValidAppend ...)
+    (hOld : tauRef ... B ... = .ok oldOutput) :
+    ∃ suffix, tauRef ... B' ... = .ok (oldOutput ++ suffix)
 ```
 
-Stated as an `axiom` — a deliberate trusted formal boundary. The
-justification is a three-point proof sketch:
+This is proved with no axiom. `ValidAppend` makes the necessary protocol
+hypotheses explicit:
 
-1. **`FinalLeader_of_subBlocklace`** (proved): any finalized leader in
-   `B` is still finalized in `B'`, so the sequence of finalized-leader
-   epochs can only advance forward.
-2. **`no_conflicting_finals`**: the finalized leader for each wave is
-   unique, so there is no ambiguity in what `tau` appends.
-3. **`observes_of_subBlocklace`**: as `B` grows, every observation is
-   preserved, so `tau B'` appends a suffix to `tau B` rather than
-   reordering it.
+- `B'` is a `SubBlocklace` extension of `B`;
+- the replay domain and horizon only extend;
+- earlier `finalLeaderAt?` decisions are unchanged;
+- the old leader/approved-fragment epoch plan is a prefix of the new plan;
+- bonds, validators, wavelength, leader selector, and canonical key are shared.
+
+`SubBlocklace` alone is intentionally insufficient: newly learned blocks may
+change which earlier leader or approved fragment is visible. The former
+unconditional prefix axiom hid this requirement and has been removed.
+
+`OrderingProofs.lean` also proves `tauRef_deterministic`, `tauRef_nodup`, and
+`tauRef_predecessor_ordered`, and contains executable examples for tie-breaking,
+cycle rejection, a real two-wave formal blocklace, and prefix extension.
 
 ---
 
@@ -333,5 +345,7 @@ justification is a three-point proof sketch:
 | `no_conflicting_finals` | Safety invariant — no single Rust function; proved by contradiction |
 | `SubBlocklace` | Append-only blocklace growth model |
 | `FinalLeader_of_subBlocklace` | Finality monotonicity — once final, always final |
-| `tau` | `ordering.rs:tau` (419–) |
-| `tau_prefix_monotone` | Ledger append-only invariant; tested by `test_finality.rs:finalized_order_excludes_equivocations_the_leader_acknowledged` |
+| `CMRef.xsortRef` | `ordering.rs:xsort` |
+| `CMRef.previousFinalLeader?` | `ordering.rs:previous_final_leader` |
+| `CMRef.computeTauPlan`, `tauRef` | `ordering.rs:tau` |
+| `tauRef_prefix_of_validAppend` | Ledger append-only invariant under stable earlier finality/fragments |

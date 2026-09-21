@@ -270,26 +270,38 @@ theorem checkFinal_iff (bonds : NodeId → ℕ) (validators : Finset NodeId)
 
 /-! ### Executable τ reference model
 
-This independently implements the algorithm described informally in
-`Ordering.lean`: select the latest finalized leader, recursively include the
-latest earlier final leader ratified by it, then deterministically
-topologically sort the newly approved blocks. `key` is the canonical Rust
-block-hash encoding used only to break ties; every consensus predicate is
-decided over the formal `Blocklace` above. The component predicates have
-soundness lemmas; the composite ordering algorithm does NOT yet have a
-refinement theorem to KR4's opaque `tau`. This remains an acceptance gap. -/
+This is the executable counterpart of `consensus/ordering.rs`.  It selects the
+latest final leader, follows the previous-final-leader relation backwards,
+collects each leader's newly approved fragment, and applies a deterministic
+Kahn topological sort to that fragment.  The public epoch representation is
+intentional: it lets `OrderingProofs.lean` state the precise stability
+condition under which extending a blocklace preserves an already emitted
+prefix. -/
 
-private def insertByKey (key : BlockId → String) (value : BlockId) :
+/-- A graph interface used by the topological sorter.  Keeping the sorter
+independent of `Blocklace` also permits a direct executable cycle test. -/
+abbrev ParentMap := BlockId → Option (List BlockId)
+
+/-- Direct predecessors of a formal block. -/
+def blockParents (B : Blocklace) : ParentMap := fun block => do
+  let value ← B.lookup block
+  pure (value.content.predecessors.sort (· ≤ ·))
+
+/-- Insert using the same canonical-key tie breaker as Rust's `BTreeSet`
+ready queue. -/
+def insertByKey (key : BlockId → String) (value : BlockId) :
     List BlockId → List BlockId
   | [] => [value]
   | head :: tail =>
       if key value < key head then value :: head :: tail
       else head :: insertByKey key value tail
 
-private def sortByKey (key : BlockId → String) (values : List BlockId) : List BlockId :=
+def sortByKey (key : BlockId → String) (values : List BlockId) : List BlockId :=
   values.foldl (fun sorted value => insertByKey key value sorted) []
 
-private def topoOrder (B : Blocklace) (key : BlockId → String)
+/-- Candidate Kahn sort.  Only edges whose endpoints are both in `subset`
+contribute to readiness, exactly as in Rust `xsort`. -/
+def topoOrder (parents : ParentMap) (key : BlockId → String)
     (subset : List BlockId) : Except String (List BlockId) :=
   let subset := subset.eraseDups
   let rec loop (remaining ordered : List BlockId) (fuel : Nat) : Except String (List BlockId) :=
@@ -299,16 +311,51 @@ private def topoOrder (B : Blocklace) (key : BlockId → String)
         if remaining.isEmpty then pure ordered
         else
           let ready := remaining.filter fun block =>
-            match B.lookup block with
+            match parents block with
             | none => false
-            | some value => decide
-                (value.content.predecessors ∩ subset.toFinset ⊆ ordered.toFinset)
+            | some predecessors => predecessors.all fun predecessor =>
+                !subset.contains predecessor || ordered.contains predecessor
           match (sortByKey key ready).head? with
           | none => throw "tau subset contains a cycle or unknown block"
           | some next => loop (remaining.erase next) (ordered ++ [next]) fuel
   loop subset [] (subset.length + 1)
 
-private def finalLeaderAt? (bonds : NodeId → ℕ) (validators : Finset NodeId)
+/-- Check that two lists denote the same finite set. -/
+def sameDomain (left right : List BlockId) : Bool :=
+  left.all right.contains && right.all left.contains
+
+/-- Check the topological edge condition using list positions. -/
+def predecessorsBefore (parents : ParentMap) (subset order : List BlockId) : Bool :=
+  order.all fun child =>
+    match parents child with
+    | none => false
+    | some predecessors => predecessors.all fun predecessor =>
+        if subset.contains predecessor then
+          decide (order.idxOf predecessor < order.idxOf child)
+        else true
+
+/-- Semantic contract of a successful `xsort`: the output has no duplicates,
+contains exactly the requested vertices, and places every selected direct
+predecessor before its child. -/
+def IsTopologicalOrder (parents : ParentMap) (subset order : List BlockId) : Prop :=
+  order.Nodup ∧ sameDomain subset order = true ∧
+    predecessorsBefore parents subset order = true
+
+/-- Executable validation of `IsTopologicalOrder`. -/
+def checkTopological (parents : ParentMap) (subset order : List BlockId) : Bool :=
+  decide order.Nodup && sameDomain subset order &&
+    predecessorsBefore parents subset order
+
+/-- Certified executable topological sort.  The candidate is the Rust-shaped
+Kahn algorithm above; this boundary refuses to return an unchecked order. -/
+def xsortRef (parents : ParentMap) (key : BlockId → String)
+    (subset : List BlockId) : Except String (List BlockId) := do
+  let order ← topoOrder parents key subset
+  if checkTopological parents subset order then pure order
+  else throw "internal xsort result failed its topological contract"
+
+/-- Find the unique final-leader candidate for a wave. -/
+def finalLeaderAt? (bonds : NodeId → ℕ) (validators : Finset NodeId)
     (B : Blocklace) (hV : ValidBlocklace B) (wavelength : Nat)
     (sel : Nat → Option NodeId) (domain : List BlockId) (wave : Nat) : Option BlockId := do
   let candidates := domain.filter fun block =>
@@ -321,43 +368,80 @@ private def finalLeaderAt? (bonds : NodeId → ℕ) (validators : Finset NodeId)
     some candidate
   else none
 
-private def tauFromLeader (bonds : NodeId → ℕ) (validators : Finset NodeId)
+/-- One recursive τ epoch: its final leader and the fresh approved fragment
+emitted for that leader. -/
+structure TauEpoch where
+  leader : BlockId
+  blocks : List BlockId
+deriving DecidableEq, Repr
+
+/-- Flatten the epoch representation to the protocol output sequence. -/
+def flattenEpochs (epochs : List TauEpoch) : List BlockId :=
+  epochs.flatMap TauEpoch.blocks
+
+/-- Latest earlier final leader ratified by `leader`, if one exists. -/
+def previousFinalLeader? (bonds : NodeId → ℕ) (validators : Finset NodeId)
+    (B : Blocklace) (hV : ValidBlocklace B) (wavelength : Nat)
+    (sel : Nat → Option NodeId) (domain : List BlockId)
+    (wave : Nat) (leader : BlockId) : Option (Nat × BlockId) :=
+  (List.range wave).reverse.findSome? fun priorWave => do
+    let previous ← finalLeaderAt? bonds validators B hV wavelength sel domain priorWave
+    if checkRatifies bonds validators B hV leader previous then
+      some (priorWave, previous)
+    else none
+
+/-- Recursive previous-final-leader expansion.  Recursion is structural on
+`fuel`; every recursive call consumes one unit, so termination is checked by
+Lean rather than assumed. -/
+def tauPlanFromLeader (bonds : NodeId → ℕ) (validators : Finset NodeId)
     (B : Blocklace) (hV : ValidBlocklace B) (wavelength : Nat)
     (sel : Nat → Option NodeId) (domain : List BlockId)
     (key : BlockId → String) :
-    Nat → Nat → BlockId → Except String (List BlockId)
+    Nat → Nat → BlockId → Except String (List TauEpoch)
   | 0, _, _ => throw "tau recursion fuel exhausted"
   | fuel + 1, wave, leader => do
-      let mut orderPrefix : List BlockId := []
-      if wave > 0 then
-        for priorWave in (List.range wave).reverse do
-          if let some previous :=
-              finalLeaderAt? bonds validators B hV wavelength sel domain priorWave then
-            if checkRatifies bonds validators B hV leader previous then
-              orderPrefix ← tauFromLeader bonds validators B hV wavelength sel domain key
-                fuel priorWave previous
-              break
+      let priorEpochs ← match previousFinalLeader? bonds validators B hV wavelength sel
+          domain wave leader with
+        | none => pure []
+        | some (priorWave, previous) =>
+            tauPlanFromLeader bonds validators B hV wavelength sel domain key
+              fuel priorWave previous
+      let orderPrefix := flattenEpochs priorEpochs
       let approved := domain.filter fun block =>
         checkApproves B hV leader block && !orderPrefix.contains block
-      let suffix ← topoOrder B key approved
-      pure (orderPrefix ++ suffix)
+      let suffix ← xsortRef (blockParents B) key approved
+      pure (priorEpochs ++ [{ leader := leader, blocks := suffix }])
 
-/-- Independently compute a canonical τ reference result through the same
-KR2/KR4 executable predicates used by finality replay. Equivalence to the
-abstract KR4 `tau` has not been proved. -/
+/-- Compute the latest leader (if any) and the explicit recursive epoch plan.
+Unlike the legacy `computeTau` API, absence of a final leader is the valid
+empty output used by Rust's `tau`. -/
+def computeTauPlan (bonds : NodeId → ℕ) (validators : Finset NodeId)
+    (B : Blocklace) (hV : ValidBlocklace B) (wavelength : Nat)
+    (sel : Nat → Option NodeId) (domain : List BlockId)
+    (key : BlockId → String) (throughWave : Nat) :
+    Except String (Option BlockId × List TauEpoch) := do
+  let waves := (List.range (throughWave + 1)).reverse
+  match waves.findSome?
+      (finalLeaderAt? bonds validators B hV wavelength sel domain) with
+  | none => pure (none, [])
+  | some latest =>
+      let latestWave := waveOfRound (blockDepth B hV latest) wavelength
+      let epochs ← tauPlanFromLeader bonds validators B hV wavelength sel domain key
+        (throughWave + 2) latestWave latest
+      pure (some latest, epochs)
+
+/-- Backward-compatible trace-replay API: return the latest leader together
+with the flattened, certified epoch plan. `Ordering.tauRef` additionally
+accepts the valid empty result when no leader has finalized. -/
 def computeTau (bonds : NodeId → ℕ) (validators : Finset NodeId)
     (B : Blocklace) (hV : ValidBlocklace B) (wavelength : Nat)
     (sel : Nat → Option NodeId) (domain : List BlockId)
     (key : BlockId → String)
     (throughWave : Nat) : Except String (BlockId × List BlockId) := do
-  let waves := (List.range (throughWave + 1)).reverse
-  let latest ← match waves.findSome?
-      (finalLeaderAt? bonds validators B hV wavelength sel domain) with
-    | some block => pure block
-    | none => throw "Lean found no finalized leader for tau"
-  let latestWave := waveOfRound (blockDepth B hV latest) wavelength
-  let order ← tauFromLeader bonds validators B hV wavelength sel domain key
-    (throughWave + 2) latestWave latest
-  pure (latest, order)
+  let (latest, epochs) ← computeTauPlan bonds validators B hV wavelength sel
+    domain key throughWave
+  match latest with
+  | none => throw "Lean found no finalized leader for tau"
+  | some leader => pure (leader, flattenEpochs epochs)
 
 end CordialMiners.CMRef
