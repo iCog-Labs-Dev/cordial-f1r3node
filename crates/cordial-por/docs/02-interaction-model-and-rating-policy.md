@@ -320,27 +320,31 @@ Recommended round lifecycle:
 
 ```text
 1. ReputationState_k exports weights W_k
-2. Cordial Miners uses W_k for weighted finality and tau ordering in round k
-3. f1r3node and the adapter observe protocol events in round k
-4. Interaction policy admits evidence-backed ratings for round k
-5. cordial-por batches ratings for round k
-6. cordial-por computes ReputationState_{k+1}
-7. a ReputationBlock_{k+1} can be built and audited
-8. ReputationState_{k+1} exports weights W_{k+1}
-9. Cordial Miners uses W_{k+1} in the next round
+2. Cordial Miners uses W_k for weighted finality and tau ordering in wave k
+3. f1r3node and the adapter observe protocol events during wave k
+4. Cordial Miners finalizes wave k
+5. Interaction policy admits evidence-backed interactions from finalized wave k
+6. cordial-por maps finalized wave k to rating round k+1
+7. cordial-por batches ratings and computes ReputationState_{k+1}
+8. a ReputationBlock_{k+1} can be built and audited
+9. ReputationState_{k+1} exports weights W_{k+1}
+10. Cordial Miners uses W_{k+1} in subsequent waves
 ```
 
 The important timing rule is:
 
 ```text
-round k interactions
-  -> round k rating batch
-  -> round k reputation update
-  -> round k+1 Cordial Miners weights
+wave k interactions
+  -> finalized wave k
+  -> rating round k+1
+  -> ReputationState k+1
+  -> subsequent Cordial Miners weights
 ```
 
-Weights must not change halfway through the same consensus round that produced
-the ratings. A one-round delay keeps replay and consensus behavior stable.
+Ratings must not affect the weights used to finalize the wave that produced
+them. Advancing the finalized wave index with
+`rating_round_from_finalized_wave` keeps this boundary explicit and prevents a
+circular dependency between ratings and finality.
 
 ---
 
