@@ -11,6 +11,16 @@ use crate::{
     types::{RatingBatch, RatingRecord, ReputationRound},
 };
 
+/// Return the PoR round opened by a finalized Cordial Miners wave.
+///
+/// Wave `k` is finalized using reputation state `R_k`. Its admitted
+/// interactions are then processed in rating round `k + 1`, producing
+/// reputation state `R_(k+1)` for subsequent consensus waves. The caller must
+/// invoke this only after Cordial Miners has established finality for `wave`.
+pub fn rating_round_from_finalized_wave(wave: u64) -> Result<ReputationRound, PorError> {
+    wave.checked_add(1).ok_or(PorError::RatingRoundOverflow)
+}
+
 /// Validate a single rating record against the protocol configuration.
 ///
 /// This checks the record-level constraints that do not depend on the target
