@@ -1,43 +1,22 @@
-//! Cryptographic alignment with f1r3node (Phase 3.4).
+//! Cryptographic primitives and adapter-local snapshot hashing.
 //!
-//! f1r3node uses:
-//! - **Blake2b-256** for block hashing
-//! - **Secp256k1 (ECDSA)** for primary validator signatures
-//! - ED25519 as a secondary algorithm
+//! [`Hasher`], [`Signer`], and [`Verifier`] provide Blake2b-256/SHA-256
+//! hashing and Secp256k1/Ed25519 signatures. Sharing these primitives with
+//! f1r3node does not make different block encodings hash-compatible.
 //!
-//! The core blocklace crate uses SHA-256 + ED25519 because they're standard,
-//! audited, and ship in every Rust toolchain. For f1r3node wire parity we
-//! need the other two available.
+//! There are three separate hash domains:
 //!
-//! This module provides:
+//! - [`compute_adapter_snapshot_hash`] hashes a deterministic, selected-field
+//!   layout of the adapter-owned [`BlockMessage`]. It includes the sender to
+//!   distinguish otherwise identical snapshots from different validators.
+//! - Cordial's [`hash_content`] hashes the internal [`BlockContent`]; local
+//!   adapter messages carry signatures over this internal content hash.
+//! - f1r3node's `casper::rust::util::proto_util::hash_block` hashes the original
+//!   protobuf representation. [`crate::grpc_ingest::GrpcBlockMapper::from_protobuf`]
+//!   uses that function and verifies the wire signature before lossy translation.
 //!
-//! - A [`Hasher`] trait with two implementations ([`Sha256Hasher`],
-//!   [`Blake2b256Hasher`]) for 32-byte content hashing.
-//! - [`Signer`] / [`Verifier`] traits with ED25519 and Secp256k1 impls.
-//! - [`compute_block_hash`] — an f1r3node-style block hash that mixes the
-//!   **sender** into the hash input. This fixes the content-hash-collision
-//!   issue flagged in `snapshot.rs`: two blocks with identical
-//!   `BlockContent` but different creators now produce different block
-//!   hashes, matching how f1r3node's `hash_block()` works.
-//!
-//! ## What this module does NOT do
-//!
-//! - It is **not byte-for-byte compatible** with f1r3node's `hash_block()`.
-//!   That function hashes the **protobuf-encoded** header/body bytes, which
-//!   requires `prost` and f1r3node's proto schemas. Our implementation
-//!   hashes a deterministic layout of the mirror struct fields directly.
-//!   The guarantee we provide is: *same logical content + sender → same
-//!   hash*, and *different sender or content → different hash*. That is
-//!   sufficient for snapshot-index correctness and for unit tests.
-//!
-//! - It does **not** swap out the core blocklace's crypto. `Block.identity`
-//!   still uses SHA-256 + ED25519 as before. The crypto bridge only applies
-//!   at the f1r3node interface, where we need f1r3node's wire format.
-//!
-//! When the `models` path dependency is enabled later (same cutover as the
-//! mirror structs in `block_translation`), we'll add a third `Hasher`
-//! implementation that hashes the real `prost`-encoded bytes for full
-//! byte-level wire compatibility.
+//! The adapter snapshot hash is neither the f1r3node wire hash nor a digest of
+//! every message field. Never use it to validate network protobuf blocks.
 
 use blake2::Blake2b;
 use blake2::digest::consts::U32;
@@ -58,8 +37,7 @@ use cordial_miners_core::types::{BlockContent, NodeId}; // The data types we nee
 
 /// Trait for 32-byte content hashers.
 ///
-/// Implemented for [`Sha256Hasher`] (blocklace default) and
-/// [`Blake2b256Hasher`] (f1r3node compatibility).
+/// Implemented for [`Sha256Hasher`] and [`Blake2b256Hasher`].
 pub trait Hasher {
     /// Name of the algorithm, e.g. `"sha256"` or `"blake2b256"`.
     fn name(&self) -> &'static str;
@@ -68,7 +46,7 @@ pub trait Hasher {
     fn hash(&self, input: &[u8]) -> [u8; 32];
 }
 
-/// SHA-256 hasher. Matches what the blocklace core crate uses.
+/// SHA-256 hasher for legacy content hashing.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Sha256Hasher;
 
@@ -270,24 +248,25 @@ impl Verifier for Secp256k1 {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Block hash (f1r3node-compatible)
+// Adapter-local snapshot hash
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Compute a 32-byte block hash the way f1r3node would, using Blake2b-256
-/// over a canonical representation of the `BlockMessage` that mixes the
-/// **sender** into the input.
+/// Compute a deterministic adapter-local snapshot hash using Blake2b-256.
 ///
-/// This fixes the content-hash-collision issue called out in
-/// `snapshot.rs`: two blocks with identical `BlockContent` but different
-/// creators now produce different block hashes, which is what f1r3node's
-/// `casper::util::proto_util::hash_block()` also does.
+/// The sender participates in the hash so otherwise identical snapshots from
+/// different validators have distinct digests. This selected-field encoding
+/// is not f1r3node's protobuf encoding and must not be used for wire validation.
+///
+/// The hash excludes `block_hash`, `sig`, `justifications`,
+/// `body.rejected_deploys`, `body.extra_bytes`, and deploy fields other than
+/// those listed below. It is not a commitment to the entire message.
 ///
 /// ## Layout (deterministic)
 ///
 /// All fields are length-prefixed with an 8-byte little-endian length
 /// where they are variable-size, and concatenated in this order:
 ///
-/// 1. `header.parents_hash_list` — count (u64 LE), then each hash's bytes
+/// 1. `header.parents_hash_list` — count (u64 LE), then each hash's len + bytes
 /// 2. `header.timestamp` (i64 LE)
 /// 3. `header.version` (i64 LE)
 /// 4. `header.extra_bytes` (len + bytes)
@@ -307,10 +286,9 @@ impl Verifier for Secp256k1 {
 ///
 /// Hash = `Blake2b256(layout_bytes)`.
 ///
-/// See the module-level docs for the note on why this is not byte-for-byte
-/// identical to f1r3node's protobuf-encoded version, only logically
-/// equivalent for snapshot-index correctness.
-pub fn compute_block_hash(msg: &BlockMessage) -> [u8; 32] {
+/// Use [`crate::grpc_ingest::GrpcBlockMapper::from_protobuf`] for f1r3node
+/// wire hash and signature validation.
+pub fn compute_adapter_snapshot_hash(msg: &BlockMessage) -> [u8; 32] {
     let mut buf: Vec<u8> = Vec::new();
 
     // Header
