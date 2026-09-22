@@ -7,7 +7,7 @@
 //! boundary only: no f1r3node live networking, no adapter event
 //! extraction, and no RSpace execution are involved.
 //!
-//! Two tests, each independently reviewable:
+//! Three tests, each independently reviewable:
 //! - `por_weights_drive_cordial_miners_weighted_finality` drives four
 //!   validators through every public pipeline stage (batch -> matrix ->
 //!   normalize -> Liquid-Rank -> blend -> clamp), exports weights via
@@ -17,6 +17,9 @@
 //!   the weighted result actually depends on PoR-derived reputation, by
 //!   constructing a case where a count-based supermajority of witnesses
 //!   fails the weight-based check.
+//! - `por_weights_drive_cordial_miners_weighted_tau_ordering` proves the
+//!   same PoR-derived weights also drive `weighted_tau`, not just
+//!   `weighted_super_ratifies`.
 //!
 //! One property of the pipeline is easy to miss when writing rating
 //! fixtures: `normalize_recipient_group` normalizes each rating
@@ -36,7 +39,10 @@ use cordial_por::{
     replay_reputation_transition, reputation_weights,
 };
 
-use cordial_miners_core::consensus::{is_supermajority, super_ratifies, weighted_super_ratifies};
+use cordial_miners_core::consensus::{
+    approved_blocks_for_leader, is_supermajority, super_ratifies, weighted_super_ratifies,
+    weighted_tau, xsort,
+};
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, Blocklace, NodeId};
 
@@ -194,10 +200,16 @@ fn por_weights_drive_cordial_miners_weighted_finality() {
     // export weights.
     let weights: HashMap<NodeId, u64> = reputation_weights(&state);
 
-    assert_eq!(weights.len(), 3);
-    assert!(!weights.contains_key(&d)); // excluded validator not exported
-    assert!(weights[&a] > weights[&b]);
-    assert!(weights[&b] > weights[&c]);
+    // Exact equality, not just length/ordering: an exporter that corrupted
+    // every value (e.g. squaring, doubling) would still pass a length or
+    // ordering check. These values are the pipeline's real fixed-point
+    // clamp output for this fixture (A: contribution 100 -> blend 80 ->
+    // clamp 63; B: 75 -> 65 -> 55; C: 50 -> 50 -> 45), so this also pins the
+    // pipeline's numeric output against future accidental changes upstream.
+    assert_eq!(
+        weights,
+        HashMap::from([(a.clone(), 63), (b.clone(), 55), (c.clone(), 45)])
+    );
 
     // feed the exported weights into a Cordial Miners
     // weighted API. Leader = C (lowest active weight), ratified by A and B
@@ -282,7 +294,15 @@ fn weighted_finality_diverges_from_unweighted_supermajority() {
 
     // All four validators remain active in this scenario (no ejection).
     let skewed_weights: HashMap<NodeId, u64> = reputation_weights(&skewed_state);
-    assert_eq!(skewed_weights.len(), 4);
+    assert_eq!(
+        skewed_weights,
+        HashMap::from([
+            (a.clone(), 74),
+            (b.clone(), 45),
+            (c.clone(), 45),
+            (d.clone(), 45),
+        ])
+    );
 
     let leader2 = block(1, 10, HashSet::new()); // A leads
     let mut bl2 = Blocklace::new();
@@ -320,4 +340,93 @@ fn weighted_finality_diverges_from_unweighted_supermajority() {
         &leader2,
         &skewed_weights
     ));
+}
+
+/// Proves weighted tau ordering also consumes PoR-derived weights, not
+/// just weighted finality. Reuses the same C-leads/A+B-witness fixture shape as
+/// `por_weights_drive_cordial_miners_weighted_finality`, extended one round
+/// further to match the 3-round structure `weighted_tau` expects for a
+/// wavelength of 3 mirrored from cordial-miners-core's own
+/// `weighted_tau_returns_xsort_of_approved_blocks_for_single_weighted_final_leader`.
+#[test]
+fn por_weights_drive_cordial_miners_weighted_tau_ordering() {
+    let a = node(1);
+    let b = node(2);
+    let c = node(3);
+    let d = node(4);
+
+    let previous = ReputationVector {
+        round: 0,
+        values: vec![
+            ReputationEntry::new(a.clone(), 50),
+            ReputationEntry::new(b.clone(), 50),
+            ReputationEntry::new(c.clone(), 50),
+            ReputationEntry::new(d.clone(), 50),
+        ],
+    };
+
+    let config = PorConfig {
+        scale: 100,
+        initial_reputation: 50,
+        liquid_rank_alpha: 60,
+        minimum_rating: 0,
+        maximum_rating: 100,
+        missing_entry_policy: MissingEntryPolicy::CarryForward,
+    };
+
+    let raw_ratings = vec![
+        RatingRecord::new(1, node(2), node(1), 100, vec![0xAB]), // B rates A
+        RatingRecord::new(1, node(3), node(1), 100, vec![0xAB]), // C rates A
+        RatingRecord::new(1, node(1), node(2), 100, vec![0xAB]), // A rates B
+        RatingRecord::new(1, node(3), node(2), 0, vec![0xAB]),   // C rates B
+        RatingRecord::new(1, node(1), node(3), 100, vec![0xAB]), // A rates C
+    ];
+
+    let audited = replay_reputation_transition(&previous, &raw_ratings, 1, &config)
+        .expect("replay successful");
+
+    let mut state = ReputationState::new(0);
+    state
+        .apply_reputation_vector(ReputationVector {
+            round: audited.round,
+            values: audited.entries,
+        })
+        .expect("canonical vector");
+
+    state.eject_validator(&d).expect("d is known to the state");
+
+    let weights: HashMap<NodeId, u64> = reputation_weights(&state);
+
+    assert_eq!(
+        weights,
+        HashMap::from([(a.clone(), 63), (b.clone(), 55), (c.clone(), 45)])
+    );
+
+    // Round 0: leader block by C.
+    let leader = block(3, 1, HashSet::new());
+    let mut bl = Blocklace::new();
+    insert(&mut bl, &leader);
+
+    // Round 1: A and B observe the leader.
+    let wa = block(1, 2, HashSet::from([leader.identity.clone()]));
+    let wb = block(2, 3, HashSet::from([leader.identity.clone()]));
+    insert(&mut bl, &wa);
+    insert(&mut bl, &wb);
+
+    // Round 2: A and B observe each other's round-1 blocks.
+    let preds = HashSet::from([wa.identity.clone(), wb.identity.clone()]);
+    let ra = block(1, 4, preds.clone());
+    let rb = block(2, 5, preds);
+    insert(&mut bl, &ra);
+    insert(&mut bl, &rb);
+
+    fn leader_c(_wave: u64) -> Option<NodeId> {
+        Some(node(3))
+    }
+
+    let approved = approved_blocks_for_leader(&bl, &leader.identity);
+    let ordered = weighted_tau(&bl, 3, &weights, leader_c).expect("weighted tau succeeds");
+
+    assert!(!ordered.is_empty());
+    assert_eq!(ordered, xsort(&approved).unwrap());
 }
