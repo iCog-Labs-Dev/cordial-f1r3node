@@ -5,6 +5,7 @@ use std::fmt;
 pub enum PorError {
     InvalidConfiguration(String),
     InvalidRatingRound,
+    RatingRoundOverflow,
     SelfRating,
     RatingBelowMinimum,
     RatingAboveMaximum,
@@ -48,6 +49,9 @@ impl fmt::Display for PorError {
             }
             Self::InvalidRatingRound => {
                 write!(f, "rating round does not match the target batch round")
+            }
+            Self::RatingRoundOverflow => {
+                write!(f, "finalized wave cannot advance to a rating round")
             }
             Self::SelfRating => write!(f, "rating cannot be self-issued"),
             Self::RatingBelowMinimum => write!(f, "rating score is below the configured minimum"),
