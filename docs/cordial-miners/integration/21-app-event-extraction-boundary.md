@@ -277,5 +277,5 @@ cargo test -p cordial-f1r3node-adapter --test test_app_event_extractor
 
 ## Next Step
 
-The next implementation slice should compose scanned block deploy metadata with
-`OrderedFinalizedOutput` in one convenience helper that returns `Vec<AppEvent>`.
+The next implemented slice composes this extractor with block scanning in
+[24-app-event-extraction-pipeline.md](./24-app-event-extraction-pipeline.md).

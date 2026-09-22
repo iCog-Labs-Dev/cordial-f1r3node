@@ -83,6 +83,9 @@ and easy to extend as new implementation notes are added.
 24. [23-app-event-block-scan.md](./23-app-event-block-scan.md)
     - Documents scanning adapter block messages into `AppEventBlockScan`
     - Explains block-local deploy ordering, non-fatal envelope errors, and the parser/extractor relationship
+25. [24-app-event-extraction-pipeline.md](./24-app-event-extraction-pipeline.md)
+    - Documents the one-call adapter helper from finalized output plus block messages into `AppEvent`s
+    - Explains pipeline ordering, fatal errors, non-fatal envelope diagnostics, and `From`-based error conversion
 
 ## Scope Of This Track
 
@@ -101,4 +104,4 @@ Future notes in this folder are expected to cover:
 - transport wiring for ordered output (gRPC / IPC serving of `OrderedFinalizedOutput`)
 - push / notification delivery for ordered output consumers
 - proposer-facing integration only after the consumer boundary is validated
-- one-call composition from finalized ordered output plus block messages into `Vec<AppEvent>`
+- runtime-side persistence and replay of extracted `AppEvent`s

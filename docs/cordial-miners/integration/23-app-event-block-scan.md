@@ -187,6 +187,6 @@ cargo test -p cordial-f1r3node-adapter --test test_app_event_block_scan
 
 ## Next Step
 
-The next implementation slice should provide a small composition helper that
-takes finalized ordered output plus the corresponding block messages and returns
-the final `Vec<AppEvent>` in one call.
+The next implemented slice composes this scanner with finalized-output
+extraction in
+[24-app-event-extraction-pipeline.md](./24-app-event-extraction-pipeline.md).

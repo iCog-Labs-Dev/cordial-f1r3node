@@ -21,6 +21,7 @@
 
 pub mod app_event_block_scan;
 pub mod app_event_envelope;
+pub mod app_event_extraction_pipeline;
 pub mod app_event_extractor;
 pub mod block_translation;
 pub mod casper_adapter;
