@@ -9,6 +9,7 @@ pub mod block;
 pub mod clamp;
 pub mod config;
 pub mod error;
+pub mod interactions;
 pub mod liquid_rank;
 pub mod matrix;
 pub mod normalization;
@@ -21,6 +22,9 @@ pub mod weights;
 pub use audit::{replay_reputation_transition, verify_reputation_transition};
 pub use config::{MissingEntryPolicy, PorConfig};
 pub use error::PorError;
+pub use interactions::{
+    AdmittedInteraction, InteractionEvidence, InteractionKind, admit_interaction_evidence,
+};
 pub use liquid_rank::compute_liquid_rank_contribution;
 pub use matrix::build_rating_matrix;
 pub use normalization::normalize_rating_matrix;
