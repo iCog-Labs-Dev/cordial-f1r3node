@@ -153,17 +153,13 @@ Then update `F1r3RspaceRuntime::system_deploy_to_f1r3node` to pass the real `inv
 
 ---
 
-## Task 6 — Byte-for-byte block hash parity
+## Task 6 — Keep wire and adapter hash domains separate
 
-**Status:** Our `compute_block_hash` is logically equivalent but not byte-identical to f1r3node's `hash_block`.
+**Status:** `GrpcBlockMapper::from_protobuf` calls f1r3node's `casper::rust::util::proto_util::hash_block` on the original message and verifies its wire signature before translation. The `models` and `casper` path dependencies are enabled.
 
-**Why it matters.** f1r3node's `hash_block` (in `casper/src/rust/util/proto_util.rs:391`) computes Blake2b-256 over the *protobuf-encoded* header and body bytes. Ours hashes a deterministic length-prefixed layout of the mirror struct fields. The result is the same conceptually (sender + content + shard all contribute) but the bytes differ. This means a block hash we compute in `blocklace-f1r3node::compute_block_hash` won't match what f1r3node's machinery would compute for the same logical block.
+**Local compatibility path.** `compute_adapter_snapshot_hash` hashes a deterministic, selected-field layout of the adapter mirror. It is not the f1r3node wire hash and does not commit to all message fields. `from_adapter_message` accepts this local snapshot hash or Cordial's internal `hash_content`; signatures on that path cover the internal content hash.
 
-**Where it bites.** Anywhere downstream code expects to compare hashes between our adapter output and a hash f1r3node already computed. For now, no such code path exists in our integration — we always re-derive hashes on each side.
-
-**What to build.** When/if we enable the `models` path dep in `blocklace-f1r3node` (Task 5), `compute_block_hash` can call `header.to_proto().encode_to_vec()` and `body.to_proto().encode_to_vec()` directly, matching f1r3node's layout exactly. Add a test that pins our output to f1r3node's `hash_block` for a known fixture.
-
-**Difficulty:** Small once Task 5 is done; Medium otherwise (mirror prost serialization manually, brittle).
+**Tests.** `test_grpc_ingest.rs` uses `ValidatorIdentity::sign_block` for real f1r3node wire validation, rejects tampered wire fields/signatures and substitution of either local hash, and separately tests local adapter compatibility. Local helper tests do not establish wire interoperability.
 
 ---
 

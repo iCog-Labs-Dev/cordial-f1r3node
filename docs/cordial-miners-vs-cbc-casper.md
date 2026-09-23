@@ -65,7 +65,7 @@ Both protocols achieve BFT safety under < 1/3 Byzantine validators with mathemat
 | **Block format translation** | **Complete** (Phase 3.5) | `block_to_message` / `message_to_block` in `blocklace-f1r3node::block_translation`. Packs predecessors into both `parents_hash_list` and `justifications`; reverse takes union |
 | **CasperSnapshot construction** | **Complete** (Phase 3.3) | `build_snapshot(&Blocklace, &bonds, shard_conf, shard_id)` reuses every Phase 1/2 primitive to assemble the snapshot. Simplified `DagRepresentation` with plain `HashMap`/`HashSet`/`BTreeMap` |
 | **CasperShardConf mirror** | **Complete** (Phase 3.6) | Full 25-field `CasperShardConf` + nested `FinalizerConf`, defaults match f1r3node. `from_cordial(&DeployPoolConfig, name)` and `to_snapshot_conf()` |
-| **Crypto alignment** | **Complete** (Phase 3.4) | `Hasher`, `Signer`, `Verifier` traits. Blake2b-256 (pinned bytewise to f1r3node's `Blake2b::<U32>` output), Secp256k1 (k256 ECDSA), ED25519. `compute_block_hash` mixes sender into hash input |
+| **Crypto alignment** | **Complete** (Phase 3.4) | `Hasher`, `Signer`, `Verifier` traits. Blake2b-256 (pinned bytewise to f1r3node's `Blake2b::<U32>` output), Secp256k1 (k256 ECDSA), ED25519. `compute_adapter_snapshot_hash` includes the sender in an adapter-local digest; wire validation uses upstream `hash_block` |
 | **Casper trait adapter** | **Complete** (Phase 3.1 / 3.2) | `CordialCasper` + `CordialMultiParentCasper` local mirror traits; `CordialCasperAdapter` implements both. Method-for-method parity with f1r3node except RSpace-coupled methods (handled by Phase 3 extension) |
 | **Real RSpace runtime adapter** | **Complete** (Phase 3 extension) | Third workspace crate `blocklace-f1r3rspace` delegates `RuntimeManager::execute_block` to f1r3node's real `RuntimeManager::compute_state`. Path-depends on f1r3node's `casper`, `models`, `rholang`, `rspace_plus_plus`, `crypto`, `shared`. Requires `protoc` and workspace `.cargo/config.toml` for gxhash + Rholang stack size |
 | Test suite | Complete | **252 tests** — 159 in `blocklace` + 80 in `blocklace-f1r3node` + 13 in `blocklace-f1r3rspace` |
@@ -374,7 +374,7 @@ Checks eliminated by blocklace structure: justification regression, separate par
 
 **Implemented in**: `crates/blocklace-f1r3node/src/crypto_bridge.rs` (Phase 3.4)
 
-Option 1 (trait abstraction) was chosen. `Hasher`, `Signer`, and `Verifier` traits live in the adapter crate with `Sha256Hasher`, `Blake2b256Hasher`, `Ed25519`, and `Secp256k1` implementations. The core `blocklace` crate keeps SHA-256 + ED25519 as its native crypto; the adapter crate provides the f1r3node-compatible primitives. `compute_block_hash(&BlockMessage)` produces a Blake2b-256 hash mixing the sender into the input — this resolves the content-hash collision flagged in `snapshot.rs` where blocks with identical `BlockContent` but different creators would collapse.
+Option 1 (trait abstraction) was chosen. `Hasher`, `Signer`, and `Verifier` traits live in the adapter crate with `Sha256Hasher`, `Blake2b256Hasher`, `Ed25519`, and `Secp256k1` implementations. The core defaults to Blake2b-256 + Secp256k1, with SHA-256 + Ed25519 available for legacy use. `compute_adapter_snapshot_hash(&BlockMessage)` hashes selected adapter fields including the sender, distinguishing otherwise identical snapshots from different validators. This local digest is not a f1r3node wire hash. `GrpcBlockMapper::from_protobuf` validates the original protobuf message with upstream `proto_util::hash_block` and verifies its wire signature before translation.
 
 Deferred: byte-for-byte parity with f1r3node's `hash_block` requires prost-encoded header/body bytes, which requires enabling the `models` path dependency. Our implementation is logically equivalent but not byte-equal.
 
@@ -493,7 +493,7 @@ Branch: `phase3/f1r3node-integration`. Repo reorganized into a Cargo workspace w
 | 3.1 `Casper` trait implementation (adapter) | Phase 1, Phase 2 | **COMPLETE** (`CordialCasper` trait + `CordialCasperAdapter`) |
 | 3.2 `MultiParentCasper` trait implementation | 3.1 | **COMPLETE** (`CordialMultiParentCasper` trait; same adapter impls it) |
 | 3.3 `CasperSnapshot` construction from blocklace state | 3.1 | **COMPLETE** (`build_snapshot`, 341 lines, 16 tests) |
-| 3.4 Cryptographic alignment (Blake2b, Secp256k1 option) | -- | **COMPLETE** (`Hasher`/`Signer`/`Verifier` traits + `compute_block_hash`, 22 tests) |
+| 3.4 Cryptographic alignment (Blake2b, Secp256k1 option) | -- | **COMPLETE** (`Hasher`/`Signer`/`Verifier` traits + `compute_adapter_snapshot_hash`, 22 tests) |
 | 3.5 Block format translation (`Block` <-> `BlockMessage`) | 3.1 | **COMPLETE** (`block_to_message` / `message_to_block`, 538 lines, 13 tests) |
 | 3.6 Configuration (`CasperShardConf` equivalent) | 3.1 | **COMPLETE** (`CasperShardConf` + `FinalizerConf`, 239 lines, 8 tests) |
 
