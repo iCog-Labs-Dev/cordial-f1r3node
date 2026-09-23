@@ -24,6 +24,7 @@ pub use config::{MissingEntryPolicy, PorConfig};
 pub use error::PorError;
 pub use interactions::{
     AdmittedInteraction, InteractionEvidence, InteractionKind, admit_interaction_evidence,
+    score_admitted_interaction,
 };
 pub use liquid_rank::compute_liquid_rank_contribution;
 pub use matrix::build_rating_matrix;

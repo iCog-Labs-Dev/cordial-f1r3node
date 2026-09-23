@@ -7,8 +7,8 @@
 use cordial_miners_core::NodeId;
 
 use crate::{
-    error::PorError, ratings::rating_round_from_finalized_wave, state::ReputationState,
-    types::ReputationRound,
+    PorConfig, RatingScore, error::PorError, ratings::rating_round_from_finalized_wave,
+    state::ReputationState, types::ReputationRound,
 };
 
 /// Protocol interaction categories eligible for ordinary reputation ratings.
@@ -103,4 +103,22 @@ fn state_contains(state: &ReputationState, node_id: &NodeId) -> bool {
         .entries
         .binary_search_by(|entry| entry.node_id.cmp(node_id))
         .is_ok()
+}
+
+pub fn score_admitted_interaction(
+    interaction: &AdmittedInteraction,
+    config: &PorConfig,
+) -> Result<RatingScore, PorError> {
+    if config.minimum_rating > config.maximum_rating {
+        return Err(PorError::InvalidConfiguration(
+            "minimum rating must not exceed maximum rating".to_string(),
+        ));
+    };
+
+    match interaction.evidence().kind {
+        InteractionKind::BlockProduction
+        | InteractionKind::CordialReferences
+        | InteractionKind::ExecutionResult
+        | InteractionKind::DeployInclusion => Ok(config.maximum_rating),
+    }
 }
