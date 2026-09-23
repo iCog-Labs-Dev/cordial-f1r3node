@@ -40,6 +40,7 @@ pub mod ordered_output;
 pub mod ordered_output_file;
 pub mod ordered_output_server;
 pub mod por_finality;
+pub mod por_interactions;
 pub mod proposer;
 pub mod repository;
 pub mod rspace_runtime;
