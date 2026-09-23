@@ -1,6 +1,7 @@
 use cordial_miners_core::NodeId;
 use cordial_por::{
-    InteractionEvidence, InteractionKind, PorError, ReputationState, admit_interaction_evidence,
+    InteractionEvidence, InteractionKind, PorConfig, PorError, ReputationState,
+    admit_interaction_evidence, build_rating_from_interaction, score_admitted_interaction,
 };
 
 const FINALIZED_WAVE: u64 = 4;
@@ -122,4 +123,85 @@ fn rejects_ejected_recipient() {
         admit_interaction_evidence(evidence(), &state),
         Err(PorError::EjectedInteractionRecipient)
     );
+}
+
+#[test]
+fn scores_every_admitted_interaction_kind_at_the_configured_maximum() {
+    let config = PorConfig {
+        maximum_rating: 777,
+        ..PorConfig::default()
+    };
+
+    for kind in [
+        InteractionKind::BlockProduction,
+        InteractionKind::CordialReferences,
+        InteractionKind::ExecutionResult,
+        InteractionKind::DeployInclusion,
+    ] {
+        let mut evidence = evidence();
+        evidence.kind = kind;
+        let admitted = admit_interaction_evidence(evidence, &state()).unwrap();
+
+        assert_eq!(score_admitted_interaction(&admitted, &config), Ok(777));
+    }
+}
+
+#[test]
+fn scoring_rejects_inverted_rating_bounds() {
+    let config = PorConfig {
+        minimum_rating: 11,
+        maximum_rating: 10,
+        ..PorConfig::default()
+    };
+    let admitted = admit_interaction_evidence(evidence(), &state()).unwrap();
+
+    assert!(matches!(
+        score_admitted_interaction(&admitted, &config),
+        Err(PorError::InvalidConfiguration(_))
+    ));
+}
+
+#[test]
+fn builds_rating_record_from_admitted_interaction() {
+    let evidence = evidence();
+    let signature = vec![1, 2, 3];
+    let config = PorConfig {
+        maximum_rating: 900,
+        ..PorConfig::default()
+    };
+    let admitted = admit_interaction_evidence(evidence.clone(), &state()).unwrap();
+
+    let rating = build_rating_from_interaction(admitted, signature.clone(), &config).unwrap();
+
+    assert_eq!(rating.round, evidence.round);
+    assert_eq!(rating.rater, evidence.rater);
+    assert_eq!(rating.recipient, evidence.recipient);
+    assert_eq!(rating.score, config.maximum_rating);
+    assert_eq!(rating.signature, signature);
+    assert_eq!(rating.interaction_ref, Some(evidence.evidence_ref));
+}
+
+#[test]
+fn rating_construction_rejects_empty_signature() {
+    let admitted = admit_interaction_evidence(evidence(), &state()).unwrap();
+
+    assert_eq!(
+        build_rating_from_interaction(admitted, Vec::new(), &PorConfig::default()),
+        Err(PorError::MissingRatingSignature)
+    );
+}
+
+#[test]
+fn rating_construction_propagates_invalid_scoring_configuration() {
+    let config = PorConfig {
+        minimum_rating: 2,
+        maximum_rating: 1,
+        ..PorConfig::default()
+    };
+    let admitted = admit_interaction_evidence(evidence(), &state()).unwrap();
+
+    assert!(matches!(
+        build_rating_from_interaction(admitted, vec![1], &config),
+        Err(PorError::InvalidConfiguration(_))
+    ));
 }

@@ -116,7 +116,7 @@ pub fn score_admitted_interaction(
         return Err(PorError::InvalidConfiguration(
             "minimum rating must not exceed maximum rating".to_string(),
         ));
-    };
+    }
 
     match interaction.evidence().kind {
         InteractionKind::BlockProduction
