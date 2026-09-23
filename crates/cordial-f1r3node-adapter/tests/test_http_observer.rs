@@ -192,8 +192,8 @@ fn finalized_wave_messages() -> (BlockMessage, Vec<BlockMessage>) {
 }
 
 /// The internal content hash the mirror stores for a message (the hash
-/// `message_to_block` recomputes). This is distinct from the wire-domain
-/// `block_msg.block_hash` (which `compute_block_hash` produces) that the
+/// `message_to_block` recomputes). This is distinct from the adapter-local
+/// `block_msg.block_hash` (which `compute_adapter_snapshot_hash` produces) that the
 /// mapper validates on ingest. Children must reference this hash, and an
 /// HTTP view of the mirror must report this hash, for linkage and
 /// comparison to line up.
@@ -243,7 +243,7 @@ fn build_test_block_message_with_state(
     block_number: u64,
     state_tag: u8,
 ) -> BlockMessage {
-    use cordial_f1r3node_adapter::crypto_bridge::compute_block_hash;
+    use cordial_f1r3node_adapter::crypto_bridge::compute_adapter_snapshot_hash;
 
     let justifications: Vec<Justification> = parents
         .iter()
@@ -288,7 +288,7 @@ fn build_test_block_message_with_state(
     let signature = sign(&content_hash, signing_key);
 
     // Build the message with a placeholder block_hash first so we can run
-    // compute_block_hash over the fully-populated message fields.
+    // compute_adapter_snapshot_hash over the fully-populated message fields.
     let mut msg = BlockMessage {
         block_hash: vec![0u8; 32], // placeholder — replaced below
         header: Header {
@@ -318,10 +318,10 @@ fn build_test_block_message_with_state(
         extra_bytes: vec![],
     };
 
-    // Set block_hash to the adapter wire hash so validate_adapter_content_hash
+    // Set block_hash to the adapter snapshot hash so validate_adapter_content_hash
     // passes. This is a different hash domain from the Cordial content_hash used
     // for the signature above.
-    msg.block_hash = compute_block_hash(&msg).to_vec();
+    msg.block_hash = compute_adapter_snapshot_hash(&msg).to_vec();
     msg
 }
 

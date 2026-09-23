@@ -6,7 +6,7 @@ use cordial_f1r3node_adapter::block_translation::{
 };
 use cordial_f1r3node_adapter::crypto_bridge::{
     Blake2b256Hasher, CryptoError, Ed25519, F1r3flyCryptoAdapter, Hasher, Secp256k1, Sha256Hasher,
-    SigAlgorithm, Signer, Verifier, compute_block_hash,
+    SigAlgorithm, Signer, Verifier, compute_adapter_snapshot_hash,
 };
 
 use cordial_miners_core::crypto::{CryptoVerifier, hash_content as core_hash};
@@ -251,17 +251,17 @@ fn empty_msg(sender: Vec<u8>) -> BlockMessage {
 }
 
 #[test]
-fn compute_block_hash_returns_32_bytes() {
+fn compute_adapter_snapshot_hash_returns_32_bytes() {
     let msg = empty_msg(vec![1]);
-    let hash = compute_block_hash(&msg);
+    let hash = compute_adapter_snapshot_hash(&msg);
     assert_eq!(hash.len(), 32);
 }
 
 #[test]
-fn compute_block_hash_is_deterministic() {
+fn compute_adapter_snapshot_hash_is_deterministic() {
     let msg = empty_msg(vec![1, 2, 3]);
-    let h1 = compute_block_hash(&msg);
-    let h2 = compute_block_hash(&msg);
+    let h1 = compute_adapter_snapshot_hash(&msg);
+    let h2 = compute_adapter_snapshot_hash(&msg);
     assert_eq!(h1, h2);
 }
 
@@ -274,8 +274,8 @@ fn different_senders_produce_different_block_hashes_for_same_body() {
     // Same body, same header, different sender.
     a.body.state.block_number = 7;
     b.body.state.block_number = 7;
-    let ha = compute_block_hash(&a);
-    let hb = compute_block_hash(&b);
+    let ha = compute_adapter_snapshot_hash(&a);
+    let hb = compute_adapter_snapshot_hash(&b);
     assert_ne!(ha, hb);
 }
 
@@ -285,7 +285,10 @@ fn different_bodies_produce_different_block_hashes_for_same_sender() {
     let mut b = empty_msg(vec![1]);
     a.body.state.block_number = 1;
     b.body.state.block_number = 2;
-    assert_ne!(compute_block_hash(&a), compute_block_hash(&b));
+    assert_ne!(
+        compute_adapter_snapshot_hash(&a),
+        compute_adapter_snapshot_hash(&b)
+    );
 }
 
 #[test]
@@ -294,7 +297,10 @@ fn different_shard_ids_produce_different_block_hashes() {
     let mut b = empty_msg(vec![1]);
     a.shard_id = "root".to_string();
     b.shard_id = "child".to_string();
-    assert_ne!(compute_block_hash(&a), compute_block_hash(&b));
+    assert_ne!(
+        compute_adapter_snapshot_hash(&a),
+        compute_adapter_snapshot_hash(&b)
+    );
 }
 
 #[test]
@@ -322,7 +328,10 @@ fn block_hash_is_independent_of_bond_ordering() {
             stake: 100,
         },
     ];
-    assert_eq!(compute_block_hash(&a), compute_block_hash(&b));
+    assert_eq!(
+        compute_adapter_snapshot_hash(&a),
+        compute_adapter_snapshot_hash(&b)
+    );
 }
 
 #[test]
@@ -338,7 +347,10 @@ fn block_hash_changes_when_bond_stake_changes() {
         validator: vec![10],
         stake: 101,
     }];
-    assert_ne!(compute_block_hash(&a), compute_block_hash(&b));
+    assert_ne!(
+        compute_adapter_snapshot_hash(&a),
+        compute_adapter_snapshot_hash(&b)
+    );
 }
 
 #[test]
@@ -348,7 +360,10 @@ fn block_hash_includes_system_deploys() {
     b.body
         .system_deploys
         .push(ProcessedSystemDeploy::CloseBlock { succeeded: true });
-    assert_ne!(compute_block_hash(&a), compute_block_hash(&b));
+    assert_ne!(
+        compute_adapter_snapshot_hash(&a),
+        compute_adapter_snapshot_hash(&b)
+    );
 
     // Different system deploy variant tags hash differently
     let mut c = empty_msg(vec![1]);
@@ -356,7 +371,10 @@ fn block_hash_includes_system_deploys() {
         validator: vec![99],
         succeeded: true,
     });
-    assert_ne!(compute_block_hash(&b), compute_block_hash(&c));
+    assert_ne!(
+        compute_adapter_snapshot_hash(&b),
+        compute_adapter_snapshot_hash(&c)
+    );
 }
 
 // ── F1r3flyCryptoAdapter tests ───────────────────────────────────────────

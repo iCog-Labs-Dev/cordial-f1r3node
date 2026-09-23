@@ -675,8 +675,8 @@ fn build_test_block_message(
 }
 
 /// The internal content hash the mirror stores for a message (the hash
-/// `message_to_block` recomputes). This is distinct from the wire-domain
-/// `block_msg.block_hash` (which `compute_block_hash` produces) that the
+/// `message_to_block` recomputes). This is distinct from the adapter-local
+/// `block_msg.block_hash` (which `compute_adapter_snapshot_hash` produces) that the
 /// mapper validates on ingest. Children must reference this hash, and
 /// assertions over mirrored state must compare against it, for linkage and
 /// comparison to line up.
@@ -699,7 +699,7 @@ fn build_test_block_message_with_state(
     state_tag: u8,
 ) -> BlockMessage {
     use cordial_f1r3node_adapter::block_translation::message_to_block;
-    use cordial_f1r3node_adapter::crypto_bridge::compute_block_hash;
+    use cordial_f1r3node_adapter::crypto_bridge::compute_adapter_snapshot_hash;
 
     let justifications: Vec<Justification> = parents
         .iter()
@@ -741,12 +741,12 @@ fn build_test_block_message_with_state(
         extra_bytes: vec![],
     };
 
-    // Wire-domain block hash (f1r3node semantics) — what
+    // Adapter-local snapshot hash — what
     // `validate_adapter_content_hash` recomputes on ingest.
-    msg.block_hash = compute_block_hash(&msg).to_vec();
+    msg.block_hash = compute_adapter_snapshot_hash(&msg).to_vec();
 
     // Sign the internal content hash that `message_to_block` produces so
-    // `validate_signature` passes. This is a *different* hash from the wire
+    // `validate_signature` passes. This is a *different* hash from the adapter
     // block_hash above.
     let content_hash = message_to_block(&msg)
         .expect("test message should translate")
