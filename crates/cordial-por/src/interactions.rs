@@ -7,8 +7,11 @@
 use cordial_miners_core::NodeId;
 
 use crate::{
-    PorConfig, RatingScore, error::PorError, ratings::rating_round_from_finalized_wave,
-    state::ReputationState, types::ReputationRound,
+    PorConfig, RatingRecord, RatingScore,
+    error::PorError,
+    ratings::{rating_round_from_finalized_wave, validate_rating},
+    state::ReputationState,
+    types::ReputationRound,
 };
 
 /// Protocol interaction categories eligible for ordinary reputation ratings.
@@ -121,4 +124,28 @@ pub fn score_admitted_interaction(
         | InteractionKind::ExecutionResult
         | InteractionKind::DeployInclusion => Ok(config.maximum_rating),
     }
+}
+
+pub fn build_rating_from_interaction(
+    interaction: AdmittedInteraction,
+    signature: Vec<u8>,
+    config: &PorConfig,
+) -> Result<RatingRecord, PorError> {
+    let score = score_admitted_interaction(&interaction, config)?;
+
+    let InteractionEvidence {
+        round,
+        rater,
+        recipient,
+        evidence_ref,
+        ..
+    } = interaction.into_evidence();
+
+    let mut rating = RatingRecord::new(round, rater, recipient, score, signature);
+
+    rating.interaction_ref = Some(evidence_ref);
+
+    validate_rating(&rating, config)?;
+
+    Ok(rating)
 }
