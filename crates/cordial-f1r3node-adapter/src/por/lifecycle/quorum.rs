@@ -3,8 +3,8 @@
 //! Participation is credited only after a rater's complete deterministic
 //! block-production batch has entered the evidence-backed collector. The
 //! default policy requires strictly more than two thirds of active reputation
-//! weight. It contains no wall-clock behavior; an external finalized cutoff
-//! may still choose the coordinator's explicit close path.
+//! weight. It contains no wall-clock behavior; the companion finalized-wave
+//! cutoff policy supplies the liveness fallback.
 
 use std::fmt;
 

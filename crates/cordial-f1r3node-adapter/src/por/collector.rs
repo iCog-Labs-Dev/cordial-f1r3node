@@ -5,7 +5,10 @@
 //! Cordial wave has finalized. Each submission is checked against the
 //! canonical block-production evidence before the round can be closed.
 
-use std::{collections::BTreeMap, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 use cordial_miners_core::{Blocklace, NodeId};
 use cordial_por::{
@@ -234,17 +237,50 @@ impl<'a> BlockProductionRatingCollector<'a> {
         Ok(())
     }
 
-    /// Close collection and build the canonical verified round batch.
+    /// Consume the collector and build a canonical snapshot of all accepted ratings.
     ///
-    /// Quorum and timeout policy are intentionally external; the caller
-    /// decides when the collection window is complete.
+    /// This low-level snapshot may include incomplete per-rater prefixes.
+    /// Lifecycle closure uses `build_complete_batch` instead.
     pub fn finish(self) -> Result<RatingBatch, PorRatingCollectorError> {
         self.build_batch()
     }
 
-    /// Build a canonical verified snapshot without consuming the collector.
+    /// Build a canonical snapshot of all accepted ratings without consuming the collector.
     pub fn build_batch(&self) -> Result<RatingBatch, PorRatingCollectorError> {
         let ratings = self.ratings.values().cloned().collect();
+        Ok(build_verified_rating_batch(
+            self.opened.rating_round,
+            ratings,
+            self.config,
+        )?)
+    }
+
+    /// Build a canonical snapshot containing only complete per-rater batches.
+    ///
+    /// Accepted prefixes remain available while collection is open, but they
+    /// cannot influence a closed reputation round. A rater is retained only
+    /// when every rating deterministically expected from finalized evidence
+    /// has been collected.
+    pub fn build_complete_batch(&self) -> Result<RatingBatch, PorRatingCollectorError> {
+        let raters = self
+            .ratings
+            .values()
+            .map(|rating| rating.rater.clone())
+            .collect::<BTreeSet<_>>();
+        let mut complete_raters = BTreeSet::new();
+
+        for rater in raters {
+            if self.is_rater_complete(&rater)? {
+                complete_raters.insert(rater);
+            }
+        }
+
+        let ratings = self
+            .ratings
+            .values()
+            .filter(|rating| complete_raters.contains(&rating.rater))
+            .cloned()
+            .collect();
         Ok(build_verified_rating_batch(
             self.opened.rating_round,
             ratings,

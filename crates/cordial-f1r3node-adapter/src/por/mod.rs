@@ -17,11 +17,16 @@ pub use interactions::{
     PorInteractionError, admit_finalized_block_production_interactions,
     extract_block_production_evidence, validate_finalized_rating_round,
 };
+pub use lifecycle::cutoff::{
+    DEFAULT_RATING_CUTOFF_WAVE_LAG, PorRatingCutoffError, PorRatingRoundCutoffPolicy,
+};
 pub use lifecycle::quorum::{
     DEFAULT_RATING_QUORUM_DENOMINATOR, DEFAULT_RATING_QUORUM_NUMERATOR, PorRatingQuorumError,
     PorRatingQuorumProgress, PorRatingRoundClosurePolicy,
 };
-pub use lifecycle::{PorRatingRoundCoordinator, PorRatingRoundError, PorRatingRoundStatus};
+pub use lifecycle::{
+    PorRatingRoundCloseReason, PorRatingRoundCoordinator, PorRatingRoundError, PorRatingRoundStatus,
+};
 pub use ratings::{
     PorRatingError, build_finalized_block_production_rating_batch, build_verified_rating_batch,
     rating_signing_hash, sign_admitted_interaction, validate_signed_rating,

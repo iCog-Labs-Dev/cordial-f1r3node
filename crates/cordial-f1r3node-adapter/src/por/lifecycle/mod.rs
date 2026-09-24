@@ -3,9 +3,10 @@
 //! The coordinator connects local rating production, resumable outbound
 //! delivery, inbound evidence-backed collection, and explicit closure. It does
 //! not use wall-clock deadlines: `close_if_quorum` applies deterministic
-//! complete-rater weight, while an external finalized cutoff may choose the
-//! explicit `close` path.
+//! complete-rater weight, while `close_at_finalized_wave` supplies a finality-
+//! driven fallback.
 
+pub mod cutoff;
 pub mod quorum;
 
 use std::fmt;
@@ -15,7 +16,10 @@ use cordial_por::{PorConfig, RatingBatch, ReputationState};
 
 use crate::ordered_output::OrderedFinalizedOutput;
 
-use self::quorum::{PorRatingQuorumError, PorRatingQuorumProgress, PorRatingRoundClosurePolicy};
+use self::{
+    cutoff::{PorRatingCutoffError, PorRatingRoundCutoffPolicy},
+    quorum::{PorRatingQuorumError, PorRatingQuorumProgress, PorRatingRoundClosurePolicy},
+};
 use super::{
     collector::{BlockProductionRatingCollector, PorRatingCollectorError},
     finality::FinalizedRatingRound,
@@ -40,6 +44,7 @@ pub enum PorRatingRoundError {
     Collector(PorRatingCollectorError),
     Transport(PorRatingTransportError),
     Quorum(PorRatingQuorumError),
+    Cutoff(PorRatingCutoffError),
     LocalBatchAlreadyProduced,
     LocalBatchNotProduced,
     PendingOutboundRatings(usize),
@@ -62,6 +67,7 @@ impl fmt::Display for PorRatingRoundError {
             Self::Collector(error) => error.fmt(f),
             Self::Transport(error) => error.fmt(f),
             Self::Quorum(error) => error.fmt(f),
+            Self::Cutoff(error) => error.fmt(f),
             Self::LocalBatchAlreadyProduced => {
                 write!(f, "local PoR rating batch was already produced")
             }
@@ -99,6 +105,7 @@ impl std::error::Error for PorRatingRoundError {
             Self::Collector(error) => Some(error),
             Self::Transport(error) => Some(error),
             Self::Quorum(error) => Some(error),
+            Self::Cutoff(error) => Some(error),
             _ => None,
         }
     }
@@ -128,6 +135,25 @@ impl From<PorRatingQuorumError> for PorRatingRoundError {
     }
 }
 
+impl From<PorRatingCutoffError> for PorRatingRoundError {
+    fn from(error: PorRatingCutoffError) -> Self {
+        Self::Cutoff(error)
+    }
+}
+
+/// Deterministic trigger that closed a PoR rating round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PorRatingRoundCloseReason {
+    Quorum {
+        completed_weight: u128,
+        required_weight: u128,
+    },
+    FinalizedWaveCutoff {
+        observed_finalized_wave: u64,
+        required_finalized_wave: u64,
+    },
+}
+
 /// Coordinates one local validator's view of an opened PoR rating round.
 pub struct PorRatingRoundCoordinator<'a> {
     blocklace: &'a Blocklace,
@@ -140,6 +166,7 @@ pub struct PorRatingRoundCoordinator<'a> {
     outbound_envelopes: Vec<Vec<u8>>,
     next_outbound: usize,
     completed_batch: Option<RatingBatch>,
+    close_reason: Option<PorRatingRoundCloseReason>,
 }
 
 impl<'a> PorRatingRoundCoordinator<'a> {
@@ -164,6 +191,7 @@ impl<'a> PorRatingRoundCoordinator<'a> {
             outbound_envelopes: Vec::new(),
             next_outbound: 0,
             completed_batch: None,
+            close_reason: None,
         })
     }
 
@@ -185,6 +213,10 @@ impl<'a> PorRatingRoundCoordinator<'a> {
 
     pub fn completed_batch(&self) -> Option<&RatingBatch> {
         self.completed_batch.as_ref()
+    }
+
+    pub fn close_reason(&self) -> Option<PorRatingRoundCloseReason> {
+        self.close_reason
     }
 
     pub fn collected_len(&self) -> usize {
@@ -289,23 +321,6 @@ impl<'a> PorRatingRoundCoordinator<'a> {
         Ok(())
     }
 
-    /// Explicitly close the round after an external finalized cutoff fires.
-    pub fn close(&mut self) -> Result<&RatingBatch, PorRatingRoundError> {
-        self.require_close_prerequisites()?;
-
-        let batch = self
-            .collector
-            .as_ref()
-            .expect("open coordinator always has a collector")
-            .build_batch()?;
-        self.collector = None;
-        self.completed_batch = Some(batch);
-        Ok(self
-            .completed_batch
-            .as_ref()
-            .expect("completed batch was just stored"))
-    }
-
     /// Close only after complete raters hold the policy's required weight.
     pub fn close_if_quorum(
         &mut self,
@@ -320,7 +335,47 @@ impl<'a> PorRatingRoundCoordinator<'a> {
             });
         }
 
-        self.close()
+        self.finalize(PorRatingRoundCloseReason::Quorum {
+            completed_weight: progress.completed_weight,
+            required_weight: progress.required_weight,
+        })
+    }
+
+    /// Close once the policy's deterministic finalized-wave cutoff is reached.
+    ///
+    /// `observed_finalized_wave` must come from the adapter's validated
+    /// finality path rather than a local clock or unverified peer claim.
+    pub fn close_at_finalized_wave(
+        &mut self,
+        policy: &PorRatingRoundCutoffPolicy,
+        observed_finalized_wave: u64,
+    ) -> Result<&RatingBatch, PorRatingRoundError> {
+        self.require_close_prerequisites()?;
+        let required_finalized_wave =
+            policy.ensure_reached(self.opened, observed_finalized_wave)?;
+
+        self.finalize(PorRatingRoundCloseReason::FinalizedWaveCutoff {
+            observed_finalized_wave,
+            required_finalized_wave,
+        })
+    }
+
+    fn finalize(
+        &mut self,
+        reason: PorRatingRoundCloseReason,
+    ) -> Result<&RatingBatch, PorRatingRoundError> {
+        let batch = self
+            .collector
+            .as_ref()
+            .expect("open coordinator always has a collector")
+            .build_complete_batch()?;
+        self.collector = None;
+        self.close_reason = Some(reason);
+        self.completed_batch = Some(batch);
+        Ok(self
+            .completed_batch
+            .as_ref()
+            .expect("completed batch was just stored"))
     }
 
     fn require_close_prerequisites(&self) -> Result<(), PorRatingRoundError> {
