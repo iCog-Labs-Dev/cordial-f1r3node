@@ -1,7 +1,8 @@
 //! Extract Proof-of-Reputation interactions from finalized Cordial output.
 //!
 //! This module is an adapter boundary. It identifies replayable protocol
-//! evidence but does not admit, score, sign, or batch ratings.
+//! evidence and delegates its admission to `cordial-por`. Scoring, signing,
+//! and batching live in the adapter's `por_ratings` module.
 
 use std::{collections::BTreeMap, fmt};
 
