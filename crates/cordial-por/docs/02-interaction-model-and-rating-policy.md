@@ -401,6 +401,28 @@ circular dependency between ratings and finality.
 - Evaluating complete-rater participation against a strict reputation-weighted
   closure quorum.
 
+The adapter groups these responsibilities under one domain module:
+
+```text
+src/por/
+  mod.rs
+  finality.rs
+  interactions.rs
+  ratings.rs
+  collector.rs
+  lifecycle/
+    mod.rs
+    quorum.rs
+  transport/
+    mod.rs
+    wire.rs
+    channel.rs
+```
+
+`por/mod.rs` is the public facade. Temporary aliases retain the original flat
+`por_*` module paths while callers migrate; implementation code uses the
+domain hierarchy directly.
+
 ---
 
 ## 10. Implemented Interaction Pipeline
@@ -424,10 +446,10 @@ OrderedFinalizedOutput
 ```
 
 `cordial-por/src/interactions.rs` owns the interaction vocabulary, admission,
-and score policy. The adapter's `por_interactions.rs` extracts finalized
-evidence, while `por_ratings.rs` owns signing, verification, and the atomic
+and score policy. The adapter's `por/interactions.rs` extracts finalized
+evidence, while `por/ratings.rs` owns signing, verification, and the atomic
 `build_finalized_block_production_rating_batch` orchestration entry point.
-The adapter's `por_rating_collector.rs` accepts local or received ratings,
+The adapter's `por/collector.rs` accepts local or received ratings,
 reconstructs their finalized block-production evidence, and closes them into
 one canonical round batch.
 
