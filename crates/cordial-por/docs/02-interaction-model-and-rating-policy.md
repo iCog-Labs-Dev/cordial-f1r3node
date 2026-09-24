@@ -393,6 +393,7 @@ circular dependency between ratings and finality.
 - Verifying signed ratings before deterministic batch construction.
 - Bridging a finalized wave atomically into its local signed rating batch.
 - Collecting local and received evidence-backed ratings into a round batch.
+- Encoding and decoding bounded versioned block-production rating envelopes.
 
 ---
 
@@ -511,15 +512,49 @@ This protocol deliberately does not place validator private keys in
 `cordial-por`. That crate defines the deterministic payload; the adapter owns
 the signing infrastructure and algorithm integration.
 
+### Block-Production Rating Envelope v1
+
+Signed block-production ratings use a transport-independent, bounded binary
+envelope before entering the evidence-backed collector. Its canonical layout
+is:
+
+```text
+"cordial-por:block-production-rating-envelope"
+|| version_u16_be
+|| finalized_wave_u64_be
+|| rating_round_u64_be
+|| rater_len_u16_be || rater_sec1_bytes
+|| recipient_len_u16_be || recipient_sec1_bytes
+|| score_u64_be
+|| block_hash_32_bytes
+|| signature_len_u16_be || secp256k1_der_signature
+```
+
+Version 1 requires:
+
+- envelope version `1`;
+- `rating_round = finalized_wave + 1` without overflow;
+- compressed or uncompressed SEC1 validator keys of 33 or 65 bytes;
+- a 32-byte block hash as the interaction reference;
+- a non-empty DER signature no longer than 72 bytes;
+- no truncated or trailing bytes;
+- an overall bounded envelope length.
+
+Wire decoding performs structural checks only. It does not make the rating
+admissible. The block-production rating collector subsequently verifies the
+signature, validator eligibility, finalized evidence reference, deterministic
+score, and collector round before retaining the rating.
+
 ---
 
 ## 13. Remaining Open Design Decisions
 
 The following decisions remain open beyond the version 1 signing protocol:
 
-1. **Exact evidence encoding**
-   - Should `interaction_ref` stay as raw bytes, or should it become a typed
-     enum?
+1. **Evidence encoding for additional interaction kinds**
+   - Block-production envelope v1 fixes `interaction_ref` to a 32-byte block
+     hash. Execution, deploy, and Cordial-reference evidence still need typed
+     encodings before they receive wire envelopes.
 
 2. **Exact score levels**
    - Should the first policy be binary positive/no-rating, or should it include
@@ -536,6 +571,12 @@ The following decisions remain open beyond the version 1 signing protocol:
 5. **Evidence availability**
    - Which evidence must be included in reputation blocks, and which evidence
      can be referenced by hash?
+
+6. **Round closure**
+   - Which quorum, deadline, or finalized cutoff closes rating collection?
+
+7. **Transport binding**
+   - Should rating envelopes use peer gossip, gRPC, or both?
 
 ---
 
