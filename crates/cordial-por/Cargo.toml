@@ -6,3 +6,6 @@ edition.workspace = true
 
 [dependencies]
 cordial-miners-core = { path = "../cordial-miners-core" }
+
+[dev-dependencies]
+proptest = "1"
