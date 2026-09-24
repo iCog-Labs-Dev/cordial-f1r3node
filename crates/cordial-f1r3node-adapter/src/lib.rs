@@ -43,6 +43,7 @@ pub mod por_finality;
 pub mod por_interactions;
 pub mod por_rating_channel;
 pub mod por_rating_collector;
+pub mod por_rating_round;
 pub mod por_rating_transport;
 pub mod por_rating_wire;
 pub mod por_ratings;

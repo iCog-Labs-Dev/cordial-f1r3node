@@ -209,7 +209,12 @@ impl<'a> BlockProductionRatingCollector<'a> {
     /// Quorum and timeout policy are intentionally external; the caller
     /// decides when the collection window is complete.
     pub fn finish(self) -> Result<RatingBatch, PorRatingCollectorError> {
-        let ratings = self.ratings.into_values().collect();
+        self.build_batch()
+    }
+
+    /// Build a canonical verified snapshot without consuming the collector.
+    pub fn build_batch(&self) -> Result<RatingBatch, PorRatingCollectorError> {
+        let ratings = self.ratings.values().cloned().collect();
         Ok(build_verified_rating_batch(
             self.opened.rating_round,
             ratings,
