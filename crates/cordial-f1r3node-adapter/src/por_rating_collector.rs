@@ -20,6 +20,7 @@ use crate::{
         PorInteractionError, admit_finalized_block_production_interactions,
         validate_finalized_rating_round,
     },
+    por_rating_wire::BlockProductionRatingEnvelopeV1,
     por_ratings::{PorRatingError, build_verified_rating_batch, validate_signed_rating},
 };
 
@@ -29,6 +30,7 @@ pub enum PorRatingCollectorError {
     Interaction(PorInteractionError),
     Rating(PorRatingError),
     InvalidStateRound,
+    InvalidFinalizedWave,
     InvalidRatingRound,
     InvalidBatchRound,
     MissingFinalizedInteraction,
@@ -47,6 +49,12 @@ impl fmt::Display for PorRatingCollectorError {
                 f,
                 "rating round must immediately follow the collector's reputation state"
             ),
+            Self::InvalidFinalizedWave => {
+                write!(
+                    f,
+                    "rating envelope does not belong to the collector's finalized wave"
+                )
+            }
             Self::InvalidRatingRound => {
                 write!(f, "rating does not belong to the collector's opened round")
             }
@@ -164,6 +172,18 @@ impl<'a> BlockProductionRatingCollector<'a> {
         self.validate_submission(&self.ratings, &rating)?;
         self.ratings.insert(rating_key(&rating), rating);
         Ok(())
+    }
+
+    /// Insert one decoded v1 block-production rating envelope.
+    pub fn insert_envelope(
+        &mut self,
+        envelope: BlockProductionRatingEnvelopeV1,
+    ) -> Result<(), PorRatingCollectorError> {
+        if envelope.finalized_wave() != self.opened.finalized_wave {
+            return Err(PorRatingCollectorError::InvalidFinalizedWave);
+        }
+
+        self.insert(envelope.into_rating())
     }
 
     /// Insert a per-validator batch atomically.
