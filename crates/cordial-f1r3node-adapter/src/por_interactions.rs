@@ -79,26 +79,10 @@ pub fn extract_block_production_evidence(
     opened: FinalizedRatingRound,
     rater: &NodeId,
 ) -> Result<Vec<InteractionEvidence>, PorInteractionError> {
-    let final_leader = output
-        .anchor
-        .as_ref()
-        .ok_or(PorInteractionError::MissingFinalLeader)?;
+    validate_finalized_rating_round(blocklace, output, opened)?;
 
-    if output.wavelength == 0 {
-        return Err(PorInteractionError::InvalidWavelength);
-    }
-
-    let leader_round =
-        depth(blocklace, final_leader).ok_or(PorInteractionError::UnknownFinalLeader)?;
-    let finalized_wave = wave_of_round(leader_round, output.wavelength)
-        .ok_or(PorInteractionError::InvalidWavelength)?;
-
-    let expected_rating_round = rating_round_from_finalized_wave(finalized_wave)
-        .map_err(PorInteractionError::RatingRound)?;
-    if finalized_wave != opened.finalized_wave || expected_rating_round != opened.rating_round {
-        return Err(PorInteractionError::FinalizedRoundMismatch);
-    }
-
+    let finalized_wave = opened.finalized_wave;
+    let expected_rating_round = opened.rating_round;
     let mut canonical_blocks: BTreeMap<&NodeId, &BlockIdentity> = BTreeMap::new();
 
     for block in &output.blocks {
@@ -132,6 +116,39 @@ pub fn extract_block_production_evidence(
             evidence_ref: block.content_hash.to_vec(),
         })
         .collect())
+}
+
+/// Validate that finalized output opens the supplied PoR rating round.
+///
+/// This performs the round-anchor checks independently of any rater or
+/// extracted interaction, allowing an empty rating-round collector to retain
+/// the same finality guarantees as a non-empty one.
+pub fn validate_finalized_rating_round(
+    blocklace: &Blocklace,
+    output: &OrderedFinalizedOutput,
+    opened: FinalizedRatingRound,
+) -> Result<(), PorInteractionError> {
+    let final_leader = output
+        .anchor
+        .as_ref()
+        .ok_or(PorInteractionError::MissingFinalLeader)?;
+
+    if output.wavelength == 0 {
+        return Err(PorInteractionError::InvalidWavelength);
+    }
+
+    let leader_round =
+        depth(blocklace, final_leader).ok_or(PorInteractionError::UnknownFinalLeader)?;
+    let finalized_wave = wave_of_round(leader_round, output.wavelength)
+        .ok_or(PorInteractionError::InvalidWavelength)?;
+
+    let expected_rating_round = rating_round_from_finalized_wave(finalized_wave)
+        .map_err(PorInteractionError::RatingRound)?;
+    if finalized_wave != opened.finalized_wave || expected_rating_round != opened.rating_round {
+        return Err(PorInteractionError::FinalizedRoundMismatch);
+    }
+
+    Ok(())
 }
 
 /// Extract and admit finalized block-production interactions atomically.
