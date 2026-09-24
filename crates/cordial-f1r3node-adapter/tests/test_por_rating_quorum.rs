@@ -2,14 +2,12 @@ use std::collections::HashSet;
 
 use cordial_f1r3node_adapter::{
     ordered_output::OrderedFinalizedOutput,
-    por_finality::{FinalizedRatingRound, PorFinalityTracker},
-    por_rating_quorum::{
-        DEFAULT_RATING_QUORUM_DENOMINATOR, DEFAULT_RATING_QUORUM_NUMERATOR, PorRatingQuorumError,
-        PorRatingRoundClosurePolicy,
+    por::{
+        DEFAULT_RATING_QUORUM_DENOMINATOR, DEFAULT_RATING_QUORUM_NUMERATOR, FinalizedRatingRound,
+        PorFinalityTracker, PorRatingQuorumError, PorRatingRoundClosurePolicy,
+        PorRatingRoundCoordinator, PorRatingRoundError, RatingEnvelopeBroadcaster,
+        build_finalized_block_production_rating_batch, encode_rating_batch,
     },
-    por_rating_round::{PorRatingRoundCoordinator, PorRatingRoundError},
-    por_rating_transport::{RatingEnvelopeBroadcaster, encode_rating_batch},
-    por_ratings::build_finalized_block_production_rating_batch,
 };
 use cordial_miners_core::{
     Block, BlockContent, BlockIdentity, Blocklace, NodeId, crypto::CryptoVerifier,
