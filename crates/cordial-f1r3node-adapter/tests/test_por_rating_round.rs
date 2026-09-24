@@ -8,8 +8,8 @@ use cordial_f1r3node_adapter::{
     por_finality::{FinalizedRatingRound, PorFinalityTracker},
     por_rating_quorum::PorRatingRoundClosurePolicy,
     por_rating_round::{
-        PorRatingRoundCloseReason, PorRatingRoundCoordinator, PorRatingRoundError,
-        PorRatingRoundStatus,
+        CompletedPorRatingRound, PorRatingRoundCloseReason, PorRatingRoundCoordinator,
+        PorRatingRoundError, PorRatingRoundStatus,
         cutoff::{PorRatingCutoffError, PorRatingRoundCutoffPolicy},
     },
     por_rating_transport::{
@@ -17,11 +17,15 @@ use cordial_f1r3node_adapter::{
     },
     por_rating_wire::PorRatingWireError,
     por_ratings::{PorRatingError, build_finalized_block_production_rating_batch},
+    por_reputation_transition::{PorReputationBlockCommitments, apply_completed_reputation_round},
 };
 use cordial_miners_core::{
     Block, BlockContent, BlockIdentity, Blocklace, NodeId, crypto::CryptoVerifier,
 };
-use cordial_por::{PorConfig, RatingBatch, ReputationState};
+use cordial_por::{
+    PorConfig, PorError, RatingBatch, ReputationState, ReputationVector,
+    replay_reputation_transition, reputation_weights,
+};
 use k256::ecdsa::SigningKey;
 
 const WAVELENGTH: u64 = 3;
@@ -193,6 +197,28 @@ fn cutoff_wave(fixture: &Fixture) -> u64 {
     fixture.opened.finalized_wave + 1
 }
 
+fn complete_local_round(fixture: &Fixture) -> CompletedPorRatingRound {
+    let mut coordinator = coordinator(fixture);
+    coordinator
+        .produce_local_batch(&node(9), &private_key(9))
+        .unwrap();
+    coordinator
+        .broadcast_pending(&RecordingBroadcaster::default())
+        .unwrap();
+    coordinator
+        .close_at_finalized_wave(&PorRatingRoundCutoffPolicy::default(), cutoff_wave(fixture))
+        .unwrap();
+    coordinator.into_completed().unwrap()
+}
+
+fn block_commitments() -> PorReputationBlockCommitments {
+    PorReputationBlockCommitments {
+        previous_reputation_hash: Some(vec![0x01]),
+        ratings_hash: vec![0x02],
+        reputation_root: vec![0x03],
+    }
+}
+
 #[test]
 fn coordinates_local_production_broadcast_and_close() {
     let fixture = fixture();
@@ -238,6 +264,64 @@ fn coordinates_local_production_broadcast_and_close() {
             required_finalized_wave: cutoff_wave(&fixture),
         })
     );
+}
+
+#[test]
+fn open_coordinator_cannot_be_consumed_as_a_completed_round() {
+    let fixture = fixture();
+
+    assert_eq!(
+        coordinator(&fixture).into_completed(),
+        Err(PorRatingRoundError::RoundNotClosed)
+    );
+}
+
+#[test]
+fn completed_round_drives_the_full_atomic_reputation_transition() {
+    let mut fixture = fixture();
+    let previous = ReputationVector {
+        round: fixture.state.round(),
+        values: fixture.state.reputation_list().entries.clone(),
+    };
+    let completed = complete_local_round(&fixture);
+    let expected = replay_reputation_transition(
+        &previous,
+        &completed.batch().ratings,
+        completed.batch().round,
+        &fixture.config,
+    )
+    .unwrap();
+    let config = fixture.config.clone();
+
+    let applied = apply_completed_reputation_round(
+        &completed,
+        &mut fixture.state,
+        &config,
+        block_commitments(),
+    )
+    .unwrap();
+
+    assert_eq!(applied.close_reason, completed.close_reason());
+    assert_eq!(applied.block.reputation_list, expected);
+    assert_eq!(fixture.state.reputation_list(), &expected);
+    assert_eq!(fixture.state.latest_block(), Some(&applied.block));
+    assert_eq!(applied.weights, reputation_weights(&fixture.state));
+}
+
+#[test]
+fn transition_failure_leaves_previous_reputation_state_unchanged() {
+    let mut fixture = fixture();
+    let completed = complete_local_round(&fixture);
+    let before = fixture.state.clone();
+    let config = fixture.config.clone();
+    let mut commitments = block_commitments();
+    commitments.ratings_hash.clear();
+
+    assert_eq!(
+        apply_completed_reputation_round(&completed, &mut fixture.state, &config, commitments,),
+        Err(PorError::MissingReputationBlockRatingsHash)
+    );
+    assert_eq!(fixture.state, before);
 }
 
 #[test]
