@@ -398,6 +398,8 @@ circular dependency between ratings and finality.
 - Providing a bounded process-local Tokio channel transport.
 - Coordinating local production, resumable delivery, inbound collection, and
   explicit closure for one rating round.
+- Evaluating complete-rater participation against a strict reputation-weighted
+  closure quorum.
 
 ---
 
@@ -416,7 +418,8 @@ OrderedFinalizedOutput
   -> bounded v1 wire envelope
   -> transport broadcast and receive
   -> evidence-backed round collection
-  -> explicit rating-round closure
+  -> complete-rater weighted quorum or explicit finalized cutoff
+  -> rating-round closure
   -> deterministic multi-validator RatingBatch
 ```
 
@@ -439,9 +442,9 @@ The collector enforces:
 - one non-conflicting rating per `(rater, recipient)` pair;
 - atomic insertion of a supplied per-validator batch.
 
-The collector does not decide when enough ratings have arrived. Quorum,
-deadline, and round-closing policy remain external so they can be defined with
-the eventual rating transport protocol.
+The collector exposes whether a rater's complete deterministic recipient set
+has arrived, but does not itself close the round. The adapter's quorum policy
+combines that completeness result with active reputation weight.
 
 This preserves the required direction:
 
@@ -617,13 +620,23 @@ invariants:
 - inbound envelopes pass through bounded decoding and all collector evidence
   checks before changing the collected set;
 - closure requires a locally produced batch and no pending outbound envelope;
+- quorum closure requires complete batches holding strictly more than two
+  thirds of active reputation weight from the preceding state;
 - successful closure freezes a canonical verified `RatingBatch`, after which
   production, delivery, receipt, and repeated closure are rejected.
 
-The coordinator does not infer that a round is ready to close. Validator
-quorum, finalized cutoff, deadline, and retry scheduling remain explicit
-external policy. This keeps time and network liveness decisions out of the
-deterministic evidence and batching layer.
+The strict threshold uses rational integer arithmetic: for total active weight
+`W`, the default required weight is `floor(2 * W / 3) + 1`. Ejected keys do not
+contribute to either side. A validator contributes its weight only when the
+collector contains every rating derived for it from finalized evidence; one
+envelope from a multi-rating batch is not participation. When the deterministic
+recipient set is empty, the canonical empty batch is complete without a wire
+message.
+
+`close_if_quorum` enforces this policy. The lower-level explicit `close` path is
+retained for a future finalized-wave cutoff rather than a wall-clock decision.
+The exact cutoff and retry scheduling remain external policy, keeping time and
+network liveness decisions out of the evidence and batching layer.
 
 ---
 
@@ -652,8 +665,10 @@ The following decisions remain open beyond the version 1 signing protocol:
    - Which evidence must be included in reputation blocks, and which evidence
      can be referenced by hash?
 
-6. **Round closure**
-   - Which quorum, deadline, or finalized cutoff closes rating collection?
+6. **Round closure cutoff**
+   - The default participation quorum is strict `> 2/3` of active reputation
+     weight. Which later finalized-wave cutoff permits explicit closure when
+     that quorum is unavailable?
 
 7. **Transport binding**
    - Should rating envelopes use peer gossip, gRPC, or both?
