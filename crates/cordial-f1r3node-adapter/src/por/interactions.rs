@@ -2,7 +2,7 @@
 //!
 //! This module is an adapter boundary. It identifies replayable protocol
 //! evidence and delegates its admission to `cordial-por`. Scoring, signing,
-//! and batching live in the adapter's `por_ratings` module.
+//! and batching live in the adapter's `por::ratings` module.
 
 use std::{collections::BTreeMap, fmt};
 
@@ -16,7 +16,9 @@ use cordial_por::{
     admit_interaction_evidence, rating_round_from_finalized_wave,
 };
 
-use crate::{ordered_output::OrderedFinalizedOutput, por_finality::FinalizedRatingRound};
+use crate::ordered_output::OrderedFinalizedOutput;
+
+use super::finality::FinalizedRatingRound;
 
 /// Errors while extracting PoR evidence from finalized adapter output.
 #[derive(Debug, Clone, PartialEq, Eq)]

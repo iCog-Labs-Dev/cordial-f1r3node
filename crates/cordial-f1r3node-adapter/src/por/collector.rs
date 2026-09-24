@@ -13,15 +13,16 @@ use cordial_por::{
     canonical_rating_payload, score_admitted_interaction,
 };
 
-use crate::{
-    ordered_output::OrderedFinalizedOutput,
-    por_finality::FinalizedRatingRound,
-    por_interactions::{
+use crate::ordered_output::OrderedFinalizedOutput;
+
+use super::{
+    finality::FinalizedRatingRound,
+    interactions::{
         PorInteractionError, admit_finalized_block_production_interactions,
         validate_finalized_rating_round,
     },
-    por_rating_wire::BlockProductionRatingEnvelopeV1,
-    por_ratings::{PorRatingError, build_verified_rating_batch, validate_signed_rating},
+    ratings::{PorRatingError, build_verified_rating_batch, validate_signed_rating},
+    transport::wire::BlockProductionRatingEnvelopeV1,
 };
 
 /// Failures while collecting an evidence-backed PoR rating round.

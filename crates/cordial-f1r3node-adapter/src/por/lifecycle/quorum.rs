@@ -10,7 +10,7 @@ use std::fmt;
 
 use cordial_miners_core::NodeId;
 
-use crate::por_rating_collector::{BlockProductionRatingCollector, PorRatingCollectorError};
+use crate::por::collector::{BlockProductionRatingCollector, PorRatingCollectorError};
 
 /// Default strict quorum ratio: completed weight must be greater than 2/3.
 pub const DEFAULT_RATING_QUORUM_NUMERATOR: u64 = 2;

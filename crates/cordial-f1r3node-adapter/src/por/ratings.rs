@@ -16,10 +16,11 @@ use cordial_por::{
     score_admitted_interaction, validate_rating,
 };
 
-use crate::{
-    ordered_output::OrderedFinalizedOutput,
-    por_finality::FinalizedRatingRound,
-    por_interactions::{PorInteractionError, admit_finalized_block_production_interactions},
+use crate::ordered_output::OrderedFinalizedOutput;
+
+use super::{
+    finality::FinalizedRatingRound,
+    interactions::{PorInteractionError, admit_finalized_block_production_interactions},
 };
 
 /// Failures at the adapter's signed-rating boundary.

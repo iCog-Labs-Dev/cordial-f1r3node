@@ -4,14 +4,15 @@
 //! implementations. It does not choose a network protocol, retry policy,
 //! quorum, or collection deadline.
 
+pub mod channel;
+pub mod wire;
+
 use std::fmt;
 
 use cordial_por::RatingBatch;
 
-use crate::{
-    por_rating_collector::{BlockProductionRatingCollector, PorRatingCollectorError},
-    por_rating_wire::{BlockProductionRatingEnvelopeV1, PorRatingWireError},
-};
+use self::wire::{BlockProductionRatingEnvelopeV1, PorRatingWireError};
+use super::collector::{BlockProductionRatingCollector, PorRatingCollectorError};
 
 /// Synchronous delivery boundary for one already-encoded rating envelope.
 pub trait RatingEnvelopeBroadcaster {

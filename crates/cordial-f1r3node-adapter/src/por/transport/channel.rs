@@ -9,13 +9,10 @@ use std::fmt;
 
 use tokio::sync::mpsc;
 
-use crate::{
-    por_rating_collector::BlockProductionRatingCollector,
-    por_rating_transport::{
-        PorRatingTransportError, RatingEnvelopeBroadcaster, receive_rating_envelope,
-    },
-    por_rating_wire::MAX_BLOCK_PRODUCTION_RATING_ENVELOPE_LEN,
-};
+use super::{PorRatingTransportError, RatingEnvelopeBroadcaster, receive_rating_envelope};
+use crate::por::collector::BlockProductionRatingCollector;
+
+use super::wire::MAX_BLOCK_PRODUCTION_RATING_ENVELOPE_LEN;
 
 /// Failures specific to the bounded channel implementation.
 #[derive(Debug, Clone, PartialEq, Eq)]

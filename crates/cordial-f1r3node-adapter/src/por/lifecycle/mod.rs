@@ -6,23 +6,24 @@
 //! complete-rater weight, while an external finalized cutoff may choose the
 //! explicit `close` path.
 
+pub mod quorum;
+
 use std::fmt;
 
 use cordial_miners_core::{Blocklace, NodeId};
 use cordial_por::{PorConfig, RatingBatch, ReputationState};
 
-use crate::{
-    ordered_output::OrderedFinalizedOutput,
-    por_finality::FinalizedRatingRound,
-    por_rating_collector::{BlockProductionRatingCollector, PorRatingCollectorError},
-    por_rating_quorum::{
-        PorRatingQuorumError, PorRatingQuorumProgress, PorRatingRoundClosurePolicy,
-    },
-    por_rating_transport::{
+use crate::ordered_output::OrderedFinalizedOutput;
+
+use self::quorum::{PorRatingQuorumError, PorRatingQuorumProgress, PorRatingRoundClosurePolicy};
+use super::{
+    collector::{BlockProductionRatingCollector, PorRatingCollectorError},
+    finality::FinalizedRatingRound,
+    ratings::{PorRatingError, build_finalized_block_production_rating_batch},
+    transport::{
         PorRatingTransportError, RatingEnvelopeBroadcaster, encode_rating_batch,
         receive_rating_envelope,
     },
-    por_ratings::{PorRatingError, build_finalized_block_production_rating_batch},
 };
 
 /// Observable lifecycle state of a rating-round coordinator.
