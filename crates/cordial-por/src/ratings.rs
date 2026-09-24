@@ -11,6 +11,67 @@ use crate::{
     types::{RatingBatch, RatingRecord, ReputationRound},
 };
 
+/// Domain separator prepended to every canonical PoR rating payload.
+///
+/// The version is part of the domain so future encoding changes cannot make a
+/// signature valid under both the old and new protocols.
+pub const RATING_SIGNING_DOMAIN: &[u8] = b"cordial-por:rating:v1";
+
+/// Encode all signed fields of a rating using the canonical v1 wire layout.
+///
+/// The signature itself is deliberately excluded. The byte layout is:
+///
+/// ```text
+/// domain
+/// round                     u64 big-endian
+/// rater                     u64 big-endian length || bytes
+/// recipient                 u64 big-endian length || bytes
+/// score                     u64 big-endian
+/// interaction_ref presence  0x00, or 0x01 || u64 big-endian length || bytes
+/// ```
+///
+/// Length prefixes make the variable-width `NodeId` and interaction reference
+/// fields unambiguous. Production interaction ratings require a non-empty
+/// `interaction_ref`; that semantic check is performed by the signing and
+/// verification boundary rather than by this pure encoder.
+pub fn canonical_rating_payload(rating: &RatingRecord) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(
+        RATING_SIGNING_DOMAIN.len()
+            + 8
+            + 8
+            + rating.rater.0.len()
+            + 8
+            + rating.recipient.0.len()
+            + 8
+            + 1
+            + rating
+                .interaction_ref
+                .as_ref()
+                .map_or(0, |interaction_ref| 8 + interaction_ref.len()),
+    );
+
+    payload.extend_from_slice(RATING_SIGNING_DOMAIN);
+    payload.extend_from_slice(&rating.round.to_be_bytes());
+    put_bytes(&mut payload, &rating.rater.0);
+    put_bytes(&mut payload, &rating.recipient.0);
+    payload.extend_from_slice(&rating.score.to_be_bytes());
+
+    match &rating.interaction_ref {
+        Some(interaction_ref) => {
+            payload.push(1);
+            put_bytes(&mut payload, interaction_ref);
+        }
+        None => payload.push(0),
+    }
+
+    payload
+}
+
+fn put_bytes(output: &mut Vec<u8>, bytes: &[u8]) {
+    output.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+    output.extend_from_slice(bytes);
+}
+
 /// Return the PoR round opened by a finalized Cordial Miners wave.
 ///
 /// Wave `k` is finalized using reputation state `R_k`. Its admitted

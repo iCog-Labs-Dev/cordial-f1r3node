@@ -29,7 +29,10 @@ pub use interactions::{
 pub use liquid_rank::compute_liquid_rank_contribution;
 pub use matrix::build_rating_matrix;
 pub use normalization::normalize_rating_matrix;
-pub use ratings::{build_rating_batch, rating_round_from_finalized_wave, validate_rating};
+pub use ratings::{
+    RATING_SIGNING_DOMAIN, build_rating_batch, canonical_rating_payload,
+    rating_round_from_finalized_wave, validate_rating,
+};
 pub use state::ReputationState;
 
 pub use block::{build_reputation_block, validate_reputation_block};

@@ -244,8 +244,8 @@ A `RatingRecord` is admissible only if all of the following hold:
 
 6. **Signed rating**
    - the rating must carry a non-empty signature.
-   - future implementation should verify that the signature belongs to
-     `rating.rater`.
+   - the adapter's signed-rating ingress verifies that the signature belongs
+     to `rating.rater` before verified batch construction.
 
 7. **Auditable interaction reference**
    - `interaction_ref` must be present for policy-generated ratings.
@@ -464,9 +464,53 @@ logic.
 
 ---
 
-## 12. Open Design Decisions
+## 12. Canonical Rating-Signing Protocol
 
-The following decisions are intentionally left open for implementation issues:
+The version 1 signed-rating protocol resolves the signing boundary as follows:
+
+1. The signed fields are `round`, `rater`, `recipient`, `score`, and
+   `interaction_ref`. The signature field is excluded from its own payload.
+2. The canonical encoding is a fixed-order binary layout. Integers and
+   variable-field length prefixes are unsigned 64-bit big-endian values.
+   Optional interaction references have a one-byte presence tag before their
+   length and bytes.
+3. Every payload begins with the domain separator
+   `cordial-por:rating:v1`. Encoding revisions must use a new versioned domain.
+4. The canonical bytes are hashed with Blake2b-256 before signing.
+5. Ratings use secp256k1 ECDSA prehash signatures encoded as DER, matching the
+   primary f1r3node validator identity convention.
+6. `rating.rater` signs the rating. Its `NodeId` bytes are the SEC1-encoded
+   secp256k1 public key used for verification.
+7. Private-key access and signing remain adapter-owned. The adapter verifies
+   locally produced ratings and verifies remotely supplied ratings before its
+   verified batch entry point calls the structural `cordial-por` batch builder.
+8. Empty, malformed, wrong-key, and payload-mismatched signatures are rejected.
+9. Key parsing and signing failures propagate through the adapter's explicit
+   signed-rating error instead of producing a partial rating or batch.
+10. `interaction_ref` is mandatory for this interaction-derived signing path
+    and is covered by the signature.
+
+The canonical v1 byte layout is:
+
+```text
+"cordial-por:rating:v1"
+|| round_u64_be
+|| rater_len_u64_be || rater_bytes
+|| recipient_len_u64_be || recipient_bytes
+|| score_u64_be
+|| interaction_ref_presence_u8
+|| [interaction_ref_len_u64_be || interaction_ref_bytes]
+```
+
+This protocol deliberately does not place validator private keys in
+`cordial-por`. That crate defines the deterministic payload; the adapter owns
+the signing infrastructure and algorithm integration.
+
+---
+
+## 13. Remaining Open Design Decisions
+
+The following decisions remain open beyond the version 1 signing protocol:
 
 1. **Exact evidence encoding**
    - Should `interaction_ref` stay as raw bytes, or should it become a typed
@@ -476,29 +520,21 @@ The following decisions are intentionally left open for implementation issues:
    - Should the first policy be binary positive/no-rating, or should it include
      partial scores?
 
-3. **Who signs ratings**
-   - Should every observing validator sign ratings, or should ratings be
-     derived by the proposer from deterministic evidence?
-
-4. **Rater eligibility**
+3. **Rater eligibility**
    - Should only active consensus validators rate, or can observer nodes submit
      ratings?
 
-5. **Interaction window**
+4. **Interaction window**
    - Should "one rating per pair" mean per round, per block, or per configured
      time window?
 
-6. **Evidence availability**
+5. **Evidence availability**
    - Which evidence must be included in reputation blocks, and which evidence
      can be referenced by hash?
 
-7. **Adapter boundary**
-   - Should the adapter emit raw interaction evidence, or fully formed signed
-     ratings?
-
 ---
 
-## 13. Acceptance Criteria for This Specification
+## 14. Acceptance Criteria for This Specification
 
 - Defines "interaction" for this PoR implementation.
 - Cites the PoR paper sections that guide the model.
