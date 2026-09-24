@@ -48,6 +48,7 @@ pub enum PorRatingRoundError {
     LocalBatchAlreadyProduced,
     LocalBatchNotProduced,
     PendingOutboundRatings(usize),
+    RoundNotClosed,
     RoundClosed,
     QuorumNotReached {
         completed_weight: u128,
@@ -78,6 +79,7 @@ impl fmt::Display for PorRatingRoundError {
                 f,
                 "cannot close PoR rating round with {remaining} pending outbound ratings"
             ),
+            Self::RoundNotClosed => write!(f, "PoR rating round is still open"),
             Self::RoundClosed => write!(f, "PoR rating round is already closed"),
             Self::QuorumNotReached {
                 completed_weight,
@@ -154,6 +156,32 @@ pub enum PorRatingRoundCloseReason {
     },
 }
 
+/// Owned output of a deterministically closed PoR rating round.
+///
+/// Consuming a coordinator into this value releases its immutable borrow of
+/// the previous reputation state, allowing the completed batch to drive the
+/// next atomic reputation-state transition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletedPorRatingRound {
+    opened: FinalizedRatingRound,
+    batch: RatingBatch,
+    close_reason: PorRatingRoundCloseReason,
+}
+
+impl CompletedPorRatingRound {
+    pub fn opened(&self) -> FinalizedRatingRound {
+        self.opened
+    }
+
+    pub fn batch(&self) -> &RatingBatch {
+        &self.batch
+    }
+
+    pub fn close_reason(&self) -> PorRatingRoundCloseReason {
+        self.close_reason
+    }
+}
+
 /// Coordinates one local validator's view of an opened PoR rating round.
 pub struct PorRatingRoundCoordinator<'a> {
     blocklace: &'a Blocklace,
@@ -217,6 +245,25 @@ impl<'a> PorRatingRoundCoordinator<'a> {
 
     pub fn close_reason(&self) -> Option<PorRatingRoundCloseReason> {
         self.close_reason
+    }
+
+    /// Consume a closed coordinator and return its owned finalized output.
+    ///
+    /// Open coordinators are rejected so callers cannot bypass quorum or the
+    /// deterministic finalized-wave cutoff.
+    pub fn into_completed(self) -> Result<CompletedPorRatingRound, PorRatingRoundError> {
+        let batch = self
+            .completed_batch
+            .ok_or(PorRatingRoundError::RoundNotClosed)?;
+        let close_reason = self
+            .close_reason
+            .expect("a completed coordinator always records its close reason");
+
+        Ok(CompletedPorRatingRound {
+            opened: self.opened,
+            batch,
+            close_reason,
+        })
     }
 
     pub fn collected_len(&self) -> usize {

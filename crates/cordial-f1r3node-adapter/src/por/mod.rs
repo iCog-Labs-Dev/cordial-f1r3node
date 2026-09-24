@@ -9,6 +9,7 @@ pub mod finality;
 pub mod interactions;
 pub mod lifecycle;
 pub mod ratings;
+pub mod transition;
 pub mod transport;
 
 pub use collector::{BlockProductionRatingCollector, PorRatingCollectorError};
@@ -25,12 +26,16 @@ pub use lifecycle::quorum::{
     PorRatingQuorumProgress, PorRatingRoundClosurePolicy,
 };
 pub use lifecycle::{
-    PorRatingRoundCloseReason, PorRatingRoundCoordinator, PorRatingRoundError, PorRatingRoundStatus,
+    CompletedPorRatingRound, PorRatingRoundCloseReason, PorRatingRoundCoordinator,
+    PorRatingRoundError, PorRatingRoundStatus,
 };
 pub use ratings::{
     PorRatingError, build_finalized_block_production_rating_batch, build_verified_rating_batch,
     rating_signing_hash, sign_admitted_interaction, validate_signed_rating,
     verify_rating_signature,
+};
+pub use transition::{
+    AppliedPorReputationRound, PorReputationBlockCommitments, apply_completed_reputation_round,
 };
 pub use transport::channel::{
     ChannelRatingEnvelopeBroadcaster, ChannelRatingEnvelopeReceiver, PorRatingChannelError,

@@ -3,6 +3,8 @@ use std::collections::BTreeSet;
 use cordial_miners_core::NodeId;
 
 use crate::{
+    audit::verify_reputation_transition,
+    config::PorConfig,
     error::PorError,
     types::{
         RatingRecord, ReputationBlock, ReputationEntry, ReputationList, ReputationRound,
@@ -218,6 +220,36 @@ impl ReputationState {
             entries: new_entries,
         };
 
+        Ok(())
+    }
+
+    /// Audit and atomically apply a reputation block as the current snapshot.
+    ///
+    /// The proposed block is replayed from this state's current reputation and
+    /// the supplied ratings before any mutation occurs. On success, the state
+    /// advances to the block's round and records it as `latest_block`. On any
+    /// validation, replay, or application error, the state remains unchanged.
+    pub fn apply_reputation_block(
+        &mut self,
+        ratings: &[RatingRecord],
+        block: ReputationBlock,
+        config: &PorConfig,
+    ) -> Result<(), PorError> {
+        let previous = ReputationVector {
+            round: self.current_round,
+            values: self.reputation_list.entries.clone(),
+        };
+        verify_reputation_transition(&previous, ratings, &block, config)?;
+
+        let vector = ReputationVector {
+            round: block.reputation_list.round,
+            values: block.reputation_list.entries.clone(),
+        };
+        let mut staged = self.clone();
+        staged.apply_reputation_vector(vector)?;
+        staged.latest_block = Some(block);
+
+        *self = staged;
         Ok(())
     }
 }
