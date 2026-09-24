@@ -396,6 +396,8 @@ circular dependency between ratings and finality.
 - Encoding and decoding bounded versioned block-production rating envelopes.
 - Providing the transport-neutral rating broadcast and receive boundary.
 - Providing a bounded process-local Tokio channel transport.
+- Coordinating local production, resumable delivery, inbound collection, and
+  explicit closure for one rating round.
 
 ---
 
@@ -414,6 +416,7 @@ OrderedFinalizedOutput
   -> bounded v1 wire envelope
   -> transport broadcast and receive
   -> evidence-backed round collection
+  -> explicit rating-round closure
   -> deterministic multi-validator RatingBatch
 ```
 
@@ -596,6 +599,31 @@ The channel transport:
 
 Queue capacity, retry scheduling, and failure escalation remain deployment
 policy rather than consensus rules.
+
+### Rating-Round Lifecycle Coordinator
+
+The adapter's `PorRatingRoundCoordinator` composes finality, rating production,
+transport, and collection for one local validator's view of an opened round.
+It has explicit `Open` and `Closed` states and preserves these lifecycle
+invariants:
+
+- construction validates the finalized-output anchor and preceding reputation
+  state through the evidence-backed collector;
+- local rating production signs and pre-encodes the complete batch before
+  mutating coordinator state, then atomically inserts it into local collection;
+- outbound delivery retains a cursor after each successful envelope, so a
+  retry resumes at the failed envelope instead of resending the delivered
+  prefix;
+- inbound envelopes pass through bounded decoding and all collector evidence
+  checks before changing the collected set;
+- closure requires a locally produced batch and no pending outbound envelope;
+- successful closure freezes a canonical verified `RatingBatch`, after which
+  production, delivery, receipt, and repeated closure are rejected.
+
+The coordinator does not infer that a round is ready to close. Validator
+quorum, finalized cutoff, deadline, and retry scheduling remain explicit
+external policy. This keeps time and network liveness decisions out of the
+deterministic evidence and batching layer.
 
 ---
 
