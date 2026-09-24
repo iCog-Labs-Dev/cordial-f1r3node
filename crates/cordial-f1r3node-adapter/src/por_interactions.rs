@@ -11,7 +11,8 @@ use cordial_miners_core::{
     types::{BlockIdentity, NodeId},
 };
 use cordial_por::{
-    InteractionEvidence, InteractionKind, PorError, rating_round_from_finalized_wave,
+    AdmittedInteraction, InteractionEvidence, InteractionKind, PorError, ReputationState,
+    admit_interaction_evidence, rating_round_from_finalized_wave,
 };
 
 use crate::{ordered_output::OrderedFinalizedOutput, por_finality::FinalizedRatingRound};
@@ -25,6 +26,7 @@ pub enum PorInteractionError {
     UnknownFinalizedBlock,
     FinalizedRoundMismatch,
     RatingRound(PorError),
+    Admission(PorError),
 }
 
 impl fmt::Display for PorInteractionError {
@@ -46,6 +48,7 @@ impl fmt::Display for PorInteractionError {
                 "opened PoR round does not match the finalized output wave"
             ),
             Self::RatingRound(error) => error.fmt(f),
+            Self::Admission(error) => write!(f, "PoR interaction admission failed: {error}"),
         }
     }
 }
@@ -53,7 +56,7 @@ impl fmt::Display for PorInteractionError {
 impl std::error::Error for PorInteractionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::RatingRound(error) => Some(error),
+            Self::RatingRound(error) | Self::Admission(error) => Some(error),
             _ => None,
         }
     }
@@ -128,4 +131,24 @@ pub fn extract_block_production_evidence(
             evidence_ref: block.content_hash.to_vec(),
         })
         .collect())
+}
+
+/// Extract and admit finalized block-production interactions atomically.
+///
+/// Evidence extraction remains adapter-owned, while admission is delegated to
+/// `cordial_por` so validator membership, ejection, and round policy have one
+/// authoritative implementation. No score or signature is produced here.
+pub fn admit_finalized_block_production_interactions(
+    blocklace: &Blocklace,
+    output: &OrderedFinalizedOutput,
+    opened: FinalizedRatingRound,
+    rater: &NodeId,
+    state: &ReputationState,
+) -> Result<Vec<AdmittedInteraction>, PorInteractionError> {
+    extract_block_production_evidence(blocklace, output, opened, rater)?
+        .into_iter()
+        .map(|evidence| {
+            admit_interaction_evidence(evidence, state).map_err(PorInteractionError::Admission)
+        })
+        .collect()
 }
