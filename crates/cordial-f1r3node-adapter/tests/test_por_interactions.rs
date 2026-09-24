@@ -3,12 +3,15 @@ use std::collections::HashSet;
 use cordial_f1r3node_adapter::{
     ordered_output::OrderedFinalizedOutput,
     por_finality::{FinalizedRatingRound, PorFinalityTracker},
-    por_interactions::{PorInteractionError, extract_block_production_evidence},
+    por_interactions::{
+        PorInteractionError, admit_finalized_block_production_interactions,
+        extract_block_production_evidence,
+    },
 };
 use cordial_miners_core::{
     Block, BlockContent, BlockIdentity, Blocklace, NodeId, crypto::CryptoVerifier,
 };
-use cordial_por::{InteractionKind, ReputationState, admit_interaction_evidence};
+use cordial_por::{InteractionKind, PorError, ReputationState, admit_interaction_evidence};
 
 const WAVELENGTH: u64 = 3;
 
@@ -188,6 +191,87 @@ fn extracted_evidence_passes_por_admission_for_known_active_validators() {
     for interaction in evidence {
         assert!(admit_interaction_evidence(interaction, &state).is_ok());
     }
+}
+
+#[test]
+fn extracts_and_admits_known_active_block_producers() {
+    let (blocklace, leader, second, third) = wave_zero_chain();
+    let output = output(&[&third, &second, &leader], Some(&leader), WAVELENGTH);
+    let opened = FinalizedRatingRound {
+        finalized_wave: 0,
+        rating_round: 1,
+    };
+    let mut state = ReputationState::new(0);
+    state.set_reputation(node(1), 100);
+    state.set_reputation(node(2), 100);
+    state.set_reputation(node(9), 100);
+
+    let admitted = admit_finalized_block_production_interactions(
+        &blocklace,
+        &output,
+        opened,
+        &node(9),
+        &state,
+    )
+    .unwrap();
+
+    assert_eq!(admitted.len(), 2);
+    assert_eq!(admitted[0].evidence().recipient, node(1));
+    assert_eq!(admitted[1].evidence().recipient, node(2));
+}
+
+#[test]
+fn admission_bridge_rejects_an_unknown_block_producer() {
+    let (blocklace, leader, second, third) = wave_zero_chain();
+    let output = output(&[&leader, &second, &third], Some(&leader), WAVELENGTH);
+    let opened = FinalizedRatingRound {
+        finalized_wave: 0,
+        rating_round: 1,
+    };
+    let mut state = ReputationState::new(0);
+    state.set_reputation(node(1), 100);
+    state.set_reputation(node(9), 100);
+
+    assert_eq!(
+        admit_finalized_block_production_interactions(
+            &blocklace,
+            &output,
+            opened,
+            &node(9),
+            &state,
+        ),
+        Err(PorInteractionError::Admission(
+            PorError::UnknownInteractionRecipient
+        ))
+    );
+}
+
+#[test]
+fn admission_bridge_rejects_an_ejected_rater() {
+    let (blocklace, leader, second, third) = wave_zero_chain();
+    let output = output(&[&leader, &second, &third], Some(&leader), WAVELENGTH);
+    let opened = FinalizedRatingRound {
+        finalized_wave: 0,
+        rating_round: 1,
+    };
+    let mut state = ReputationState::new(0);
+    state.set_reputation(node(1), 100);
+    state.set_reputation(node(2), 100);
+    state.set_reputation(node(9), 100);
+    state.eject_validator(&node(9)).unwrap();
+
+    assert_eq!(
+        admit_finalized_block_production_interactions(
+            &blocklace,
+            &output,
+            opened,
+            &node(9),
+            &state,
+        ),
+        Err(PorInteractionError::Admission(
+            PorError::EjectedInteractionRater
+        ))
+    );
 }
 
 #[test]
