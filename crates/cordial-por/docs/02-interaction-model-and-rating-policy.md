@@ -400,6 +400,8 @@ circular dependency between ratings and finality.
   explicit closure for one rating round.
 - Evaluating complete-rater participation against a strict reputation-weighted
   closure quorum.
+- Closing stalled rounds at a deterministic finalized-wave cutoff and recording
+  the applied close reason.
 
 The adapter groups these responsibilities under one domain module:
 
@@ -412,6 +414,7 @@ src/por/
   collector.rs
   lifecycle/
     mod.rs
+    cutoff.rs
     quorum.rs
   transport/
     mod.rs
@@ -440,7 +443,7 @@ OrderedFinalizedOutput
   -> bounded v1 wire envelope
   -> transport broadcast and receive
   -> evidence-backed round collection
-  -> complete-rater weighted quorum or explicit finalized cutoff
+  -> complete-rater weighted quorum or finalized-wave cutoff
   -> rating-round closure
   -> deterministic multi-validator RatingBatch
 ```
@@ -466,7 +469,9 @@ The collector enforces:
 
 The collector exposes whether a rater's complete deterministic recipient set
 has arrived, but does not itself close the round. The adapter's quorum policy
-combines that completeness result with active reputation weight.
+combines that completeness result with active reputation weight. Closed
+snapshots retain only complete per-rater batches; accepted partial prefixes
+remain observable while collection is open but cannot influence reputation.
 
 This preserves the required direction:
 
@@ -644,6 +649,10 @@ invariants:
 - closure requires a locally produced batch and no pending outbound envelope;
 - quorum closure requires complete batches holding strictly more than two
   thirds of active reputation weight from the preceding state;
+- cutoff closure defaults to the next finalized Cordial wave and supports a
+  configured nonzero wave lag;
+- both closure paths discard every incomplete per-rater prefix and record
+  whether quorum or the finalized-wave cutoff triggered closure;
 - successful closure freezes a canonical verified `RatingBatch`, after which
   production, delivery, receipt, and repeated closure are rejected.
 
@@ -655,10 +664,12 @@ envelope from a multi-rating batch is not participation. When the deterministic
 recipient set is empty, the canonical empty batch is complete without a wire
 message.
 
-`close_if_quorum` enforces this policy. The lower-level explicit `close` path is
-retained for a future finalized-wave cutoff rather than a wall-clock decision.
-The exact cutoff and retry scheduling remain external policy, keeping time and
-network liveness decisions out of the evidence and batching layer.
+`close_if_quorum` enforces weighted participation.
+`close_at_finalized_wave` supplies the liveness fallback and defaults to
+`opened.finalized_wave + 1`; checked arithmetic rejects overflow. Neither API
+uses local wall-clock time. Local batch production and complete outbound
+delivery remain prerequisites for both, while retry scheduling remains
+deployment policy.
 
 ---
 
@@ -687,12 +698,7 @@ The following decisions remain open beyond the version 1 signing protocol:
    - Which evidence must be included in reputation blocks, and which evidence
      can be referenced by hash?
 
-6. **Round closure cutoff**
-   - The default participation quorum is strict `> 2/3` of active reputation
-     weight. Which later finalized-wave cutoff permits explicit closure when
-     that quorum is unavailable?
-
-7. **Transport binding**
+6. **Transport binding**
    - Should rating envelopes use peer gossip, gRPC, or both?
 
 ---
