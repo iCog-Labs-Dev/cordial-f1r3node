@@ -5,6 +5,7 @@ use cordial_f1r3node_adapter::{
     por_finality::{FinalizedRatingRound, PorFinalityTracker},
     por_interactions::PorInteractionError,
     por_rating_collector::{BlockProductionRatingCollector, PorRatingCollectorError},
+    por_rating_wire::BlockProductionRatingEnvelopeV1,
     por_ratings::{
         PorRatingError, build_finalized_block_production_rating_batch, rating_signing_hash,
         validate_signed_rating,
@@ -164,6 +165,53 @@ fn collects_multiple_validators_into_one_canonical_verified_batch() {
     for rating in &batch.ratings {
         assert_eq!(validate_signed_rating(rating, &fixture.config), Ok(()));
     }
+}
+
+#[test]
+fn accepts_a_decoded_block_production_rating_envelope() {
+    let fixture = fixture();
+    let rating = local_batch(&fixture, 8).ratings.remove(0);
+    let bytes = BlockProductionRatingEnvelopeV1::new(fixture.opened.finalized_wave, rating.clone())
+        .unwrap()
+        .encode();
+    let decoded = BlockProductionRatingEnvelopeV1::decode(&bytes).unwrap();
+    let mut collector = BlockProductionRatingCollector::new(
+        &fixture.blocklace,
+        &fixture.output,
+        fixture.opened,
+        &fixture.state,
+        &fixture.config,
+    )
+    .unwrap();
+
+    collector.insert_envelope(decoded).unwrap();
+    let batch = collector.finish().unwrap();
+
+    assert_eq!(batch.ratings, vec![rating]);
+}
+
+#[test]
+fn rejects_an_envelope_from_another_finalized_wave() {
+    let fixture = fixture();
+    let mut rating = local_batch(&fixture, 8).ratings.remove(0);
+    rating.round += 1;
+    resign(&mut rating, 8);
+    let envelope =
+        BlockProductionRatingEnvelopeV1::new(fixture.opened.finalized_wave + 1, rating).unwrap();
+    let mut collector = BlockProductionRatingCollector::new(
+        &fixture.blocklace,
+        &fixture.output,
+        fixture.opened,
+        &fixture.state,
+        &fixture.config,
+    )
+    .unwrap();
+
+    assert_eq!(
+        collector.insert_envelope(envelope),
+        Err(PorRatingCollectorError::InvalidFinalizedWave)
+    );
+    assert!(collector.is_empty());
 }
 
 #[test]
