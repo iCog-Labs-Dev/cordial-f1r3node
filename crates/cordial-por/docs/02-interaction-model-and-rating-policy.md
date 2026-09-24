@@ -373,8 +373,8 @@ circular dependency between ratings and finality.
 - Cordial Miners tau ordering.
 - Cordial Miners blocklace validation.
 - Evidence extraction from live protocol traffic.
-- Signature verification against f1r3node key material unless explicitly wired
-  later.
+- Validator private-key custody, rating signing, or signature verification
+  against f1r3node key material.
 
 ### `cordial-miners-core` owns
 
@@ -388,55 +388,40 @@ circular dependency between ratings and finality.
 - Translating f1r3node events into Cordial Miners structures.
 - Observing execution and block-production results.
 - Supplying protocol evidence that can become `interaction_ref`.
-- Future bridge from protocol events into PoR interaction evidence.
+- Extracting and admitting interactions from finalized Cordial output.
+- Validator private-key custody and canonical rating signatures.
+- Verifying signed ratings before deterministic batch construction.
+- Bridging a finalized wave atomically into its local signed rating batch.
 
 ---
 
-## 10. Future Implementation Shape
+## 10. Implemented Interaction Pipeline
 
-This specification does not require code immediately. When implemented, the
-natural source location is:
-
-```text
-crates/cordial-por/src/interactions.rs
-```
-
-Possible future types:
-
-```rust
-pub enum InteractionKind {
-    BlockProduction,
-    CordialReferences,
-    ExecutionResult,
-    DeployInclusion,
-}
-
-pub struct InteractionEvidence {
-    pub round: ReputationRound,
-    pub kind: InteractionKind,
-    pub rater: NodeId,
-    pub recipient: NodeId,
-    pub evidence_ref: Vec<u8>,
-}
-
-pub trait RatingAdmissionPolicy {
-    fn admit_rating(
-        &self,
-        evidence: InteractionEvidence,
-        state: &ReputationState,
-        config: &PorConfig,
-    ) -> Result<Option<RatingRecord>, PorError>;
-}
-```
-
-This sketch is intentionally non-binding. The main point is that the policy
-layer should transform:
+The implemented block-production path is:
 
 ```text
-protocol evidence -> admitted RatingRecord
+OrderedFinalizedOutput
+  -> canonical InteractionEvidence per producer
+  -> AdmittedInteraction
+  -> deterministic score
+  -> canonical signed payload
+  -> validator signature
+  -> verified RatingRecord
+  -> deterministic RatingBatch
 ```
 
-and not:
+`cordial-por/src/interactions.rs` owns the interaction vocabulary, admission,
+and score policy. The adapter's `por_interactions.rs` extracts finalized
+evidence, while `por_ratings.rs` owns signing, verification, and the atomic
+`build_finalized_block_production_rating_batch` orchestration entry point.
+
+This preserves the required direction:
+
+```text
+finalized protocol evidence -> admitted and signed RatingRecord
+```
+
+and excludes:
 
 ```text
 arbitrary node opinion -> RatingRecord
