@@ -2,8 +2,9 @@
 //!
 //! The coordinator connects local rating production, resumable outbound
 //! delivery, inbound evidence-backed collection, and explicit closure. It does
-//! not decide quorum or deadlines; an external policy chooses when to call
-//! `close`.
+//! not use wall-clock deadlines: `close_if_quorum` applies deterministic
+//! complete-rater weight, while an external finalized cutoff may choose the
+//! explicit `close` path.
 
 use std::fmt;
 
@@ -14,6 +15,9 @@ use crate::{
     ordered_output::OrderedFinalizedOutput,
     por_finality::FinalizedRatingRound,
     por_rating_collector::{BlockProductionRatingCollector, PorRatingCollectorError},
+    por_rating_quorum::{
+        PorRatingQuorumError, PorRatingQuorumProgress, PorRatingRoundClosurePolicy,
+    },
     por_rating_transport::{
         PorRatingTransportError, RatingEnvelopeBroadcaster, encode_rating_batch,
         receive_rating_envelope,
@@ -34,10 +38,15 @@ pub enum PorRatingRoundError {
     Rating(PorRatingError),
     Collector(PorRatingCollectorError),
     Transport(PorRatingTransportError),
+    Quorum(PorRatingQuorumError),
     LocalBatchAlreadyProduced,
     LocalBatchNotProduced,
     PendingOutboundRatings(usize),
     RoundClosed,
+    QuorumNotReached {
+        completed_weight: u128,
+        required_weight: u128,
+    },
     Broadcast {
         delivered: usize,
         remaining: usize,
@@ -51,6 +60,7 @@ impl fmt::Display for PorRatingRoundError {
             Self::Rating(error) => error.fmt(f),
             Self::Collector(error) => error.fmt(f),
             Self::Transport(error) => error.fmt(f),
+            Self::Quorum(error) => error.fmt(f),
             Self::LocalBatchAlreadyProduced => {
                 write!(f, "local PoR rating batch was already produced")
             }
@@ -62,6 +72,13 @@ impl fmt::Display for PorRatingRoundError {
                 "cannot close PoR rating round with {remaining} pending outbound ratings"
             ),
             Self::RoundClosed => write!(f, "PoR rating round is already closed"),
+            Self::QuorumNotReached {
+                completed_weight,
+                required_weight,
+            } => write!(
+                f,
+                "PoR rating quorum has weight {completed_weight}, but requires {required_weight}"
+            ),
             Self::Broadcast {
                 delivered,
                 remaining,
@@ -80,6 +97,7 @@ impl std::error::Error for PorRatingRoundError {
             Self::Rating(error) => Some(error),
             Self::Collector(error) => Some(error),
             Self::Transport(error) => Some(error),
+            Self::Quorum(error) => Some(error),
             _ => None,
         }
     }
@@ -100,6 +118,12 @@ impl From<PorRatingCollectorError> for PorRatingRoundError {
 impl From<PorRatingTransportError> for PorRatingRoundError {
     fn from(error: PorRatingTransportError) -> Self {
         Self::Transport(error)
+    }
+}
+
+impl From<PorRatingQuorumError> for PorRatingRoundError {
+    fn from(error: PorRatingQuorumError) -> Self {
+        Self::Quorum(error)
     }
 }
 
@@ -174,6 +198,19 @@ impl<'a> PorRatingRoundCoordinator<'a> {
         self.outbound_envelopes
             .len()
             .saturating_sub(self.next_outbound)
+    }
+
+    /// Evaluate deterministic complete-rater participation while the round is open.
+    pub fn quorum_progress(
+        &self,
+        policy: &PorRatingRoundClosurePolicy,
+    ) -> Result<PorRatingQuorumProgress, PorRatingRoundError> {
+        self.require_open()?;
+        Ok(policy.evaluate(
+            self.collector
+                .as_ref()
+                .expect("open coordinator always has a collector"),
+        )?)
     }
 
     /// Build, pre-encode, and locally collect this validator's rating batch.
@@ -251,16 +288,9 @@ impl<'a> PorRatingRoundCoordinator<'a> {
         Ok(())
     }
 
-    /// Explicitly close the round after external quorum/deadline policy fires.
+    /// Explicitly close the round after an external finalized cutoff fires.
     pub fn close(&mut self) -> Result<&RatingBatch, PorRatingRoundError> {
-        self.require_open()?;
-        if self.local_batch.is_none() {
-            return Err(PorRatingRoundError::LocalBatchNotProduced);
-        }
-        let pending = self.pending_outbound();
-        if pending != 0 {
-            return Err(PorRatingRoundError::PendingOutboundRatings(pending));
-        }
+        self.require_close_prerequisites()?;
 
         let batch = self
             .collector
@@ -273,6 +303,36 @@ impl<'a> PorRatingRoundCoordinator<'a> {
             .completed_batch
             .as_ref()
             .expect("completed batch was just stored"))
+    }
+
+    /// Close only after complete raters hold the policy's required weight.
+    pub fn close_if_quorum(
+        &mut self,
+        policy: &PorRatingRoundClosurePolicy,
+    ) -> Result<&RatingBatch, PorRatingRoundError> {
+        self.require_close_prerequisites()?;
+        let progress = self.quorum_progress(policy)?;
+        if !progress.is_reached() {
+            return Err(PorRatingRoundError::QuorumNotReached {
+                completed_weight: progress.completed_weight,
+                required_weight: progress.required_weight,
+            });
+        }
+
+        self.close()
+    }
+
+    fn require_close_prerequisites(&self) -> Result<(), PorRatingRoundError> {
+        self.require_open()?;
+        if self.local_batch.is_none() {
+            return Err(PorRatingRoundError::LocalBatchNotProduced);
+        }
+        let pending = self.pending_outbound();
+        if pending != 0 {
+            return Err(PorRatingRoundError::PendingOutboundRatings(pending));
+        }
+
+        Ok(())
     }
 
     fn require_open(&self) -> Result<(), PorRatingRoundError> {

@@ -167,6 +167,35 @@ impl<'a> BlockProductionRatingCollector<'a> {
         self.ratings.is_empty()
     }
 
+    /// Return whether every deterministic block-production rating expected
+    /// from `rater` has been collected.
+    ///
+    /// A rater with no admissible recipients is complete without emitting a
+    /// wire envelope: its canonical batch is empty. Otherwise, partial batches
+    /// remain incomplete until one accepted rating exists for every expected
+    /// recipient.
+    pub fn is_rater_complete(&self, rater: &NodeId) -> Result<bool, PorRatingCollectorError> {
+        let expected = admit_finalized_block_production_interactions(
+            self.blocklace,
+            self.output,
+            self.opened,
+            rater,
+            self.state,
+        )?
+        .len();
+        let collected = self
+            .ratings
+            .values()
+            .filter(|rating| &rating.rater == rater)
+            .count();
+
+        Ok(collected == expected)
+    }
+
+    pub(crate) fn reputation_state(&self) -> &ReputationState {
+        self.state
+    }
+
     /// Insert one signed rating after signature and finalized-evidence checks.
     pub fn insert(&mut self, rating: RatingRecord) -> Result<(), PorRatingCollectorError> {
         self.validate_submission(&self.ratings, &rating)?;
