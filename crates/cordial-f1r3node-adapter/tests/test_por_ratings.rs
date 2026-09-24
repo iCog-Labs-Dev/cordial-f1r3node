@@ -1,8 +1,17 @@
-use cordial_f1r3node_adapter::por_ratings::{
-    PorRatingError, build_verified_rating_batch, sign_admitted_interaction, validate_signed_rating,
-    verify_rating_signature,
+use std::collections::{BTreeMap, HashSet};
+
+use cordial_f1r3node_adapter::{
+    ordered_output::OrderedFinalizedOutput,
+    por_finality::{FinalizedRatingRound, PorFinalityTracker},
+    por_interactions::PorInteractionError,
+    por_ratings::{
+        PorRatingError, build_finalized_block_production_rating_batch, build_verified_rating_batch,
+        sign_admitted_interaction, validate_signed_rating, verify_rating_signature,
+    },
 };
-use cordial_miners_core::NodeId;
+use cordial_miners_core::{
+    Block, BlockContent, BlockIdentity, Blocklace, NodeId, crypto::CryptoVerifier,
+};
 use cordial_por::{
     InteractionEvidence, InteractionKind, PorConfig, PorError, ReputationState,
     admit_interaction_evidence,
@@ -11,6 +20,22 @@ use k256::ecdsa::SigningKey;
 
 const FINALIZED_WAVE: u64 = 4;
 const RATING_ROUND: u64 = FINALIZED_WAVE + 1;
+const WAVELENGTH: u64 = 3;
+
+struct AcceptAll;
+
+impl CryptoVerifier for AcceptAll {
+    type Error = String;
+
+    fn verify_block(
+        &self,
+        _content: &BlockContent,
+        _signature: &[u8],
+        _creator: &NodeId,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
 
 fn private_key(seed: u8) -> [u8; 32] {
     [seed; 32]
@@ -46,6 +71,67 @@ fn admitted(rater_seed: u8, recipient_seed: u8) -> cordial_por::AdmittedInteract
         &state,
     )
     .unwrap()
+}
+
+fn block(tag: u8, creator_seed: u8, predecessor: Option<&BlockIdentity>) -> Block {
+    let mut content_hash = [0; 32];
+    content_hash[0] = tag;
+
+    Block {
+        identity: BlockIdentity {
+            content_hash,
+            creator: node(creator_seed),
+            signature: vec![tag],
+        },
+        content: BlockContent {
+            payload: vec![tag],
+            predecessors: predecessor.into_iter().cloned().collect::<HashSet<_>>(),
+        },
+    }
+}
+
+fn finalized_wave_zero_fixture() -> (
+    Blocklace,
+    OrderedFinalizedOutput,
+    FinalizedRatingRound,
+    ReputationState,
+    BTreeMap<NodeId, Vec<u8>>,
+) {
+    let mut blocklace = Blocklace::new();
+    let leader = block(1, 1, None);
+    let second = block(2, 2, Some(&leader.identity));
+    let third = block(3, 1, Some(&second.identity));
+
+    for block in [&leader, &second, &third] {
+        blocklace.insert(block.clone(), &AcceptAll).unwrap();
+    }
+
+    let output = OrderedFinalizedOutput::new(
+        vec![
+            third.identity.clone(),
+            second.identity.clone(),
+            leader.identity.clone(),
+        ],
+        Some(leader.identity.clone()),
+        WAVELENGTH,
+        3,
+        3,
+    )
+    .with_timestamp(0);
+    let opened = PorFinalityTracker::new()
+        .observe_finalized_output(&blocklace, &output)
+        .unwrap()
+        .unwrap();
+    let mut state = ReputationState::new(0);
+    state.set_reputation(node(1), 100);
+    state.set_reputation(node(2), 100);
+    state.set_reputation(node(9), 100);
+    let expected_references = BTreeMap::from([
+        (node(1), leader.identity.content_hash.to_vec()),
+        (node(2), second.identity.content_hash.to_vec()),
+    ]);
+
+    (blocklace, output, opened, state, expected_references)
 }
 
 #[test]
@@ -176,4 +262,110 @@ fn verified_batch_preserves_canonical_recipient_then_rater_order() {
         build_verified_rating_batch(RATING_ROUND, vec![first, second, third], &config).unwrap();
 
     assert_eq!(batch.ratings, expected);
+}
+
+#[test]
+fn finalized_output_builds_a_verified_block_production_rating_batch() {
+    let (blocklace, output, opened, state, expected_references) = finalized_wave_zero_fixture();
+    let config = PorConfig::default();
+
+    let batch = build_finalized_block_production_rating_batch(
+        &blocklace,
+        &output,
+        opened,
+        &node(9),
+        &state,
+        &config,
+        &private_key(9),
+    )
+    .unwrap();
+
+    assert_eq!(batch.round, opened.rating_round);
+    assert_eq!(batch.ratings.len(), expected_references.len());
+    assert!(batch.ratings.windows(2).all(|ratings| {
+        (&ratings[0].recipient, &ratings[0].rater) <= (&ratings[1].recipient, &ratings[1].rater)
+    }));
+
+    for rating in &batch.ratings {
+        assert_eq!(rating.rater, node(9));
+        assert_eq!(rating.score, config.maximum_rating);
+        assert_eq!(
+            rating.interaction_ref.as_ref(),
+            expected_references.get(&rating.recipient)
+        );
+        assert_eq!(validate_signed_rating(rating, &config), Ok(()));
+    }
+}
+
+#[test]
+fn finalized_rating_batch_is_deterministic() {
+    let (blocklace, output, opened, state, _) = finalized_wave_zero_fixture();
+    let config = PorConfig::default();
+
+    let first = build_finalized_block_production_rating_batch(
+        &blocklace,
+        &output,
+        opened,
+        &node(9),
+        &state,
+        &config,
+        &private_key(9),
+    )
+    .unwrap();
+    let second = build_finalized_block_production_rating_batch(
+        &blocklace,
+        &output,
+        opened,
+        &node(9),
+        &state,
+        &config,
+        &private_key(9),
+    )
+    .unwrap();
+
+    assert_eq!(first, second);
+}
+
+#[test]
+fn finalized_rating_batch_propagates_admission_failure_atomically() {
+    let (blocklace, output, opened, _, _) = finalized_wave_zero_fixture();
+    let state = {
+        let mut missing_recipient = ReputationState::new(0);
+        missing_recipient.set_reputation(node(1), 100);
+        missing_recipient.set_reputation(node(9), 100);
+        missing_recipient
+    };
+
+    assert_eq!(
+        build_finalized_block_production_rating_batch(
+            &blocklace,
+            &output,
+            opened,
+            &node(9),
+            &state,
+            &PorConfig::default(),
+            &private_key(9),
+        ),
+        Err(PorRatingError::Interaction(PorInteractionError::Admission(
+            PorError::UnknownInteractionRecipient
+        )))
+    );
+}
+
+#[test]
+fn finalized_rating_batch_rejects_a_non_rater_signing_key() {
+    let (blocklace, output, opened, state, _) = finalized_wave_zero_fixture();
+
+    assert_eq!(
+        build_finalized_block_production_rating_batch(
+            &blocklace,
+            &output,
+            opened,
+            &node(9),
+            &state,
+            &PorConfig::default(),
+            &private_key(8),
+        ),
+        Err(PorRatingError::InvalidSignature)
+    );
 }
