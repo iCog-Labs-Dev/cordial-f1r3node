@@ -395,6 +395,7 @@ circular dependency between ratings and finality.
 - Collecting local and received evidence-backed ratings into a round batch.
 - Encoding and decoding bounded versioned block-production rating envelopes.
 - Providing the transport-neutral rating broadcast and receive boundary.
+- Providing a bounded process-local Tokio channel transport.
 
 ---
 
@@ -573,6 +574,28 @@ untrusted bytes
 
 The transport boundary does not close rating rounds or decide quorum and
 deadlines.
+
+### Bounded Tokio Channel Transport
+
+The first concrete transport is a process-local bounded Tokio channel. It is
+intended to exercise the complete asynchronous lifecycle before binding the
+protocol to gRPC or peer gossip.
+
+The channel transport:
+
+- rejects zero capacity instead of allowing the Tokio constructor to panic;
+- rejects envelopes above the v1 maximum before copying them into the queue;
+- uses synchronous `try_send` so a full queue reports backpressure without
+  blocking a consensus task;
+- distinguishes full and closed channel failures;
+- exposes a cloneable broadcaster for concurrent producers;
+- asynchronously receives, decodes, and submits envelopes to the
+  evidence-backed collector;
+- distinguishes an accepted item from orderly closure after all senders are
+  dropped.
+
+Queue capacity, retry scheduling, and failure escalation remain deployment
+policy rather than consensus rules.
 
 ---
 
