@@ -42,6 +42,7 @@ pub mod ordered_output_server;
 pub mod por_finality;
 pub mod por_interactions;
 pub mod por_rating_collector;
+pub mod por_rating_transport;
 pub mod por_rating_wire;
 pub mod por_ratings;
 pub mod proposer;
