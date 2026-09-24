@@ -1,19 +1,17 @@
 //! Integration tests for `grpc_ingest` — protobuf ingestion and validation pipeline.
 //!
-//! Tests the full pipeline from f1r3node protobuf wire format (`BlockMessage`)
-//! through the `GrpcBlockMapper` (translation and validation) and into
-//! `BlocklaceAdapter` (semantic validation and consensus callbacks).
-
-use std::collections::HashSet;
+//! Real f1r3node fixtures exercise `from_protobuf` wire validation. Adapter-owned
+//! fixtures exercise `from_adapter_message` local hash/signature validation and
+//! delivery to recording `BlocklaceAdapter` implementations.
 
 use cordial_miners_core::Block;
-use cordial_miners_core::crypto::{hash_content, sign};
-use cordial_miners_core::execution::{BlockState, CordialBlockPayload};
-use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
+use cordial_miners_core::crypto::sign;
+use cordial_miners_core::types::{BlockIdentity, NodeId};
 
 use cordial_f1r3node_adapter::block_translation::{
     BlockMessage, Body, F1r3flyState, Header, Justification,
 };
+use cordial_f1r3node_adapter::crypto_bridge::compute_adapter_snapshot_hash;
 use cordial_f1r3node_adapter::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
 
 use casper::rust::validator_identity::ValidatorIdentity;
@@ -48,15 +46,20 @@ fn test_public_key(signing_key: &[u8]) -> Vec<u8> {
     vk.to_encoded_point(true).as_bytes().to_vec()
 }
 
-/// Build a BlockMessage directly from scratch (no roundtrip).
-/// Strategy: Create a simple message, use message_to_block to get Block,
-/// then ensure the signature is valid for that Block's content.
+/// Build an adapter-owned message for `from_adapter_message`.
+///
+/// Strategy: assemble the message fields, compute the local `block_hash`
+/// via [`compute_adapter_snapshot_hash`], then translate to a
+/// [`Block`] via `message_to_block` to obtain the internal content hash,
+/// and sign that hash with the supplied key.
 fn build_test_block_message(
     creator: &[u8],
     parent_hashes: &[Vec<u8>],
     signing_key: &[u8],
     sig_algorithm: &str,
 ) -> BlockMessage {
+    use cordial_f1r3node_adapter::block_translation::message_to_block;
+
     // Build justifications first — message_to_block reconstructs predecessors from these,
     // so the creator (validator) used here must match what we use when hashing BlockContent.
     // Using `i as u8` repeated 33 times gives a unique, valid-length (33-byte) creator per slot.
@@ -70,45 +73,10 @@ fn build_test_block_message(
         })
         .collect();
 
-    // Create a minimal CordialBlockPayload with empty fields
-    let payload = CordialBlockPayload {
-        state: BlockState {
-            pre_state_hash: vec![0u8; 32],
-            post_state_hash: vec![1u8; 32],
-            bonds: vec![],
-            block_number: 0,
-        },
-        deploys: vec![],
-        rejected_deploys: vec![],
-        system_deploys: vec![],
-    };
-    let payload_bytes = payload.to_bytes();
-
-    // Build the BlockContent using the SAME creator values as the justifications above.
-    // This ensures hash_content(&content) == the hash message_to_block will recompute
-    // when it reconstructs predecessors from justifications.
-    let mut predecessors = HashSet::new();
-    for jus in &justifications {
-        let mut hash_array = [0u8; 32];
-        hash_array.copy_from_slice(&jus.latest_block_hash);
-        predecessors.insert(BlockIdentity {
-            content_hash: hash_array,
-            creator: NodeId(jus.validator.clone()),
-            signature: vec![], // Wire format: predecessor sigs are absent by design
-        });
-    }
-
-    let content = BlockContent {
-        payload: payload_bytes,
-        predecessors,
-    };
-
-    // Compute the content hash and sign it
-    let content_hash = hash_content(&content);
-    let signature = sign(&content_hash, signing_key);
-
-    BlockMessage {
-        block_hash: content_hash.to_vec(),
+    // Build the message with a placeholder block_hash and empty signature;
+    // we'll fill both in after computing the correct values.
+    let mut msg = BlockMessage {
+        block_hash: vec![0u8; 32], // placeholder — replaced below
         header: Header {
             parents_hash_list: parent_hashes.to_vec(),
             timestamp: 0,
@@ -130,11 +98,26 @@ fn build_test_block_message(
         justifications,
         sender: creator.to_vec(),
         seq_num: 0,
-        sig: signature,
+        sig: vec![], // placeholder — replaced below
         sig_algorithm: sig_algorithm.to_string(),
         shard_id: "0".to_string(),
         extra_bytes: vec![],
-    }
+    };
+
+    // 1. Compute the adapter-local snapshot hash.
+    let adapter_hash = compute_adapter_snapshot_hash(&msg);
+    msg.block_hash = adapter_hash.to_vec();
+
+    // 2. Translate to Block to obtain the internal content_hash that the
+    //    signature validation path will verify against.
+    let block = message_to_block(&msg).expect("test message should translate");
+    let content_hash = block.identity.content_hash;
+
+    // 3. Sign the internal content hash.
+    let signature = sign(&content_hash, signing_key);
+    msg.sig = signature;
+
+    msg
 }
 
 // ── Test Helpers ─────────────────────────────────────────────────────────
@@ -227,6 +210,20 @@ fn accepts_block_signed_by_f1r3node_validator_identity() {
     assert!(validated.block.identity.signature.is_empty());
     assert_eq!(validated.wire_hash.as_slice(), signed.block_hash.as_ref());
     assert_eq!(validated.wire_signature, signed.sig.as_ref());
+    let adapter_msg =
+        cordial_f1r3node_adapter::block_translation::message_from_f1r3node(&signed).unwrap();
+    let snapshot_hash = compute_adapter_snapshot_hash(&adapter_msg);
+    assert_ne!(snapshot_hash.as_slice(), signed.block_hash.as_ref());
+    for local_hash in [snapshot_hash, validated.block.identity.content_hash] {
+        let mut substituted = signed.clone();
+        substituted.block_hash = local_hash.to_vec().into();
+        let error = mapper.from_protobuf(&substituted).unwrap_err();
+        assert!(error.to_string().contains("Wire hash mismatch"));
+    }
+    let mut tampered_signature = signed.clone();
+    tampered_signature.sig = vec![0; signed.sig.len()].into();
+    assert!(mapper.from_protobuf(&tampered_signature).is_err());
+
     assert_ne!(
         validated.block.identity.content_hash.as_slice(),
         signed.block_hash.as_ref(),
@@ -277,7 +274,7 @@ fn rejects_tampered_f1r3node_wire_hash() {
 }
 
 #[test]
-fn full_pipeline_valid_block_from_protobuf_to_adapter() {
+fn full_pipeline_valid_local_message_to_adapter() {
     let mapper: GrpcBlockMapper<(), (), ()> = GrpcBlockMapper::new();
     let mut adapter = RecordingAdapter::new();
 
@@ -285,7 +282,7 @@ fn full_pipeline_valid_block_from_protobuf_to_adapter() {
     let creator = test_public_key(&signing_key);
     let block_msg = build_test_block_message(&creator, &[], &signing_key, "secp256k1");
 
-    // Step 1: Mapper translates and validates protobuf message
+    // Step 1: Mapper translates and validates the local adapter message
     let mapped = mapper
         .from_adapter_message(&block_msg)
         .expect("Mapper should accept valid block");
@@ -298,10 +295,13 @@ fn full_pipeline_valid_block_from_protobuf_to_adapter() {
     // Verify results
     assert_eq!(adapter.callback_count(), 1);
     assert_eq!(adapter.received_blocks().len(), 1);
+    let expected_hash = cordial_f1r3node_adapter::block_translation::message_to_block(&block_msg)
+        .unwrap()
+        .identity
+        .content_hash;
     assert_eq!(
         adapter.received_blocks()[0].identity.content_hash,
-        <[u8; 32]>::try_from(block_msg.block_hash.as_slice())
-            .expect("block_hash should be 32 bytes")
+        expected_hash
     );
 }
 
@@ -314,6 +314,7 @@ fn pipeline_rejects_non_broadcast_block_messages() {
     let creator = test_public_key(&signing_key);
     let mut block_msg = build_test_block_message(&creator, &[], &signing_key, "secp256k1");
     block_msg.sig_algorithm = "invalid_algorithm".to_string();
+    block_msg.block_hash = compute_adapter_snapshot_hash(&block_msg).to_vec();
 
     let result = mapper.from_adapter_message(&block_msg);
     assert!(
@@ -378,10 +379,14 @@ fn pipeline_sequence_multiple_valid_blocks() {
     assert_eq!(adapter.received_blocks().len(), 5);
 
     for (i, block_msg) in block_msgs.iter().enumerate() {
+        let expected_hash =
+            cordial_f1r3node_adapter::block_translation::message_to_block(block_msg)
+                .unwrap()
+                .identity
+                .content_hash;
         assert_eq!(
             adapter.received_blocks()[i].identity.content_hash,
-            <[u8; 32]>::try_from(block_msg.block_hash.as_slice())
-                .expect("block_hash should be 32 bytes"),
+            expected_hash,
             "Block {i} content hash mismatch"
         );
     }
@@ -419,15 +424,23 @@ fn pipeline_with_block_predecessors() {
 
     // Verify both blocks recorded
     assert_eq!(adapter.callback_count(), 2);
+    let expected_genesis_hash =
+        cordial_f1r3node_adapter::block_translation::message_to_block(&genesis_msg)
+            .unwrap()
+            .identity
+            .content_hash;
+    let expected_child_hash =
+        cordial_f1r3node_adapter::block_translation::message_to_block(&child_msg)
+            .unwrap()
+            .identity
+            .content_hash;
     assert_eq!(
         adapter.received_blocks()[0].identity.content_hash,
-        <[u8; 32]>::try_from(genesis_msg.block_hash.as_slice())
-            .expect("block_hash should be 32 bytes")
+        expected_genesis_hash
     );
     assert_eq!(
         adapter.received_blocks()[1].identity.content_hash,
-        <[u8; 32]>::try_from(child_msg.block_hash.as_slice())
-            .expect("block_hash should be 32 bytes")
+        expected_child_hash
     );
     assert_eq!(adapter.received_blocks()[1].content.predecessors.len(), 1);
 }
@@ -572,10 +585,14 @@ fn complex_predecessor_chain() {
     assert_eq!(adapter.received_blocks().len(), 4);
 
     for (i, block_msg) in block_msgs.iter().enumerate() {
+        let expected_hash =
+            cordial_f1r3node_adapter::block_translation::message_to_block(block_msg)
+                .unwrap()
+                .identity
+                .content_hash;
         assert_eq!(
             adapter.received_blocks()[i].identity.content_hash,
-            <[u8; 32]>::try_from(block_msg.block_hash.as_slice())
-                .expect("block_hash should be 32 bytes"),
+            expected_hash,
             "Block {i} in chain"
         );
     }
@@ -610,11 +627,11 @@ fn valid_genesis_block_maps_to_block() {
     let result = mapper.from_adapter_message(&block_msg);
     assert!(result.is_ok());
     let mapped = result.unwrap();
-    assert_eq!(
-        mapped.identity.content_hash,
-        <[u8; 32]>::try_from(block_msg.block_hash.as_slice())
-            .expect("block_hash should be 32 bytes")
-    );
+    let expected_hash = cordial_f1r3node_adapter::block_translation::message_to_block(&block_msg)
+        .unwrap()
+        .identity
+        .content_hash;
+    assert_eq!(mapped.identity.content_hash, expected_hash);
     assert_eq!(mapped.identity.creator, NodeId(creator));
     // payload comparison skipped since we now build from scratch
 }
@@ -675,7 +692,7 @@ fn mapper_is_stateless_and_idempotent() {
 
 // ── Invalid Message Type Unit Tests ──────────────────────────────────────
 // Note: These tests are no longer relevant since the mapper now accepts
-// BlockMessage directly from protobuf wire format, not internal Message enums.
+// adapter-owned BlockMessage values, not internal Message enums.
 
 // ── Content Hash Validation Unit Tests ───────────────────────────────────
 
@@ -735,6 +752,7 @@ fn block_with_wrong_creator_key_rejected() {
     let mut block_msg = build_test_block_message(&creator_1, &[], &signing_key_1, "secp256k1");
     // Change the creator in the message to a different key, but keep the old signature
     block_msg.sender = creator_2.to_vec();
+    block_msg.block_hash = compute_adapter_snapshot_hash(&block_msg).to_vec();
 
     let result = mapper.from_adapter_message(&block_msg);
     assert!(result.is_err());
@@ -864,10 +882,92 @@ fn valid_block_triggers_on_block_callback() {
 
     assert_eq!(adapter.callback_count(), 1);
     assert_eq!(adapter.received_blocks().len(), 1);
+    let expected_hash = cordial_f1r3node_adapter::block_translation::message_to_block(&block_msg)
+        .unwrap()
+        .identity
+        .content_hash;
     assert_eq!(
         adapter.received_blocks()[0].identity.content_hash,
-        <[u8; 32]>::try_from(block_msg.block_hash.as_slice())
-            .expect("block_hash should be 32 bytes")
+        expected_hash
+    );
+}
+
+#[test]
+fn adapter_snapshot_hash_accepts_valid_message_and_rejects_tampering() {
+    use cordial_f1r3node_adapter::block_translation::{
+        BlockMessage, Body, F1r3flyState, Header, message_to_block,
+    };
+    use cordial_f1r3node_adapter::crypto_bridge::compute_adapter_snapshot_hash;
+    use cordial_f1r3node_adapter::grpc_ingest::GrpcBlockMapper;
+    use cordial_miners_core::crypto::sign;
+
+    let signing_key = test_signing_key(42);
+    let creator_pubkey = test_public_key(&signing_key);
+
+    // Build a local adapter BlockMessage
+    let mut block_msg = BlockMessage {
+        block_hash: vec![], // placeholder
+        header: Header {
+            parents_hash_list: vec![vec![0xAA; 32]],
+            timestamp: 1_700_000_000,
+            version: 1,
+            extra_bytes: vec![],
+        },
+        body: Body {
+            state: F1r3flyState {
+                pre_state_hash: vec![0x11; 32],
+                post_state_hash: vec![0x22; 32],
+                bonds: vec![],
+                block_number: 100,
+            },
+            deploys: vec![],
+            rejected_deploys: vec![],
+            system_deploys: vec![],
+            extra_bytes: vec![],
+        },
+        justifications: vec![cordial_f1r3node_adapter::block_translation::Justification {
+            validator: vec![0xBB; 33],
+            latest_block_hash: vec![0xAA; 32],
+        }],
+        sender: creator_pubkey.clone(),
+        seq_num: 1,
+        sig: vec![], // placeholder
+        sig_algorithm: "secp256k1".to_string(),
+        shard_id: "root".to_string(),
+        extra_bytes: vec![],
+    };
+
+    // 1. Compute the adapter-local snapshot hash (selected fields plus sender).
+    let adapter_hash = compute_adapter_snapshot_hash(&block_msg);
+    block_msg.block_hash = adapter_hash.to_vec();
+
+    // 2. Translate to block to get internal content hash for signature
+    let translated = message_to_block(&block_msg).expect("translation should succeed");
+    let signature = sign(&translated.identity.content_hash, &signing_key);
+    block_msg.sig = signature;
+
+    // 3. GrpcBlockMapper validates the local snapshot hash.
+    // This test uses an adapter-domain BlockMessage, so from_adapter_message is
+    // the correct entry point (from_protobuf expects the wire F1r3nodeBlockMessage).
+    let mapper: GrpcBlockMapper<(), (), ()> = GrpcBlockMapper::new();
+    let res = mapper.from_adapter_message(&block_msg);
+    assert!(
+        res.is_ok(),
+        "Adapter snapshot validation failed: {:?}",
+        res.err()
+    );
+
+    // 4. Verify tampering with the adapter block_hash causes a hash mismatch error.
+    let mut tampered_msg = block_msg.clone();
+    tampered_msg.block_hash[0] ^= 0xFF;
+    let tampered_res = mapper.from_adapter_message(&tampered_msg);
+    assert!(tampered_res.is_err());
+    assert!(
+        tampered_res
+            .unwrap_err()
+            .to_string()
+            .contains("Content hash mismatch"),
+        "Tampered adapter block_hash must be rejected with content hash mismatch"
     );
 }
 
@@ -913,4 +1013,39 @@ fn adapter_fails_to_receive_invalid_block() {
     // Mapper should reject before adapter sees it
     assert!(result.is_err());
     assert_eq!(adapter.callback_count(), 0);
+}
+
+#[test]
+fn adapter_message_accepts_internal_content_hash() {
+    use cordial_f1r3node_adapter::block_translation::{block_to_message, message_to_block};
+
+    let signing_key = test_signing_key(43);
+    let creator = test_public_key(&signing_key);
+    let msg = build_test_block_message(&creator, &[], &signing_key, "secp256k1");
+    let block = message_to_block(&msg).unwrap();
+    let mut local_msg = block_to_message(&block, "root").unwrap();
+    // BlockIdentity does not retain the signature algorithm. The converter
+    // defaults to Ed25519, so restore this fixture's Secp256k1 metadata.
+    local_msg.sig_algorithm = msg.sig_algorithm.clone();
+    assert_eq!(local_msg.block_hash, block.identity.content_hash);
+    assert_ne!(
+        local_msg.block_hash,
+        compute_adapter_snapshot_hash(&local_msg)
+    );
+
+    let mapper: GrpcBlockMapper<(), (), ()> = GrpcBlockMapper::new();
+    let mapped = mapper.from_adapter_message(&local_msg).unwrap();
+    assert_eq!(mapped.identity, block.identity);
+}
+
+#[test]
+fn adapter_message_rejects_signature_over_snapshot_hash() {
+    let signing_key = test_signing_key(44);
+    let creator = test_public_key(&signing_key);
+    let mut msg = build_test_block_message(&creator, &[], &signing_key, "secp256k1");
+    msg.sig = sign(&compute_adapter_snapshot_hash(&msg), &signing_key);
+
+    let mapper: GrpcBlockMapper<(), (), ()> = GrpcBlockMapper::new();
+    let error = mapper.from_adapter_message(&msg).unwrap_err();
+    assert!(error.to_string().contains("Signature"));
 }

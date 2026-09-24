@@ -14,6 +14,7 @@ use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
+use std::time::Duration;
 use tempfile::tempdir;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -87,6 +88,7 @@ fn bench_lmdb_put_blocks(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("lmdb_persistence/put_blocks");
     group.sample_size(10);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let blocks = build_chain_blocks(n);
@@ -120,6 +122,7 @@ fn bench_lmdb_get_blocks(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("lmdb_persistence/get_blocks");
     group.sample_size(10);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let blocks = build_chain_blocks(n);
@@ -149,6 +152,7 @@ fn bench_lmdb_recover_into_engine(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("lmdb_persistence/recover_into_engine");
     group.sample_size(10);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let blocks = build_chain_blocks(n);

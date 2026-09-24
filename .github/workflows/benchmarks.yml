@@ -2,7 +2,7 @@ name: Benchmarks
 
 on:
   push:
-    branches: ["master"]
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
@@ -21,8 +21,8 @@ jobs:
   # Executes the full Criterion benchmark suite and uploads the HTML report
   # and raw JSON output as a downloadable workflow artefact. PR smoke-checks
   # run inside `rust.yml` to eliminate redundant runner setup overhead.
-  bench-full:
-    name: Full Criterion benchmarks (main push)
+  bench-miners-core:
+    name: Criterion benchmarks — cordial-miners-core
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -51,15 +51,65 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             blocklace/target
-          key: ${{ runner.os }}-bench-full-${{ hashFiles('blocklace/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-bench-full-
+          key: ${{ runner.os }}-bench-core-${{ hashFiles('blocklace/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-bench-core-
 
-      - name: Run full cordial-miners-core benchmarks
+      - name: Compile benchmarks
+        working-directory: blocklace
+        run: cargo bench -p cordial-miners-core --no-run
+
+      - name: Run cordial-miners-core benchmarks
         working-directory: blocklace
         run: |
           cargo bench -p cordial-miners-core 2>&1 | tee bench-miners-core.txt
 
-      - name: Run full cordial-f1r3node-adapter benchmarks
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-miners-core-${{ github.sha }}
+          path: |
+            blocklace/bench-miners-core.txt
+            blocklace/target/criterion/
+          retention-days: 90
+
+  bench-adapter:
+    name: Criterion benchmarks — cordial-f1r3node-adapter
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout blocklace
+        uses: actions/checkout@v4
+        with:
+          path: blocklace
+
+      - name: Checkout f1r3node
+        uses: actions/checkout@v4
+        with:
+          repository: F1R3FLY-io/f1r3node
+          path: f1r3node
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            blocklace/target
+          key: ${{ runner.os }}-bench-adapter-${{ hashFiles('blocklace/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-bench-adapter-
+
+      - name: Compile benchmarks
+        working-directory: blocklace
+        run: cargo bench -p cordial-f1r3node-adapter --no-run
+
+      - name: Run cordial-f1r3node-adapter benchmarks
         working-directory: blocklace
         run: |
           cargo bench -p cordial-f1r3node-adapter 2>&1 | tee bench-adapter.txt
@@ -68,9 +118,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: criterion-benchmark-results-${{ github.sha }}
+          name: criterion-adapter-${{ github.sha }}
           path: |
-            blocklace/bench-miners-core.txt
             blocklace/bench-adapter.txt
             blocklace/target/criterion/
           retention-days: 90

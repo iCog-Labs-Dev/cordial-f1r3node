@@ -10,6 +10,7 @@
 //! * **`is_closed` validation** — closure invariant verification over entire DAGs.
 
 use std::collections::HashSet;
+use std::time::Duration;
 
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
@@ -119,10 +120,11 @@ fn build_wide_dag(num_validators: usize, rounds: usize) -> (Blocklace, BlockIden
 // ── benchmarks ────────────────────────────────────────────────────────────────
 
 fn bench_observe_linear_chain(c: &mut Criterion) {
-    let sizes: &[usize] = &[100, 1_000, 5_000];
+    let sizes: &[usize] = &[100, 1_000];
 
     let mut group = c.benchmark_group("dag_traversal/observe_linear");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let (blocklace, _, tip) = build_linear_chain(n);
@@ -144,6 +146,7 @@ fn bench_observe_wide_dag(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("dag_traversal/observe_wide_dag");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &v in validator_counts {
         let (blocklace, tip) = build_wide_dag(v, ROUNDS);
@@ -160,10 +163,11 @@ fn bench_observe_wide_dag(c: &mut Criterion) {
 }
 
 fn bench_precedes_reachability(c: &mut Criterion) {
-    let sizes: &[usize] = &[100, 1_000, 5_000];
+    let sizes: &[usize] = &[100, 1_000];
 
     let mut group = c.benchmark_group("dag_traversal/precedes");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let (blocklace, root, tip) = build_linear_chain(n);
@@ -188,10 +192,11 @@ fn bench_precedes_reachability(c: &mut Criterion) {
 }
 
 fn bench_is_closed_invariant(c: &mut Criterion) {
-    let sizes: &[usize] = &[100, 1_000, 5_000];
+    let sizes: &[usize] = &[100, 1_000];
 
     let mut group = c.benchmark_group("dag_traversal/is_closed");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let (blocklace, _, _) = build_linear_chain(n);

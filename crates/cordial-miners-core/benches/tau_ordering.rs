@@ -8,6 +8,7 @@
 //!    50, 500, and 5 000.
 
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
@@ -128,6 +129,7 @@ fn bench_weighted_tau(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("tau_ordering/weighted_tau");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &waves in wave_counts {
         let blocklace = build_blocklace(NUM_VALIDATORS, waves, WAVELENGTH);
@@ -148,6 +150,7 @@ fn bench_weighted_tau_with_cache(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("tau_ordering/weighted_tau_with_cache");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &waves in wave_counts {
         let blocklace = build_blocklace(NUM_VALIDATORS, waves, WAVELENGTH);
@@ -172,10 +175,11 @@ fn bench_weighted_tau_with_cache(c: &mut Criterion) {
 }
 
 fn bench_xsort(c: &mut Criterion) {
-    let sizes: &[usize] = &[50, 500, 5_000];
+    let sizes: &[usize] = &[50, 500, 2_000];
 
     let mut group = c.benchmark_group("tau_ordering/xsort");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let block_set = chain_block_set(n);

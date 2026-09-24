@@ -47,8 +47,8 @@ fn live_ingress_routes_valid_block_messages_through_grpc_ingest() {
 
     assert_eq!(ingress.phase(), LiveIngressPhase::Connected);
     assert_eq!(
-        block.identity.content_hash,
-        <[u8; 32]>::try_from(block_msg.block_hash.as_slice()).expect("valid 32-byte block hash")
+        block.identity.content_hash.to_vec(),
+        message_content_hash(&block_msg)
     );
     assert_eq!(ingress.adapter().callback_count, 1);
     assert_eq!(ingress.adapter().received_blocks.len(), 1);
@@ -91,7 +91,7 @@ fn live_ingress_buffers_out_of_order_blocks_until_predecessors_arrive() {
     let child_creator = test_public_key(&child_signing_key);
     let child = build_test_block_message(
         &child_creator,
-        &[(parent.block_hash.clone(), parent.sender.clone())],
+        &[(message_content_hash(&parent), parent.sender.clone())],
         &child_signing_key,
         "secp256k1",
     );
@@ -202,9 +202,11 @@ fn live_ingress_exposes_snapshot_and_finality_over_mirrored_state() {
     let leader =
         build_test_block_message_with_state(&creator_1, &[], &signing_key_1, "secp256k1", 0, 1);
 
+    let leader_hash = message_content_hash(&leader);
+
     let round1_v2 = build_test_block_message_with_state(
         &creator_2,
-        &[(leader.block_hash.clone(), leader.sender.clone())],
+        &[(leader_hash.clone(), leader.sender.clone())],
         &signing_key_2,
         "secp256k1",
         1,
@@ -212,7 +214,7 @@ fn live_ingress_exposes_snapshot_and_finality_over_mirrored_state() {
     );
     let round1_v3 = build_test_block_message_with_state(
         &creator_3,
-        &[(leader.block_hash.clone(), leader.sender.clone())],
+        &[(leader_hash.clone(), leader.sender.clone())],
         &signing_key_3,
         "secp256k1",
         1,
@@ -220,7 +222,7 @@ fn live_ingress_exposes_snapshot_and_finality_over_mirrored_state() {
     );
     let round1_v4 = build_test_block_message_with_state(
         &creator_4,
-        &[(leader.block_hash.clone(), leader.sender.clone())],
+        &[(leader_hash.clone(), leader.sender.clone())],
         &signing_key_4,
         "secp256k1",
         1,
@@ -228,9 +230,9 @@ fn live_ingress_exposes_snapshot_and_finality_over_mirrored_state() {
     );
 
     let round1_support = [
-        (round1_v2.block_hash.clone(), round1_v2.sender.clone()),
-        (round1_v3.block_hash.clone(), round1_v3.sender.clone()),
-        (round1_v4.block_hash.clone(), round1_v4.sender.clone()),
+        (message_content_hash(&round1_v2), round1_v2.sender.clone()),
+        (message_content_hash(&round1_v3), round1_v3.sender.clone()),
+        (message_content_hash(&round1_v4), round1_v4.sender.clone()),
     ];
 
     let round2_v2 = build_test_block_message_with_state(
@@ -276,18 +278,13 @@ fn live_ingress_exposes_snapshot_and_finality_over_mirrored_state() {
         .ordered_finalized_blocks()
         .expect("weighted tau lookup should succeed");
 
-    assert_eq!(snapshot.last_finalized_block, leader.block_hash);
-    assert_eq!(last_finalized, Some(leader.block_hash.clone()));
-    assert!(snapshot.dag.dag_set.contains(&leader.block_hash));
-    assert!(
-        snapshot
-            .dag
-            .finalized_blocks_set
-            .contains(&leader.block_hash)
-    );
+    assert_eq!(snapshot.last_finalized_block, leader_hash);
+    assert_eq!(last_finalized, Some(leader_hash.clone()));
+    assert!(snapshot.dag.dag_set.contains(&leader_hash));
+    assert!(snapshot.dag.finalized_blocks_set.contains(&leader_hash));
     assert!(!ordered.is_empty());
     assert_eq!(ordered, snapshot.ordered_finalized_blocks);
-    assert!(ordered.contains(&leader.block_hash));
+    assert!(ordered.contains(&leader_hash));
     assert_eq!(snapshot.on_chain_state.shard_conf.shard_name, "root");
     assert_eq!(snapshot.on_chain_state.active_validators.len(), 4);
 }
@@ -330,7 +327,7 @@ fn latest_ordered_output_is_monotonic_across_batches() {
             i,
             (i + 1) as u8,
         );
-        prev_hash = block_msg.block_hash.clone();
+        prev_hash = message_content_hash(&block_msg);
         blocks.push(block_msg);
     }
 
@@ -378,14 +375,14 @@ fn latest_ordered_output_is_monotonic_across_batches() {
         first_output
             .blocks
             .iter()
-            .any(|id| id.content_hash == blocks[0].block_hash.as_slice()),
+            .any(|id| id.content_hash == message_content_hash(&blocks[0]).as_slice()),
         "genesis (wave 0 leader) should be finalized after wave 0"
     );
     assert!(
         second_output
             .blocks
             .iter()
-            .any(|id| id.content_hash == blocks[3].block_hash.as_slice()),
+            .any(|id| id.content_hash == message_content_hash(&blocks[3]).as_slice()),
         "block 3 (wave 1 leader) should be finalized after wave 1"
     );
 }
@@ -423,7 +420,7 @@ fn latest_ordered_output_rejects_same_round_fork() {
     // this is the equivocation scenario.
     let fork_a = build_test_block_message_with_state(
         &creator,
-        &[(genesis.block_hash.clone(), creator.clone())],
+        &[(message_content_hash(&genesis), creator.clone())],
         &signing_key,
         "secp256k1",
         1,
@@ -431,7 +428,7 @@ fn latest_ordered_output_rejects_same_round_fork() {
     );
     let fork_b = build_test_block_message_with_state(
         &creator,
-        &[(genesis.block_hash.clone(), creator.clone())],
+        &[(message_content_hash(&genesis), creator.clone())],
         &signing_key,
         "secp256k1",
         2,
@@ -500,7 +497,7 @@ fn last_finalized_block_hash_and_latest_ordered_output_agree_during_fork() {
     // both built on genesis — this is the equivocation scenario.
     let fork_a = build_test_block_message_with_state(
         &creator,
-        &[(genesis.block_hash.clone(), creator.clone())],
+        &[(message_content_hash(&genesis), creator.clone())],
         &signing_key,
         "secp256k1",
         1,
@@ -508,7 +505,7 @@ fn last_finalized_block_hash_and_latest_ordered_output_agree_during_fork() {
     );
     let fork_b = build_test_block_message_with_state(
         &creator,
-        &[(genesis.block_hash.clone(), creator.clone())],
+        &[(message_content_hash(&genesis), creator.clone())],
         &signing_key,
         "secp256k1",
         2,
@@ -585,7 +582,7 @@ fn latest_ordered_output_before_first_complete_wave() {
 
     let round_two = build_test_block_message_with_state(
         &creator,
-        &[(genesis.block_hash.clone(), creator.clone())],
+        &[(message_content_hash(&genesis), creator.clone())],
         &signing_key,
         "secp256k1",
         1,
@@ -677,6 +674,22 @@ fn build_test_block_message(
     build_test_block_message_with_state(creator, parents, signing_key, sig_algorithm, 0, 1)
 }
 
+/// The internal content hash the mirror stores for a message (the hash
+/// `message_to_block` recomputes). This is distinct from the adapter-local
+/// `block_msg.block_hash` (which `compute_adapter_snapshot_hash` produces) that the
+/// mapper validates on ingest. Children must reference this hash, and
+/// assertions over mirrored state must compare against it, for linkage and
+/// comparison to line up.
+fn message_content_hash(msg: &BlockMessage) -> Vec<u8> {
+    use cordial_f1r3node_adapter::block_translation::message_to_block;
+
+    message_to_block(msg)
+        .expect("test message should translate")
+        .identity
+        .content_hash
+        .to_vec()
+}
+
 fn build_test_block_message_with_state(
     creator: &[u8],
     parents: &[(Vec<u8>, Vec<u8>)],
@@ -685,6 +698,9 @@ fn build_test_block_message_with_state(
     block_number: u64,
     state_tag: u8,
 ) -> BlockMessage {
+    use cordial_f1r3node_adapter::block_translation::message_to_block;
+    use cordial_f1r3node_adapter::crypto_bridge::compute_adapter_snapshot_hash;
+
     let justifications: Vec<Justification> = parents
         .iter()
         .filter(|(hash, _)| hash.len() == 32)
@@ -694,40 +710,10 @@ fn build_test_block_message_with_state(
         })
         .collect();
 
-    let payload = CordialBlockPayload {
-        state: BlockState {
-            pre_state_hash: vec![state_tag; 32],
-            post_state_hash: vec![state_tag.wrapping_add(1); 32],
-            bonds: vec![],
-            block_number,
-        },
-        deploys: vec![],
-        rejected_deploys: vec![],
-        system_deploys: vec![],
-    };
-    let payload_bytes = payload.to_bytes();
-
-    let mut predecessors = HashSet::new();
-    for jus in &justifications {
-        let mut hash_array = [0u8; 32];
-        hash_array.copy_from_slice(&jus.latest_block_hash);
-        predecessors.insert(BlockIdentity {
-            content_hash: hash_array,
-            creator: NodeId(jus.validator.clone()),
-            signature: vec![],
-        });
-    }
-
-    let content = BlockContent {
-        payload: payload_bytes,
-        predecessors,
-    };
-
-    let content_hash = hash_content(&content);
-    let signature = sign(&content_hash, signing_key);
-
-    BlockMessage {
-        block_hash: content_hash.to_vec(),
+    // Build the message with placeholder block_hash and signature first;
+    // we fill both in after computing the correct values.
+    let mut msg = BlockMessage {
+        block_hash: vec![0u8; 32], // placeholder — replaced below
         header: Header {
             parents_hash_list: parents.iter().map(|(hash, _)| hash.clone()).collect(),
             timestamp: 0,
@@ -749,11 +735,26 @@ fn build_test_block_message_with_state(
         justifications,
         sender: creator.to_vec(),
         seq_num: 0,
-        sig: signature,
+        sig: vec![], // placeholder — replaced below
         sig_algorithm: sig_algorithm.to_string(),
         shard_id: "0".to_string(),
         extra_bytes: vec![],
-    }
+    };
+
+    // Adapter-local snapshot hash — what
+    // `validate_adapter_content_hash` recomputes on ingest.
+    msg.block_hash = compute_adapter_snapshot_hash(&msg).to_vec();
+
+    // Sign the internal content hash that `message_to_block` produces so
+    // `validate_signature` passes. This is a *different* hash from the adapter
+    // block_hash above.
+    let content_hash = message_to_block(&msg)
+        .expect("test message should translate")
+        .identity
+        .content_hash;
+    msg.sig = sign(&content_hash, signing_key);
+
+    msg
 }
 
 fn build_test_block_with_predecessors(

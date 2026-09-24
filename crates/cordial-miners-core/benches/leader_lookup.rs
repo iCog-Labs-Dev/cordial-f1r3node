@@ -14,6 +14,7 @@
 //! guaranteed after the very first wave.
 
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
@@ -138,11 +139,12 @@ fn leader_fn(num_validators: usize) -> impl Fn(u64) -> Option<NodeId> + Copy {
 fn bench_leader_lookup(c: &mut Criterion) {
     const WAVELENGTH: u64 = 3;
     let wave_counts: &[u64] = &[1, 3, 10];
-    let validator_counts: &[usize] = &[4, 10, 50];
+    let validator_counts: &[usize] = &[4, 10];
 
     // ── Uniform bonds ────────────────────────────────────────────────────────
     let mut group = c.benchmark_group("leader_lookup/uniform_bonds");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &waves in wave_counts {
         for &validators in validator_counts {
@@ -164,6 +166,7 @@ fn bench_leader_lookup(c: &mut Criterion) {
     // ── Skewed bonds ─────────────────────────────────────────────────────────
     let mut group = c.benchmark_group("leader_lookup/skewed_bonds");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &waves in wave_counts {
         for &validators in validator_counts {

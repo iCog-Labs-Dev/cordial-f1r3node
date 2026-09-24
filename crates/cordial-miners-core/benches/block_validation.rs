@@ -17,6 +17,8 @@ use cordial_miners_core::consensus::validation::{
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
+use std::time::Duration;
+
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -88,10 +90,11 @@ fn build_dag(n: usize) -> (Blocklace, HashMap<NodeId, u64>, Block) {
 // ── benchmarks ────────────────────────────────────────────────────────────────
 
 fn bench_validate_block_default_config(c: &mut Criterion) {
-    let sizes: &[usize] = &[100, 1_000, 5_000];
+    let sizes: &[usize] = &[100, 1_000];
 
     let mut group = c.benchmark_group("block_validation/validate_default");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let (blocklace, bonds, candidate) = build_dag(n);
@@ -116,6 +119,7 @@ fn bench_validate_block_strict_config(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("block_validation/validate_strict");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let (blocklace, bonds, candidate) = build_dag(n);
@@ -140,6 +144,7 @@ fn bench_validated_insert(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("block_validation/validated_insert");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let config = ValidationConfig {

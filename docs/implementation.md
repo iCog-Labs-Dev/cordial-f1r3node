@@ -404,7 +404,7 @@ Pluggable hashing / signing / verification traits with f1r3node-compatible imple
 
 `SigAlgorithm` enum carries the wire identifier strings (`"ed25519"`, `"secp256k1"`) f1r3node puts in `BlockMessage.sig_algorithm`. `CryptoError` covers wrong-length keys/signatures and bad curve points without panicking.
 
-`compute_block_hash(&BlockMessage) -> [u8; 32]` produces an f1r3node-style Blake2b hash over a deterministic length-prefixed layout of header + body + sender + sig_algorithm + seq_num + shard_id + extra_bytes. Crucially, **the sender is in the hash input**, which fixes the content-hash collision that `snapshot.rs` would otherwise have (two blocks with identical `BlockContent` but different creators collapse to one entry in snapshot indices). Not byte-for-byte equal to f1r3node's `hash_block()` — that function prost-encodes the header and body, which requires the `models` path dependency. Logical equivalence is sufficient for snapshot correctness.
+`compute_adapter_snapshot_hash(&BlockMessage) -> [u8; 32]` produces an adapter-local Blake2b-256 hash over a deterministic, selected-field layout including the sender. It distinguishes otherwise identical snapshots from different validators, but does not commit to every message field and is not f1r3node's protobuf wire hash. `GrpcBlockMapper::from_adapter_message` accepts this hash or Cordial's internal `hash_content` and verifies signatures over the internal content hash. Network messages use `from_protobuf`, which calls f1r3node's `proto_util::hash_block` on the original message and verifies the wire signature before translation.
 
 ### Phase 3.1 & 3.2 — Casper trait adapter (casper_adapter.rs)
 
@@ -528,7 +528,7 @@ Five public helper functions, each unit-tested:
 | `test_block_translation.rs` | 13 | Block ↔ BlockMessage roundtrip, parents/justifications union, numeric overflow, deterministic ordering |
 | `test_snapshot.rs` | 16 | dag_set / height_map / child_map / latest_messages, finality, tips, parents, justifications, deploys_in_scope, equivocator exclusion |
 | `test_shard_conf.rs` | 8 | Full f1r3node defaults parity, from_cordial import, saturating casts, to_snapshot_conf projection |
-| `test_crypto_bridge.rs` | 22 | Blake2b-256 and SHA-256 known vectors, Secp256k1 and ED25519 roundtrip + tamper detection, compute_block_hash determinism and sender-differentiation |
+| `test_crypto_bridge.rs` | 22 | Blake2b-256 and SHA-256 known vectors, Secp256k1 and ED25519 roundtrip + tamper detection, compute_adapter_snapshot_hash determinism and sender-differentiation |
 | `test_casper_adapter.rs` | 21 | Adapter construction, contains / dag_contains / buffer, deploy acceptance + rejection, estimator, get_snapshot, validate (accept / missing / invalid sender), handle_valid / handle_invalid, last_finalized, normalized_initial_fault |
 
 ### `crates/blocklace-f1r3rspace/tests/` — 13 tests
@@ -594,7 +594,7 @@ Based on the roadmap in [cordial-miners-vs-cbc-casper.md](cordial-miners-vs-cbc-
 
 **f1r3node integration — deferred follow-ups**:
 - Enabling the `models` / `casper` / `block_storage` path dependencies in `blocklace-f1r3node/Cargo.toml`; at that point the local mirror types get swapped for `use models::...` / `use casper::...` imports. (Note: the `blocklace-f1r3rspace` crate already path-depends on these for the RSpace adapter; enabling them in `blocklace-f1r3node` too is consolidation work.)
-- Byte-for-byte block-hash parity via prost-encoded header/body (our `compute_block_hash` is logically equivalent but not byte-for-byte compatible with f1r3node's `hash_block`)
+- Keep adapter-local snapshot hashing separate from f1r3node wire validation; the protobuf path already uses upstream `hash_block`.
 - RSpace-coupled `MultiParentCasper` methods (`runtime_manager`, `block_store`, `get_history_exporter`) — live with `blocklace-f1r3rspace`
 - Time-based deploy expiration (`Option<expiration_timestamp>` on `Deploy`)
 

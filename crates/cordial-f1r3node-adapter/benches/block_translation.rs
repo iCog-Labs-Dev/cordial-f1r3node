@@ -19,6 +19,8 @@ use cordial_miners_core::execution::{
 };
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
+use std::time::Duration;
+
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -90,6 +92,7 @@ fn bench_block_to_message(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("block_translation/block_to_message");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in deploy_counts {
         let block = build_test_block(n);
@@ -110,6 +113,7 @@ fn bench_message_to_block(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("block_translation/message_to_block");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in deploy_counts {
         let block = build_test_block(n);

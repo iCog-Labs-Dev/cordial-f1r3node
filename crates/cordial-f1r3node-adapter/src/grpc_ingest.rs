@@ -42,6 +42,7 @@ use models::rust::casper::protocol::casper_message::BlockMessage as F1r3nodeBloc
 use crate::block_translation::{
     BlockMessage as AdapterBlockMessage, message_from_f1r3node, message_to_block,
 };
+use crate::crypto_bridge::compute_adapter_snapshot_hash;
 
 /// A pure, stateless validator for protobuf blocks from f1r3node.
 ///
@@ -167,8 +168,8 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
         })
     }
 
-    /// Translate an adapter-owned message that is already in Cordial's hash
-    /// domain.
+    /// Translate a locally constructed adapter message whose signature covers
+    /// Cordial's internal content hash.
     ///
     /// This compatibility path is for locally constructed adapter messages;
     /// network protobuf messages must use [`Self::from_protobuf`] so their
@@ -185,14 +186,13 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
             &sig_algo
         };
 
-        // 3. Validate content hash (Blake2b-256):
-        //    First verify the wire-format block_hash matches what we recompute from
-        //    content, then verify it matches the identity stored in the translated block.
+        // 3. Accept an adapter snapshot hash or the internal content hash, then
+        //    check the translated identity against the internal content hash.
         //    This catches corruption of block_msg.block_hash before translation silently
         //    discards the tampered value.
         self.validate_adapter_content_hash(block_msg, &block)?;
 
-        // 4. Validate signature (algorithm-specific from protobuf)
+        // 4. Validate the signature over Cordial's internal content hash
         self.validate_signature(&block, sig_algo)?;
 
         // 5. Validate parent references
@@ -201,38 +201,44 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
         Ok(block)
     }
 
-    /// Verify the wire-format block_hash matches the recomputed hash from content,
-    /// and that the translated identity also matches.
-    ///
-    /// Checks both the raw wire `block_msg.block_hash` (before translation can discard it)
-    /// and the translated `block.identity.content_hash`, using Blake2b-256 (f1r3node alignment).
+    /// Verify the adapter message's block_hash matches either the snapshot hash
+    /// computed from the `BlockMessage` fields via [`compute_adapter_snapshot_hash`], or the
+    /// internal Cordial `hash_content` (when constructed by `block_to_message`).
+    /// Also verifies that the translated block's internal content_hash is self-consistent.
     fn validate_adapter_content_hash(
         &self,
         block_msg: &AdapterBlockMessage,
         block: &Block,
     ) -> Result<()> {
-        let recomputed = crypto::hash_content(&block.content);
-
-        // Verify wire-format hash against recomputed hash (catches tampering of block_hash field)
         if block_msg.block_hash.len() != 32 {
             return Err(anyhow!(
-                "Content hash mismatch: wire block_hash has invalid length {}",
+                "Content hash mismatch: adapter block_hash has invalid length {}",
                 block_msg.block_hash.len()
             ));
         }
-        let mut wire_hash = [0u8; 32];
-        wire_hash.copy_from_slice(&block_msg.block_hash);
-        if wire_hash != recomputed {
+        let mut declared_hash = [0u8; 32];
+        declared_hash.copy_from_slice(&block_msg.block_hash);
+
+        let recomputed_internal = crypto::hash_content(&block.content);
+        let recomputed_adapter = compute_adapter_snapshot_hash(block_msg);
+
+        // Both accepted hashes belong to local adapter messages. Real f1r3node
+        // wire hashes are validated separately by from_protobuf.
+        if declared_hash != recomputed_adapter && declared_hash != recomputed_internal {
             return Err(anyhow!(
-                "Content hash mismatch: wire block_hash {wire_hash:?} does not match recomputed {recomputed:?}"
+                "Content hash mismatch: adapter block_hash does not match \
+                 adapter-local hash recomputation (compute_adapter_snapshot_hash) or internal content hash"
             ));
         }
 
-        // Sanity-check translated identity
-        if block.identity.content_hash != recomputed {
+        // Sanity-check that the translated block's internal content_hash
+        // matches what hash_content() produces over the translated content.
+        if block.identity.content_hash != recomputed_internal {
             return Err(anyhow!(
-                "Content hash mismatch: translated identity {:?} does not match recomputed {recomputed:?}",
-                block.identity.content_hash
+                "Internal content hash mismatch: translated identity {:?} \
+                 does not match recomputed hash_content {:?}",
+                block.identity.content_hash,
+                recomputed_internal
             ));
         }
 

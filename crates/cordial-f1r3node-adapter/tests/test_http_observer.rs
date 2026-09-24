@@ -29,7 +29,7 @@ fn compare_mirror_against_http_reports_matching_view() {
     let http_blocks: Vec<HttpLightBlockInfo> = blocks
         .iter()
         .map(|block| HttpLightBlockInfo {
-            block_hash: hex(&block.block_hash),
+            block_hash: hex(&message_content_hash(block)),
         })
         .collect();
 
@@ -67,7 +67,7 @@ fn compare_mirror_against_http_reports_missing_blocks_and_lfb_mismatch() {
     }
 
     let http_blocks = vec![HttpLightBlockInfo {
-        block_hash: hex(&leader.block_hash),
+        block_hash: hex(&message_content_hash(&leader)),
     }];
     let http_lfb = HttpBlockInfo {
         block_info: HttpLightBlockInfo {
@@ -125,9 +125,11 @@ fn finalized_wave_messages() -> (BlockMessage, Vec<BlockMessage>) {
     let leader =
         build_test_block_message_with_state(&creator_1, &[], &signing_key_1, "secp256k1", 0, 1);
 
+    let leader_hash = message_content_hash(&leader);
+
     let round1_v2 = build_test_block_message_with_state(
         &creator_2,
-        &[(leader.block_hash.clone(), leader.sender.clone())],
+        &[(leader_hash.clone(), leader.sender.clone())],
         &signing_key_2,
         "secp256k1",
         1,
@@ -135,7 +137,7 @@ fn finalized_wave_messages() -> (BlockMessage, Vec<BlockMessage>) {
     );
     let round1_v3 = build_test_block_message_with_state(
         &creator_3,
-        &[(leader.block_hash.clone(), leader.sender.clone())],
+        &[(leader_hash.clone(), leader.sender.clone())],
         &signing_key_3,
         "secp256k1",
         1,
@@ -143,7 +145,7 @@ fn finalized_wave_messages() -> (BlockMessage, Vec<BlockMessage>) {
     );
     let round1_v4 = build_test_block_message_with_state(
         &creator_4,
-        &[(leader.block_hash.clone(), leader.sender.clone())],
+        &[(leader_hash.clone(), leader.sender.clone())],
         &signing_key_4,
         "secp256k1",
         1,
@@ -151,9 +153,9 @@ fn finalized_wave_messages() -> (BlockMessage, Vec<BlockMessage>) {
     );
 
     let round1_support = [
-        (round1_v2.block_hash.clone(), round1_v2.sender.clone()),
-        (round1_v3.block_hash.clone(), round1_v3.sender.clone()),
-        (round1_v4.block_hash.clone(), round1_v4.sender.clone()),
+        (message_content_hash(&round1_v2), round1_v2.sender.clone()),
+        (message_content_hash(&round1_v3), round1_v3.sender.clone()),
+        (message_content_hash(&round1_v4), round1_v4.sender.clone()),
     ];
 
     let round2_v2 = build_test_block_message_with_state(
@@ -187,6 +189,22 @@ fn finalized_wave_messages() -> (BlockMessage, Vec<BlockMessage>) {
             round2_v3, round1_v2, round2_v2, leader, round1_v4, round2_v4, round1_v3,
         ],
     )
+}
+
+/// The internal content hash the mirror stores for a message (the hash
+/// `message_to_block` recomputes). This is distinct from the adapter-local
+/// `block_msg.block_hash` (which `compute_adapter_snapshot_hash` produces) that the
+/// mapper validates on ingest. Children must reference this hash, and an
+/// HTTP view of the mirror must report this hash, for linkage and
+/// comparison to line up.
+fn message_content_hash(msg: &BlockMessage) -> Vec<u8> {
+    use cordial_f1r3node_adapter::block_translation::message_to_block;
+
+    message_to_block(msg)
+        .expect("test message should translate")
+        .identity
+        .content_hash
+        .to_vec()
 }
 
 struct RecordingAdapter;
@@ -225,6 +243,8 @@ fn build_test_block_message_with_state(
     block_number: u64,
     state_tag: u8,
 ) -> BlockMessage {
+    use cordial_f1r3node_adapter::crypto_bridge::compute_adapter_snapshot_hash;
+
     let justifications: Vec<Justification> = parents
         .iter()
         .filter(|(hash, _)| hash.len() == 32)
@@ -263,11 +283,14 @@ fn build_test_block_message_with_state(
         predecessors,
     };
 
+    // Cordial content hash — used for the signature.
     let content_hash = hash_content(&content);
     let signature = sign(&content_hash, signing_key);
 
-    BlockMessage {
-        block_hash: content_hash.to_vec(),
+    // Build the message with a placeholder block_hash first so we can run
+    // compute_adapter_snapshot_hash over the fully-populated message fields.
+    let mut msg = BlockMessage {
+        block_hash: vec![0u8; 32], // placeholder — replaced below
         header: Header {
             parents_hash_list: parents.iter().map(|(hash, _)| hash.clone()).collect(),
             timestamp: 0,
@@ -293,7 +316,13 @@ fn build_test_block_message_with_state(
         sig_algorithm: sig_algorithm.to_string(),
         shard_id: "root".to_string(),
         extra_bytes: vec![],
-    }
+    };
+
+    // Set block_hash to the adapter snapshot hash so validate_adapter_content_hash
+    // passes. This is a different hash domain from the Cordial content_hash used
+    // for the signature above.
+    msg.block_hash = compute_adapter_snapshot_hash(&msg).to_vec();
+    msg
 }
 
 fn hex(bytes: &[u8]) -> String {

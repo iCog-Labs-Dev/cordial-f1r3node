@@ -38,8 +38,8 @@ pub struct HiddenEquivocation {
 }
 
 #[derive(Default)]
-struct WeightedRatificationMemo {
-    approval_memo: ApprovalMemo,
+pub(crate) struct WeightedRatificationMemo {
+    pub(crate) approval_memo: ApprovalMemo,
     weighted_ratifies_cache: HashMap<(BlockIdentity, BlockIdentity), bool>,
 }
 
@@ -281,8 +281,20 @@ fn weighted_ratifies_with_memo(
     {
         false
     } else {
-        let observed_ids = blocklace.observe(&ratifier.identity);
-        let observed_blocks: HashSet<Block> = observed_ids
+        // Route observe() through the shared ApprovalMemo cache so the result
+        // is available to approves_with_memo calls for blocks inside
+        // observed_blocks without recomputing the BFS.
+        if !memo
+            .approval_memo
+            .observe_cache
+            .contains_key(&ratifier.identity)
+        {
+            memo.approval_memo.observe_cache.insert(
+                ratifier.identity.clone(),
+                blocklace.observe(&ratifier.identity),
+            );
+        }
+        let observed_blocks: HashSet<Block> = memo.approval_memo.observe_cache[&ratifier.identity]
             .iter()
             .filter_map(|id| blocklace.get(id))
             .collect();
@@ -318,7 +330,7 @@ pub fn weighted_super_ratifies(
     weighted_super_ratifies_with_memo(blocklace, blocks, target, bonds, &mut memo)
 }
 
-fn weighted_super_ratifies_with_memo(
+pub(crate) fn weighted_super_ratifies_with_memo(
     blocklace: &Blocklace,
     blocks: &HashSet<Block>,
     target: &Block,

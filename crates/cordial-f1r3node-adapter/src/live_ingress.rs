@@ -671,7 +671,7 @@ where
 
         // Correlate traced deploy signatures found in the block body.
         if let Some(tracer) = &self.deploy_tracer {
-            let block_hash = &block_msg.block_hash;
+            let block_hash = block.identity.content_hash.as_slice();
             let height = block_msg.body.state.block_number;
             let sigs: Vec<&[u8]> = block_msg
                 .body

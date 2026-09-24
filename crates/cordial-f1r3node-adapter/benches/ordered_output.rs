@@ -23,6 +23,8 @@ use cordial_f1r3node_adapter::ordered_output::OrderedFinalizedOutput;
 use cordial_f1r3node_adapter::shared_ordered_output::{ReadOrderedOutput, SharedOrderedOutput};
 use cordial_miners_core::types::{BlockIdentity, NodeId};
 
+use std::time::Duration;
+
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -59,6 +61,7 @@ fn bench_shared_ordered_output_update(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("ordered_output/shared_update");
     group.sample_size(50);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let output = make_output(n);
@@ -93,6 +96,7 @@ fn bench_shared_ordered_output_latest(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("ordered_output/shared_latest");
     group.sample_size(50);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let output = make_output(n);
@@ -114,6 +118,7 @@ fn bench_json_serialisation(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("ordered_output/json_serialise");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let output = make_output(n);
@@ -134,6 +139,7 @@ fn bench_block_hashes_extraction(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("ordered_output/block_hashes");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let output = make_output(n);
@@ -154,20 +160,32 @@ fn bench_ordered_output_construction(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("ordered_output/construction");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
-        let blocks = make_blocks(n);
-        let anchor = blocks.last().cloned();
+        let blocks: Vec<BlockIdentity> = (0..n)
+            .map(|i| {
+                let mut hash = [0u8; 32];
+                hash[0..8].copy_from_slice(&(i as u64).to_le_bytes());
+                BlockIdentity {
+                    content_hash: hash,
+                    creator: node((i % 256) as u8),
+                    signature: (i as u64).to_le_bytes().to_vec(),
+                }
+            })
+            .collect();
 
         group.bench_with_input(
             BenchmarkId::new(format!("n{n}"), ""),
             &blocks,
             |b, blocks| {
-                b.iter_batched(
-                    || (blocks.clone(), anchor.clone()),
-                    |(blocks, anchor)| OrderedFinalizedOutput::new(blocks, anchor, 3, 4, n),
-                    criterion::BatchSize::SmallInput,
-                );
+                b.iter(|| {
+                    let anchor = blocks.last().cloned();
+                    let output =
+                        OrderedFinalizedOutput::new(blocks.clone(), anchor, 3, 4, blocks.len());
+                    // Force extraction to surface regressions in block_hashes() too.
+                    let _hashes = output.block_hashes();
+                });
             },
         );
     }

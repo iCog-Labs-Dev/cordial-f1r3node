@@ -15,6 +15,7 @@
 //! recovery (`topo_sort_blocks` equivalent) at sizes 1 000 and 10 000.
 
 use std::collections::HashSet;
+use std::time::Duration;
 
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
@@ -114,15 +115,23 @@ impl SimpleMirror {
     }
 
     /// Window ingest: drop unknown predecessors before inserting.
-    fn ingest_with_trusted_boundary(&mut self, mut block: Block) -> Result<(), String> {
-        let known: HashSet<BlockIdentity> = self.blocklace.dom().into_iter().cloned().collect();
+    /// Takes a pre-built `known` set and updates it incrementally to avoid
+    /// the O(n²) cost of rebuilding `dom()` on every insertion.
+    fn ingest_with_trusted_boundary(
+        &mut self,
+        mut block: Block,
+        known: &mut HashSet<BlockIdentity>,
+    ) -> Result<(), String> {
         block
             .content
             .predecessors
             .retain(|pred_id| known.contains(pred_id));
+        let id = block.identity.clone();
         self.blocklace
             .insert(block, &MockVerifier)
-            .map_err(|e| format!("{e:?}"))
+            .map_err(|e| format!("{e:?}"))?;
+        known.insert(id);
+        Ok(())
     }
 }
 
@@ -193,10 +202,11 @@ fn topo_sort_blocks(mut blocks: Vec<Block>) -> Vec<Block> {
 // ── benchmarks ────────────────────────────────────────────────────────────────
 
 fn bench_ingest(c: &mut Criterion) {
-    let sizes: &[usize] = &[100, 1_000, 5_000];
+    let sizes: &[usize] = &[100, 1_000];
 
     let mut group = c.benchmark_group("height_bootstrap/ingest");
     group.sample_size(10);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let chain = build_chain(n);
@@ -217,21 +227,22 @@ fn bench_ingest(c: &mut Criterion) {
 }
 
 fn bench_ingest_with_trusted_boundary(c: &mut Criterion) {
-    let sizes: &[usize] = &[100, 1_000, 5_000];
+    let sizes: &[usize] = &[100, 1_000];
 
     let mut group = c.benchmark_group("height_bootstrap/ingest_with_trusted_boundary");
     group.sample_size(10);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let chain = build_chain(n);
 
         group.bench_with_input(BenchmarkId::new(format!("n{n}"), ""), &chain, |b, chain| {
             b.iter_batched(
-                || (SimpleMirror::new(), chain.clone()),
-                |(mut mirror, blocks)| {
+                || (SimpleMirror::new(), chain.clone(), HashSet::new()),
+                |(mut mirror, blocks, mut known)| {
                     for block in blocks {
                         mirror
-                            .ingest_with_trusted_boundary(block)
+                            .ingest_with_trusted_boundary(block, &mut known)
                             .expect("window ingest should succeed");
                     }
                 },
@@ -243,10 +254,11 @@ fn bench_ingest_with_trusted_boundary(c: &mut Criterion) {
 }
 
 fn bench_topo_sort_blocks(c: &mut Criterion) {
-    let sizes: &[usize] = &[1_000, 10_000];
+    let sizes: &[usize] = &[1_000, 5_000];
 
     let mut group = c.benchmark_group("height_bootstrap/topo_sort_blocks");
     group.sample_size(10);
+    group.measurement_time(Duration::from_secs(2));
 
     for &n in sizes {
         let chain = build_chain(n);

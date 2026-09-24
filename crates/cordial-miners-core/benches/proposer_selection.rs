@@ -17,6 +17,8 @@ use cordial_miners_core::consensus::dissemination::{
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
+use std::time::Duration;
+
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -99,6 +101,7 @@ fn bench_select_predecessors(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("proposer_selection/select_predecessors");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &v in validator_counts {
         let (blocklace, bonds) = build_dag_with_validator_count(v, ROUNDS);
@@ -140,6 +143,7 @@ fn bench_build_block_candidate(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("proposer_selection/build_block_candidate");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &v in validator_counts {
         let (blocklace, bonds) = build_dag_with_validator_count(v, ROUNDS);

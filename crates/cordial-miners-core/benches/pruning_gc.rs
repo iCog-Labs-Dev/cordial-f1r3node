@@ -16,6 +16,8 @@ use cordial_miners_core::consensus::pruning::{CheckpointGc, checkpoint_after_wei
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
+use std::time::Duration;
+
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -117,6 +119,7 @@ fn bench_prune_below_checkpoint(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("pruning_gc/prune_below_checkpoint");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &(validators, waves) in wave_configs {
         let total_blocks = (validators as u64) * (waves * WAVELENGTH + 1);
@@ -146,6 +149,7 @@ fn bench_checkpoint_after_weighted_finality(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("pruning_gc/checkpoint_after_weighted_finality");
     group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
 
     for &(validators, waves) in wave_configs {
         let bonds = uniform_bonds(validators);

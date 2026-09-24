@@ -3,7 +3,10 @@ use std::collections::HashSet;
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-use crate::consensus::cordiality::{super_ratifies, weighted_super_ratifies};
+use crate::consensus::cordiality::{
+    WeightedRatificationMemo, super_ratifies, weighted_super_ratifies,
+    weighted_super_ratifies_with_memo,
+};
 use crate::consensus::round::{blocks_at_depth, compute_all_depths, depth};
 use crate::consensus::wave::{last_round_of_wave, leader_blocks_of_wave, wave_of_round};
 use crate::types::{BlockIdentity, NodeId};
@@ -288,6 +291,14 @@ where
     let rounds = build_round_index(blocklace, &depths);
     let latest_wave = wave_of_round(max_round, wavelength)?;
 
+    // A single memo is shared across all wave iterations.  The observe_cache,
+    // approves_cache, and creator_blocks_cache entries are keyed on block
+    // identity alone and are valid for any immutable blocklace snapshot, so
+    // they remain correct regardless of which wave's leader is the current
+    // target.  weighted_ratifies_cache is keyed on (ratifier, target) so it
+    // never carries results from one wave's leader into another's.
+    let mut memo = WeightedRatificationMemo::default();
+
     for wave in (0..=latest_wave).rev() {
         let Some(leader) =
             unique_leader_block_from_index(&rounds, wave, wavelength, leader_selection)
@@ -309,7 +320,8 @@ where
         };
 
         let witness_blocks = witness_blocks_from_index(&rounds, candidate_round, last_round);
-        if weighted_super_ratifies(blocklace, &witness_blocks, &leader, bonds) {
+        if weighted_super_ratifies_with_memo(blocklace, &witness_blocks, &leader, bonds, &mut memo)
+        {
             return Some(leader.identity);
         }
     }
