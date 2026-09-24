@@ -392,6 +392,7 @@ circular dependency between ratings and finality.
 - Validator private-key custody and canonical rating signatures.
 - Verifying signed ratings before deterministic batch construction.
 - Bridging a finalized wave atomically into its local signed rating batch.
+- Collecting local and received evidence-backed ratings into a round batch.
 
 ---
 
@@ -407,13 +408,32 @@ OrderedFinalizedOutput
   -> canonical signed payload
   -> validator signature
   -> verified RatingRecord
-  -> deterministic RatingBatch
+  -> evidence-backed round collection
+  -> deterministic multi-validator RatingBatch
 ```
 
 `cordial-por/src/interactions.rs` owns the interaction vocabulary, admission,
 and score policy. The adapter's `por_interactions.rs` extracts finalized
 evidence, while `por_ratings.rs` owns signing, verification, and the atomic
 `build_finalized_block_production_rating_batch` orchestration entry point.
+The adapter's `por_rating_collector.rs` accepts local or received ratings,
+reconstructs their finalized block-production evidence, and closes them into
+one canonical round batch.
+
+The collector enforces:
+
+- a finalized-output anchor matching the opened rating round;
+- a reputation state from the immediately preceding round;
+- a valid signature from the declared rater;
+- active, known raters and recipients through interaction admission;
+- an exact match to the canonical finalized interaction reference;
+- the deterministic score for that admitted interaction;
+- one non-conflicting rating per `(rater, recipient)` pair;
+- atomic insertion of a supplied per-validator batch.
+
+The collector does not decide when enough ratings have arrived. Quorum,
+deadline, and round-closing policy remain external so they can be defined with
+the eventual rating transport protocol.
 
 This preserves the required direction:
 
