@@ -394,6 +394,7 @@ circular dependency between ratings and finality.
 - Bridging a finalized wave atomically into its local signed rating batch.
 - Collecting local and received evidence-backed ratings into a round batch.
 - Encoding and decoding bounded versioned block-production rating envelopes.
+- Providing the transport-neutral rating broadcast and receive boundary.
 
 ---
 
@@ -409,6 +410,8 @@ OrderedFinalizedOutput
   -> canonical signed payload
   -> validator signature
   -> verified RatingRecord
+  -> bounded v1 wire envelope
+  -> transport broadcast and receive
   -> evidence-backed round collection
   -> deterministic multi-validator RatingBatch
 ```
@@ -544,6 +547,32 @@ Wire decoding performs structural checks only. It does not make the rating
 admissible. The block-production rating collector subsequently verifies the
 signature, validator eligibility, finalized evidence reference, deterministic
 score, and collector round before retaining the rating.
+
+### Transport-Neutral Delivery Boundary
+
+The adapter exposes a synchronous rating-envelope broadcaster interface that
+can be implemented by gRPC, peer gossip, or another delivery mechanism.
+Outbound batch delivery first encodes the complete batch before sending any
+envelope. An encoding failure therefore has no transport side effects.
+
+A network failure can still occur after an earlier envelope was delivered. In
+that case the transport boundary reports the exact delivered prefix length.
+Retry policy remains external, and replayed envelopes are handled by the
+collector's duplicate rejection.
+
+Inbound delivery follows this fixed order:
+
+```text
+untrusted bytes
+  -> bounded v1 envelope decode
+  -> finalized-wave match
+  -> signature verification
+  -> finalized-evidence replay
+  -> collector insertion
+```
+
+The transport boundary does not close rating rounds or decide quorum and
+deadlines.
 
 ---
 
