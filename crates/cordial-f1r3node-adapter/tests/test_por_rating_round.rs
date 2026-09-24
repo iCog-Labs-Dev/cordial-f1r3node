@@ -6,7 +6,12 @@ use std::{
 use cordial_f1r3node_adapter::{
     ordered_output::OrderedFinalizedOutput,
     por_finality::{FinalizedRatingRound, PorFinalityTracker},
-    por_rating_round::{PorRatingRoundCoordinator, PorRatingRoundError, PorRatingRoundStatus},
+    por_rating_quorum::PorRatingRoundClosurePolicy,
+    por_rating_round::{
+        PorRatingRoundCloseReason, PorRatingRoundCoordinator, PorRatingRoundError,
+        PorRatingRoundStatus,
+        cutoff::{PorRatingCutoffError, PorRatingRoundCutoffPolicy},
+    },
     por_rating_transport::{
         PorRatingTransportError, RatingEnvelopeBroadcaster, encode_rating_batch,
     },
@@ -172,6 +177,22 @@ fn rating_batch(fixture: &Fixture, rater_seed: u8) -> RatingBatch {
     .unwrap()
 }
 
+fn receive_batch(
+    coordinator: &mut PorRatingRoundCoordinator<'_>,
+    fixture: &Fixture,
+    rater_seed: u8,
+) {
+    let batch = rating_batch(fixture, rater_seed);
+    let envelopes = encode_rating_batch(fixture.opened.finalized_wave, &batch).unwrap();
+    for envelope in envelopes {
+        coordinator.receive_envelope(&envelope).unwrap();
+    }
+}
+
+fn cutoff_wave(fixture: &Fixture) -> u64 {
+    fixture.opened.finalized_wave + 1
+}
+
 #[test]
 fn coordinates_local_production_broadcast_and_close() {
     let fixture = fixture();
@@ -201,9 +222,22 @@ fn coordinates_local_production_broadcast_and_close() {
         local_batch.ratings.len()
     );
 
-    assert_eq!(coordinator.close(), Ok(&local_batch));
+    assert_eq!(
+        coordinator.close_at_finalized_wave(
+            &PorRatingRoundCutoffPolicy::default(),
+            cutoff_wave(&fixture),
+        ),
+        Ok(&local_batch)
+    );
     assert_eq!(coordinator.status(), PorRatingRoundStatus::Closed);
     assert_eq!(coordinator.completed_batch(), Some(&local_batch));
+    assert_eq!(
+        coordinator.close_reason(),
+        Some(PorRatingRoundCloseReason::FinalizedWaveCutoff {
+            observed_finalized_wave: cutoff_wave(&fixture),
+            required_finalized_wave: cutoff_wave(&fixture),
+        })
+    );
 }
 
 #[test]
@@ -224,7 +258,12 @@ fn collects_remote_envelopes_before_explicit_close() {
         coordinator.receive_envelope(&envelope).unwrap();
     }
 
-    let completed = coordinator.close().unwrap();
+    let completed = coordinator
+        .close_at_finalized_wave(
+            &PorRatingRoundCutoffPolicy::default(),
+            cutoff_wave(&fixture),
+        )
+        .unwrap();
     assert_eq!(
         completed.ratings.len(),
         local_batch.ratings.len() + remote_batch.ratings.len()
@@ -260,12 +299,13 @@ fn partial_broadcast_resumes_after_the_delivered_prefix() {
 }
 
 #[test]
-fn close_requires_local_production_and_complete_delivery() {
+fn cutoff_close_requires_local_production_and_complete_delivery() {
     let fixture = fixture();
     let mut coordinator = coordinator(&fixture);
+    let policy = PorRatingRoundCutoffPolicy::default();
 
     assert_eq!(
-        coordinator.close(),
+        coordinator.close_at_finalized_wave(&policy, cutoff_wave(&fixture)),
         Err(PorRatingRoundError::LocalBatchNotProduced)
     );
     let local_len = coordinator
@@ -274,7 +314,7 @@ fn close_requires_local_production_and_complete_delivery() {
         .ratings
         .len();
     assert_eq!(
-        coordinator.close(),
+        coordinator.close_at_finalized_wave(&policy, cutoff_wave(&fixture)),
         Err(PorRatingRoundError::PendingOutboundRatings(local_len))
     );
     assert_eq!(coordinator.status(), PorRatingRoundStatus::Open);
@@ -282,7 +322,9 @@ fn close_requires_local_production_and_complete_delivery() {
     coordinator
         .broadcast_pending(&RecordingBroadcaster::default())
         .unwrap();
-    coordinator.close().unwrap();
+    coordinator
+        .close_at_finalized_wave(&policy, cutoff_wave(&fixture))
+        .unwrap();
     assert_eq!(coordinator.status(), PorRatingRoundStatus::Closed);
 }
 
@@ -332,7 +374,12 @@ fn rejects_duplicate_local_production_and_all_mutation_after_close() {
         Err(PorRatingRoundError::LocalBatchAlreadyProduced)
     );
     coordinator.broadcast_pending(&broadcaster).unwrap();
-    coordinator.close().unwrap();
+    coordinator
+        .close_at_finalized_wave(
+            &PorRatingRoundCutoffPolicy::default(),
+            cutoff_wave(&fixture),
+        )
+        .unwrap();
 
     assert_eq!(
         coordinator.produce_local_batch(&node(9), &private_key(9)),
@@ -346,5 +393,114 @@ fn rejects_duplicate_local_production_and_all_mutation_after_close() {
         coordinator.receive_envelope(&encoded[0]),
         Err(PorRatingRoundError::RoundClosed)
     );
-    assert_eq!(coordinator.close(), Err(PorRatingRoundError::RoundClosed));
+    assert_eq!(
+        coordinator.close_at_finalized_wave(
+            &PorRatingRoundCutoffPolicy::default(),
+            cutoff_wave(&fixture),
+        ),
+        Err(PorRatingRoundError::RoundClosed)
+    );
+}
+
+#[test]
+fn finalized_wave_cutoff_rejects_early_close_and_discards_partial_batches() {
+    let fixture = fixture();
+    let mut coordinator = coordinator(&fixture);
+    let broadcaster = RecordingBroadcaster::default();
+    let policy = PorRatingRoundCutoffPolicy::default();
+    let local_batch = coordinator
+        .produce_local_batch(&node(9), &private_key(9))
+        .unwrap()
+        .clone();
+    coordinator.broadcast_pending(&broadcaster).unwrap();
+    let partial_remote = rating_batch(&fixture, 8);
+    let envelopes = encode_rating_batch(fixture.opened.finalized_wave, &partial_remote).unwrap();
+    coordinator.receive_envelope(&envelopes[0]).unwrap();
+
+    assert_eq!(coordinator.collected_len(), local_batch.ratings.len() + 1);
+    assert_eq!(
+        coordinator.close_at_finalized_wave(&policy, fixture.opened.finalized_wave),
+        Err(PorRatingRoundError::Cutoff(
+            PorRatingCutoffError::CutoffNotReached {
+                observed_finalized_wave: fixture.opened.finalized_wave,
+                required_finalized_wave: cutoff_wave(&fixture),
+            }
+        ))
+    );
+    assert_eq!(coordinator.status(), PorRatingRoundStatus::Open);
+    assert_eq!(coordinator.close_reason(), None);
+
+    let completed = coordinator
+        .close_at_finalized_wave(&policy, cutoff_wave(&fixture))
+        .unwrap();
+    assert_eq!(completed, &local_batch);
+    assert!(
+        completed
+            .ratings
+            .iter()
+            .all(|rating| rating.rater == node(9))
+    );
+}
+
+#[test]
+fn quorum_close_discards_a_non_quorum_partial_prefix() {
+    let fixture = fixture();
+    let mut coordinator = coordinator(&fixture);
+    let broadcaster = RecordingBroadcaster::default();
+    coordinator
+        .produce_local_batch(&node(9), &private_key(9))
+        .unwrap();
+    coordinator.broadcast_pending(&broadcaster).unwrap();
+    receive_batch(&mut coordinator, &fixture, 1);
+    receive_batch(&mut coordinator, &fixture, 2);
+    let partial_remote = rating_batch(&fixture, 8);
+    let envelopes = encode_rating_batch(fixture.opened.finalized_wave, &partial_remote).unwrap();
+    coordinator.receive_envelope(&envelopes[0]).unwrap();
+
+    assert_eq!(coordinator.collected_len(), 5);
+    let completed = coordinator
+        .close_if_quorum(&PorRatingRoundClosurePolicy::default())
+        .unwrap();
+    assert_eq!(completed.ratings.len(), 4);
+    assert!(
+        completed
+            .ratings
+            .iter()
+            .all(|rating| rating.rater != node(8))
+    );
+    assert_eq!(
+        coordinator.close_reason(),
+        Some(PorRatingRoundCloseReason::Quorum {
+            completed_weight: 300,
+            required_weight: 267,
+        })
+    );
+}
+
+#[test]
+fn finalized_wave_cutoff_policy_validates_lag_and_overflow() {
+    assert_eq!(
+        PorRatingRoundCutoffPolicy::new(0),
+        Err(PorRatingCutoffError::ZeroWaveLag)
+    );
+
+    let fixture = fixture();
+    let policy = PorRatingRoundCutoffPolicy::new(2).unwrap();
+    assert_eq!(policy.wave_lag(), 2);
+    assert_eq!(
+        policy.required_finalized_wave(fixture.opened),
+        Ok(fixture.opened.finalized_wave + 2)
+    );
+
+    let overflowed = FinalizedRatingRound {
+        finalized_wave: u64::MAX,
+        rating_round: 0,
+    };
+    assert_eq!(
+        policy.required_finalized_wave(overflowed),
+        Err(PorRatingCutoffError::RequiredWaveOverflow {
+            finalized_wave: u64::MAX,
+            wave_lag: 2,
+        })
+    );
 }
