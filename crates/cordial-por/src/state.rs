@@ -4,6 +4,8 @@ use cordial_miners_core::NodeId;
 
 use crate::{
     audit::verify_reputation_transition,
+    block::ReputationBlockContext,
+    commitments::validate_reputation_vector,
     config::PorConfig,
     error::PorError,
     types::{
@@ -231,6 +233,8 @@ impl ReputationState {
     /// validation, replay, or application error, the state remains unchanged.
     pub fn apply_reputation_block(
         &mut self,
+        shard_id: &[u8],
+        source_finalized_wave: u64,
         ratings: &[RatingRecord],
         block: ReputationBlock,
         config: &PorConfig,
@@ -239,7 +243,17 @@ impl ReputationState {
             round: self.current_round,
             values: self.reputation_list.entries.clone(),
         };
-        verify_reputation_transition(&previous, ratings, &block, config)?;
+        verify_reputation_transition(
+            &previous,
+            ratings,
+            &block,
+            ReputationBlockContext {
+                shard_id,
+                source_finalized_wave,
+                previous_block: self.latest_block.as_ref(),
+            },
+            config,
+        )?;
 
         let vector = ReputationVector {
             round: block.reputation_list.round,
@@ -258,16 +272,4 @@ impl Default for ReputationState {
     fn default() -> Self {
         Self::new(0)
     }
-}
-
-fn validate_reputation_vector(vector: &ReputationVector) -> Result<(), PorError> {
-    for entries in vector.values.windows(2) {
-        match entries[0].node_id.cmp(&entries[1].node_id) {
-            std::cmp::Ordering::Less => {}
-            std::cmp::Ordering::Equal => return Err(PorError::DuplicateReputationEntry),
-            std::cmp::Ordering::Greater => return Err(PorError::UnsortedReputationVector),
-        }
-    }
-
-    Ok(())
 }

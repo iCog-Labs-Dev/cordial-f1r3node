@@ -7,6 +7,7 @@
 pub mod audit;
 pub mod block;
 pub mod clamp;
+pub mod commitments;
 pub mod config;
 pub mod error;
 pub mod interactions;
@@ -20,6 +21,11 @@ pub mod types;
 pub mod weights;
 
 pub use audit::{replay_reputation_transition, verify_reputation_transition};
+pub use commitments::{
+    POR_CONFIG_COMMITMENT_DOMAIN, POR_RATING_BATCH_COMMITMENT_DOMAIN,
+    POR_REPUTATION_BLOCK_COMMITMENT_DOMAIN, POR_REPUTATION_LIST_COMMITMENT_DOMAIN,
+    config_commitment, rating_batch_commitment, reputation_block_hash, reputation_list_commitment,
+};
 pub use config::{MissingEntryPolicy, PorConfig};
 pub use error::PorError;
 pub use interactions::{
@@ -35,11 +41,15 @@ pub use ratings::{
 };
 pub use state::ReputationState;
 
-pub use block::{build_reputation_block, validate_reputation_block};
+pub use block::{
+    MAX_REPUTATION_BLOCK_SHARD_ID_LEN, REPUTATION_BLOCK_VERSION, ReputationBlockContext,
+    build_reputation_block, validate_reputation_block,
+};
 pub use types::{
     EquivocationPenalty, InactivityPenalty, NormalizedRatingEntry, NormalizedRatingMatrix,
     RatingBatch, RatingMatrix, RatingRecord, RatingScore, ReputationBlock, ReputationBlockHeader,
-    ReputationEntry, ReputationList, ReputationRound, ReputationVector, ReputationWeight,
+    ReputationCommitment, ReputationEntry, ReputationList, ReputationRound, ReputationVector,
+    ReputationWeight,
 };
 
 pub use clamp::{clamp_reputation_transition, clamp_reputation_value, clamp_reputation_vector};

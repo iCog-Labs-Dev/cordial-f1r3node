@@ -37,9 +37,21 @@ pub enum PorError {
     InvalidClampScale,
     ClampOverflow,
     // Reputation-block-specific errors
+    UnsupportedReputationBlockVersion(u16),
+    MissingReputationBlockShardId,
+    ReputationBlockShardIdTooLong,
+    InvalidReputationBlockSourceWave,
     InvalidReputationBlockRound,
-    MissingReputationBlockRatingsHash,
-    MissingReputationBlockRoot,
+    InvalidPreviousReputationBlockRound,
+    PreviousReputationBlockShardMismatch,
+    ReputationBlockShardMismatch,
+    ReputationBlockSourceWaveMismatch,
+    ReputationBlockPreviousHashMismatch,
+    ReputationBlockConfigHashMismatch,
+    ReputationBlockRatingsHashMismatch,
+    ReputationBlockRootMismatch,
+    ReputationExclusionMismatch,
+    CommitmentLengthOverflow,
     // Audit-replay-specific errors
     MissingReputationBlockEntry,
     UnexpectedReputationBlockEntry,
@@ -150,15 +162,63 @@ impl fmt::Display for PorError {
             }
             Self::InvalidClampScale => write!(f, "clamp scale must be greater than zero"),
             Self::ClampOverflow => write!(f, "clamp arithmetic overflowed"),
+            Self::UnsupportedReputationBlockVersion(version) => {
+                write!(f, "unsupported reputation block version {version}")
+            }
+            Self::MissingReputationBlockShardId => {
+                write!(f, "reputation block shard id is empty")
+            }
+            Self::ReputationBlockShardIdTooLong => {
+                write!(f, "reputation block shard id exceeds the protocol limit")
+            }
+            Self::InvalidReputationBlockSourceWave => write!(
+                f,
+                "reputation block round does not immediately follow its finalized source wave"
+            ),
             Self::InvalidReputationBlockRound => write!(
                 f,
                 "reputation block header round does not match the reputation list round"
             ),
-            Self::MissingReputationBlockRatingsHash => {
-                write!(f, "reputation block ratings hash is empty")
+            Self::InvalidPreviousReputationBlockRound => write!(
+                f,
+                "previous reputation block does not immediately precede the proposed block"
+            ),
+            Self::PreviousReputationBlockShardMismatch => {
+                write!(f, "previous reputation block belongs to a different shard")
             }
-            Self::MissingReputationBlockRoot => {
-                write!(f, "reputation block root is empty")
+            Self::ReputationBlockShardMismatch => {
+                write!(
+                    f,
+                    "reputation block shard id does not match the audit context"
+                )
+            }
+            Self::ReputationBlockSourceWaveMismatch => write!(
+                f,
+                "reputation block source wave does not match the audit context"
+            ),
+            Self::ReputationBlockPreviousHashMismatch => {
+                write!(
+                    f,
+                    "reputation block does not extend the expected previous block"
+                )
+            }
+            Self::ReputationBlockConfigHashMismatch => {
+                write!(
+                    f,
+                    "reputation block configuration commitment does not match"
+                )
+            }
+            Self::ReputationBlockRatingsHashMismatch => {
+                write!(f, "reputation block rating-batch commitment does not match")
+            }
+            Self::ReputationBlockRootMismatch => {
+                write!(f, "reputation block list commitment does not match")
+            }
+            Self::ReputationExclusionMismatch => {
+                write!(f, "reputation block exclusion flag does not match replay")
+            }
+            Self::CommitmentLengthOverflow => {
+                write!(f, "canonical reputation commitment input is too large")
             }
             Self::MissingReputationBlockEntry => {
                 write!(f, "reputation block is missing a replayed reputation entry")

@@ -9,8 +9,9 @@
 //! or perform networking.
 
 use crate::{
-    block::validate_reputation_block,
+    block::{ReputationBlockContext, validate_reputation_block},
     clamp::clamp_reputation_transition,
+    commitments::{config_commitment, rating_batch_commitment, reputation_block_hash},
     config::PorConfig,
     error::PorError,
     liquid_rank::compute_liquid_rank_contribution,
@@ -18,7 +19,10 @@ use crate::{
     normalization::normalize_rating_matrix,
     ratings::build_rating_batch,
     transition::blend_reputation_transition,
-    types::{RatingRecord, ReputationBlock, ReputationList, ReputationRound, ReputationVector},
+    types::{
+        RatingBatch, RatingRecord, ReputationBlock, ReputationList, ReputationRound,
+        ReputationVector,
+    },
 };
 
 /// Replay the deterministic reputation transition for a single round.
@@ -43,27 +47,75 @@ pub fn replay_reputation_transition(
     let clamped =
         clamp_reputation_transition(&blended, previous_reputation, &contribution, config)?;
 
+    let mut entries = clamped.values;
+    for entry in &mut entries {
+        if let Ok(index) = previous_reputation
+            .values
+            .binary_search_by(|previous| previous.node_id.cmp(&entry.node_id))
+            && previous_reputation.values[index].is_excluded
+        {
+            entry.reputation = 0;
+            entry.is_excluded = true;
+        }
+    }
+
     Ok(ReputationList {
         round: clamped.round,
-        entries: clamped.values,
+        entries,
     })
 }
 
 /// Verify that a proposed reputation block matches a deterministic replay.
 ///
 /// The block is first put through `validate_reputation_block`, so an audited
-/// block is held to exactly the rules a constructed one satisfies: matching
-/// header and list rounds, non-empty hash fields, and a canonically ordered
-/// reputation list. The replayed list is then compared entry for entry, so a
-/// validator accepts the block only when the recorded ratings and the previous
-/// reputation actually produce it.
+/// block is held to exactly the structural rules a constructed one satisfies.
+/// The external context then binds it to the expected shard, finalized wave,
+/// previous block, configuration, and signed rating batch. Finally, the
+/// replayed list is compared entry for entry, so a validator accepts the block
+/// only when the recorded ratings and previous reputation actually produce it.
 pub fn verify_reputation_transition(
     previous_reputation: &ReputationVector,
     ratings: &[RatingRecord],
     proposed_block: &ReputationBlock,
+    context: ReputationBlockContext<'_>,
     config: &PorConfig,
 ) -> Result<(), PorError> {
     validate_reputation_block(proposed_block)?;
+
+    let header = &proposed_block.header;
+    if header.shard_id != context.shard_id {
+        return Err(PorError::ReputationBlockShardMismatch);
+    }
+    if header.source_finalized_wave != context.source_finalized_wave {
+        return Err(PorError::ReputationBlockSourceWaveMismatch);
+    }
+
+    let expected_previous_hash = match context.previous_block {
+        Some(previous) => {
+            if previous.header.shard_id != context.shard_id {
+                return Err(PorError::PreviousReputationBlockShardMismatch);
+            }
+            if previous.header.round.checked_add(1) != Some(header.round) {
+                return Err(PorError::InvalidPreviousReputationBlockRound);
+            }
+            Some(reputation_block_hash(previous)?)
+        }
+        None => None,
+    };
+    if header.previous_reputation_hash != expected_previous_hash {
+        return Err(PorError::ReputationBlockPreviousHashMismatch);
+    }
+    if header.config_hash != config_commitment(config) {
+        return Err(PorError::ReputationBlockConfigHashMismatch);
+    }
+
+    let rating_batch = RatingBatch {
+        round: header.round,
+        ratings: ratings.to_vec(),
+    };
+    if header.ratings_hash != rating_batch_commitment(&rating_batch, config)? {
+        return Err(PorError::ReputationBlockRatingsHashMismatch);
+    }
 
     let proposed = &proposed_block.reputation_list;
     let expected =
@@ -87,6 +139,9 @@ fn compare_reputation_lists(
                     std::cmp::Ordering::Equal => {
                         if expected_entry.reputation != proposed_entry.reputation {
                             return Err(PorError::ReputationValueMismatch);
+                        }
+                        if expected_entry.is_excluded != proposed_entry.is_excluded {
+                            return Err(PorError::ReputationExclusionMismatch);
                         }
 
                         expected_entries.next();

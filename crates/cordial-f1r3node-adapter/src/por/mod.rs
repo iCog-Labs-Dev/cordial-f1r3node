@@ -34,9 +34,7 @@ pub use ratings::{
     rating_signing_hash, sign_admitted_interaction, validate_signed_rating,
     verify_rating_signature,
 };
-pub use transition::{
-    AppliedPorReputationRound, PorReputationBlockCommitments, apply_completed_reputation_round,
-};
+pub use transition::{AppliedPorReputationRound, apply_completed_reputation_round};
 pub use transport::channel::{
     ChannelRatingEnvelopeBroadcaster, ChannelRatingEnvelopeReceiver, PorRatingChannelError,
     RatingEnvelopeReceiveOutcome, bounded_rating_envelope_channel,
