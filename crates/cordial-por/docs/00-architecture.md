@@ -25,13 +25,13 @@ Cordial Miners approval, ratification, finality, τ-ordering and blocklace conse
 ```mermaid
 flowchart TD
 
-    subgraph External["External / Future"]
-        Ratings["Rating / evidence sources"]
-        Audit["Reputation blocks / audit path"]
+    subgraph External["External"]
+        Ratings["Finalized ratings / evidence"]
     end
 
     subgraph PoR["cordial-por"]
         Config["PorConfig"]
+        Audit["Commit + audit reputation block"]
         State["ReputationState"]
         Export["reputation_weights()"]
     end
@@ -45,10 +45,10 @@ flowchart TD
         Ownership["Not owned by cordial-por"]
     end
 
-    Ratings -.->|future| State
-    Audit -.->|future| State
-
-    Config --> State
+    Ratings --> Audit
+    Config --> Audit
+    State --> Audit
+    Audit --> State
     State --> Export
     Export -->|"HashMap&lt;NodeId, ReputationWeight&gt;"| Weighted
 
@@ -61,7 +61,7 @@ flowchart TD
 
 ## Internal PoR Architecture
 
-The current crate is an intentional scaffold. The implemented modules remain intentionally small, while the complete future Proof-of-Reputation pipeline is shown as dotted stages to document the intended evolution of the crate.
+The crate implements the deterministic rating-to-reputation path and keeps publication, penalties, and committee selection as explicit extension points.
 
 ```mermaid
 flowchart TD
@@ -112,25 +112,26 @@ flowchart TD
     end
 
     %% ---------- Current implemented path ----------
+    Ratings --> Ingest
+    Ingest --> Validate
+    Validate --> Aggregate
+    Aggregate --> Matrix
+    Matrix --> Normalize
+    Normalize --> Liquid
+    Liquid --> Transition
+    Transition --> Clamp
+    Clamp --> Apply
+    Clamp --> Audit
     Config --> State
     State --> Export
     Export -->|"HashMap&lt;NodeId, ReputationWeight&gt;"| Weighted
 
-    %% ---------- Future PoR pipeline ----------
-    Ratings -.-> Ingest
-    Ingest -.-> Validate
-    Validate -.-> Aggregate
-    Aggregate -.-> Matrix
-    Matrix -.-> Normalize
-    Normalize -.-> Liquid
-    Liquid -.-> Transition
+    %% ---------- Future PoR extensions ----------
     Transition -.-> Penalty
-    Penalty -.-> Clamp
-    Clamp -.-> Apply
-    Apply -.-> State
-    Clamp -.-> Audit
+    Penalty -.-> Apply
 
-    State -.-> Audit
+    Apply --> State
+    State --> Audit
     State -.-> Committee
     Committee -.-> Export
 
@@ -146,7 +147,9 @@ flowchart TD
 ### Implemented And Future PoR Stages
 
 > **Implementation Note:**  
-> The stages shown with dotted edges in the architecture above are part of the intended PoR architecture described in the paper (arXiv:2108.03542 and related Liquid-Rank literature). The current crate implements the data-preparation path, Liquid-Rank contribution `P = S * R`, the pure fixed-point alpha-blend transition, deterministic fixed-point sigmoid clamping, explicit application of finalized vectors to `ReputationState`, construction of a `ReputationBlock` from a finalized reputation list, and audit replay of the whole transition against a proposed `ReputationBlock`. The transition requires consecutive rounds and resolves sparse node sets through a configured no-rating fallback policy. These stages do not publish blocks.
+> The solid edges are implemented. Dotted edges remain future extensions described by the paper (arXiv:2108.03542 and related Liquid-Rank literature). The implemented transition requires consecutive rounds and resolves sparse node sets through a configured no-rating fallback policy. Reputation-block construction derives canonical commitments and audit replay verifies them, but these stages do not publish blocks.
+
+Implemented:
 
 - Rating validation and deterministic round batching
 - Rating matrix construction
@@ -155,8 +158,11 @@ flowchart TD
 - Alpha-blended reputation transition
 - Deterministic sigmoid clamping
 - Reputation state application
-- Reputation block construction
-- Reputation transition audit replay
+- Versioned reputation-block construction and canonical commitments
+- Reputation transition and commitment audit replay
+
+Future:
+
 - Penalties / slashing
 - Reputation block publication
 - Committee selection
@@ -174,8 +180,9 @@ flowchart TD
 | `transition` | Blend contribution with previous reputation using checked fixed-point arithmetic and consecutive rounds, resolving sparse node sets through the configured policy | contribution `ReputationVector`, previous `ReputationVector`, `PorConfig` | next-round `ReputationVector` | `config`, `types`, `error` | `blend_reputation_transition` |
 | `clamp` | Apply deterministic fixed-point sigmoid clamp to reputation values; the pipeline clamp restores CarryForward entries from previous reputation so an already-finalized value is not decayed and a hand-built blend cannot preserve an arbitrary unclamped value | `ReputationVector`, previous and contribution vectors, `PorConfig` | clamped `ReputationVector` | `config`, `types`, `error` | `clamp_reputation_value`, `clamp_reputation_vector`, `clamp_reputation_transition` |
 | `state` | In-memory reputation snapshot keyed by `NodeId`; consumes finalized vectors or audited blocks atomically | round, validator → weight, finalized `ReputationVector` or ratings + `ReputationBlock` | `ReputationState` | `audit`, `config`, `types`, `error` | `new`, `round`, `reputation_list`, `pending_ratings`, `latest_block`, `add_rating`, `set_reputation`, `eject_validator`, `is_ejected`, `excluded_keys`, `apply_reputation_vector`, `apply_reputation_block` |
-| `block` | Validate a reputation block and build one from a finalized reputation list and header | `ReputationBlockHeader`, `ReputationList` | `ReputationBlock` | `types`, `error` | `build_reputation_block`, `validate_reputation_block` |
-| `audit` | Replay the deterministic transition and verify it against a proposed reputation block | previous `ReputationVector`, `&[RatingRecord]`, `ReputationBlock`, `PorConfig` | expected `ReputationList` / verification result | `ratings`, `matrix`, `normalization`, `liquid_rank`, `transition`, `clamp`, `block`, `types`, `error` | `replay_reputation_transition`, `verify_reputation_transition` |
+| `commitments` | Define the canonical, domain-separated v1 commitments for configuration, signed ratings, reputation lists, and reputation blocks | protocol data | Blake2b-256 commitments | `config`, `ratings`, `types`, `error` | `config_commitment`, `rating_batch_commitment`, `reputation_list_commitment`, `reputation_block_hash` |
+| `block` | Derive and validate a versioned, shard-bound, finalized-wave-bound reputation block | `ReputationBlockContext`, `RatingBatch`, `ReputationList`, `PorConfig` | `ReputationBlock` | `commitments`, `ratings`, `types`, `error` | `build_reputation_block`, `validate_reputation_block` |
+| `audit` | Replay the deterministic transition and verify it, its commitments, and its chain context against a proposed reputation block | previous `ReputationVector`, `&[RatingRecord]`, `ReputationBlock`, `ReputationBlockContext`, `PorConfig` | expected `ReputationList` / verification result | `commitments`, `ratings`, `matrix`, `normalization`, `liquid_rank`, `transition`, `clamp`, `block`, `types`, `error` | `replay_reputation_transition`, `verify_reputation_transition` |
 | `weights` | Export current reputation map for the weighted path | `&ReputationState` | `HashMap<NodeId, ReputationWeight>` | `state`, `cordial-miners-core::NodeId` | `reputation_weights` |
 | `error` | PoR validation, matrix, normalization, and calculation errors | — | `PorError` | none | `PorError` variants |
 | `lib` | Crate root, re-exports | — | public API surface | all of the above | `PorConfig`, `PorError`, `ReputationState`, rating/matrix/liquid-rank/transition/block APIs, types, `reputation_weights` |
@@ -190,8 +197,8 @@ flowchart TD
 6. The next vector is computed with `blend_reputation_transition`, which requires consecutive rounds and covers the union of both node sets, resolving nodes missing from either side through `PorConfig::missing_entry_policy`; this is a pure calculation and does not mutate state.
 7. The next vector is clamped with `clamp_reputation_transition`, which applies the sigmoid to rated and newly seeded nodes and restores CarryForward entries from previous reputation. The previous value is copied rather than taken from the blend, so a hand-built blended vector cannot preserve an arbitrary unclamped value. The sigmoid is not idempotent, so clamping those entries would decay them every sparse round. This is a pure calculation and does not mutate state.
 8. A finalized vector can be applied directly with `ReputationState::apply_reputation_vector`, or a proposed block can be replay-audited and applied atomically with `ReputationState::apply_reputation_block`. Successful block application also records `latest_block`; failure leaves the prior state unchanged.
-9. A `ReputationBlock` can be assembled with `build_reputation_block`, which validates the header/list round match, required block hash fields, and canonical reputation-list ordering.
-10. Any validator can replay steps 2-7 with `replay_reputation_transition` and check a proposed block with `verify_reputation_transition`, which applies the same `validate_reputation_block` rules as construction before comparing the reputation list entry for entry. Both are read-only.
+9. A `ReputationBlock` is assembled with `build_reputation_block`. The builder accepts finalized protocol inputs rather than caller-supplied hashes and derives the canonical configuration, signed-rating, reputation-list, and previous-block commitments. The v1 header binds the result to a shard and to the finalized wave that opens its reputation round.
+10. Any validator can replay steps 2-7 with `replay_reputation_transition` and check a proposed block with `verify_reputation_transition`. Verification checks the header version, shard, source wave, previous-block link, all derived commitments, exclusion flags, and the replayed reputation list. Both operations are read-only.
 11. The f1r3node adapter consumes a deterministically closed rating round, constructs and audits its reputation block against a cloned state, exports `reputation_weights`, and replaces the live state only after all fallible work succeeds.
 12. Block publication and consensus selection remain future stages.
 
@@ -210,7 +217,7 @@ Completed RatingBatch
   -> Cordial weight export
 ```
 
-The transition is atomic with respect to `ReputationState`: all work is staged on a clone and the caller's state is replaced only on success. The function accepts `previous_reputation_hash`, `ratings_hash`, and `reputation_root` bytes from the publication layer. Their canonical preimage encoding is not currently specified, so the adapter does not invent a consensus hashing format; current `cordial-por` validation requires the rating and reputation commitments to be non-empty.
+The transition is atomic with respect to `ReputationState`: all work is staged on a clone and the caller's state is replaced only on success. Its external chain input is the shard identifier. The finalized source wave and canonical rating batch come from `CompletedPorRatingRound`, while the previous reputation block comes from `ReputationState::latest_block`. `cordial-por` derives every commitment internally, so the adapter cannot inject opaque commitment bytes.
 
 ## Ownership Boundaries
 
@@ -218,9 +225,9 @@ The transition is atomic with respect to `ReputationState`: all work is staged o
 
 - Reputation state representation (`ReputationState`).
 - Fixed-point scale and initial-reputation configuration.
-- Rating validation, deterministic matrix construction, paper-guided rating normalization, Liquid-Rank contribution calculation, pure alpha-blend transition calculation with a configured no-rating fallback, deterministic sigmoid clamping (restoring CarryForward entries from previous reputation so finalized reputation is not decayed on a sparse round), explicit finalized-vector application, atomic audited-block application to `ReputationState`, reputation-block construction and validation, and deterministic audit replay of a proposed reputation block.
+- Rating validation, deterministic matrix construction, paper-guided rating normalization, Liquid-Rank contribution calculation, pure alpha-blend transition calculation with a configured no-rating fallback, deterministic sigmoid clamping (restoring CarryForward entries from previous reputation so finalized reputation is not decayed on a sparse round), explicit finalized-vector application, canonical reputation commitments, atomic audited-block application to `ReputationState`, reputation-block construction and validation, and deterministic audit replay of a proposed reputation block.
 - Conversion of the current reputation map into the weight map expected by Cordial Miners.
-- Future PoR algorithms (penalties, audit, and selection) once implemented.
+- Future PoR algorithms (penalties and selection) once implemented.
 
 ### cordial-por does NOT own
 

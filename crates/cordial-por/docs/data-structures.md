@@ -14,7 +14,8 @@ rating transactions
   -> liquid-rank contribution vector
   -> alpha-blended next reputation vector
   -> clamped reputation vector
-  -> reputation state snapshot
+  -> committed reputation block
+  -> audited reputation state snapshot
 ```
 
 This stage validates `RatingRecord` instances and assembles a single-round
@@ -72,10 +73,9 @@ rating transactions
   -> reputation block
 ```
 
-The current implementation is in scope through normalized rating matrix
-construction, liquid-rank contribution calculation, pure alpha blending, and
-deterministic fixed-point clamping, plus explicit application of a finalized
-vector to `ReputationState`. Reputation block publication remains future work.
+The current implementation covers this complete local calculation, commitment,
+audit, and state-application path. Reputation block publication and persistence
+remain future work.
 
 ## File-Level Plan
 
@@ -87,6 +87,7 @@ Planned types:
 
 - `ReputationRound`
 - `ReputationWeight`
+- `ReputationCommitment`
 - `RatingScore`
 - `RatingRecord`
 - `RatingBatch`
@@ -252,15 +253,80 @@ normalization, Liquid Rank, alpha blending, or clamping.
 The `src/block.rs` module assembles a reputation block with:
 
 ```text
-ReputationBlockHeader + ReputationList -> ReputationBlock
+ReputationBlockContext + RatingBatch + ReputationList + PorConfig
+  -> ReputationBlock
 ```
 
-`validate_reputation_block` checks that the header round matches the list round,
-requires non-empty `ratings_hash` and `reputation_root` fields, and enforces the
-canonical `NodeId` ordering by rejecting duplicate or unsorted entries.
-`build_reputation_block` runs those checks and then consumes the header and
-finalized list. Neither recomputes the reputation pipeline, mutates
-`ReputationState`, or publishes a block.
+`build_reputation_block` accepts protocol inputs rather than caller-supplied
+hashes. It derives the source round from the finalized wave, commits the
+configuration, signed rating batch, and reputation list, and links the block to
+the canonical hash of the immediately preceding block when one exists. A
+previous block must belong to the same shard and immediately preceding round.
+
+`validate_reputation_block` checks the v1 format version, non-empty bounded
+shard identifier, finalized-wave-to-round relation, header/list round match,
+canonical `NodeId` ordering, and the recomputed reputation-list commitment.
+Structural validation cannot prove external facts such as which shard or wave
+the caller expected; `verify_reputation_transition` checks those against its
+`ReputationBlockContext`. Neither operation mutates `ReputationState` or
+publishes a block.
+
+## Canonical Reputation Commitments
+
+All v1 commitments use Blake2b-256. Integers are unsigned big-endian, collection
+counts and byte lengths are `u64`, optional values use a one-byte `0`/`1`
+discriminant, and Boolean values use `0`/`1`. Domain separators are included
+verbatim as the first bytes of their preimages.
+
+```text
+config_commitment = H(
+    "cordial-por:config-commitment:v1"
+    || scale_u64
+    || initial_reputation_u64
+    || liquid_rank_alpha_u64
+    || minimum_rating_u64
+    || maximum_rating_u64
+    || missing_entry_policy_u8
+)
+
+rating_batch_commitment = H(
+    "cordial-por:rating-batch-commitment:v1"
+    || round_u64
+    || rating_count_u64
+    || each(
+        canonical_rating_payload_len_u64
+        || canonical_rating_payload
+        || signature_len_u64
+        || signature
+    )
+)
+
+reputation_list_commitment = H(
+    "cordial-por:reputation-list-commitment:v1"
+    || round_u64
+    || entry_count_u64
+    || each(node_id_len_u64 || node_id || reputation_u64 || is_excluded_u8)
+)
+
+reputation_block_hash = H(
+    "cordial-por:reputation-block-commitment:v1"
+    || version_u16
+    || shard_id_len_u64 || shard_id
+    || source_finalized_wave_u64
+    || round_u64
+    || previous_hash_presence_u8 || [previous_hash_32]
+    || config_hash_32
+    || ratings_hash_32
+    || reputation_root_32
+)
+```
+
+Ratings are first validated and sorted by `(recipient, rater)`, so the batch
+commitment is independent of arrival order. It commits the exact signatures as
+well as the canonical signed payloads. Reputation entries must already be in
+strict `NodeId` order; the list commitment includes `is_excluded`, making
+exclusion part of the auditable state. Golden vectors in
+`tests/commitments.rs` lock the v1 formats against accidental changes.
 
 The `src/audit.rs` module replays the whole pipeline so that any member can
 audit a proposed reputation block:
@@ -272,14 +338,12 @@ ratings + previous reputation + config -> expected ReputationList
 `replay_reputation_transition` runs batching, matrix construction,
 normalization, Liquid Rank, alpha blending, and `clamp_reputation_transition`
 for one round, so a shuffled rating set yields the same list.
-`verify_reputation_transition` applies `validate_reputation_block` to the
-proposed block first, so an audited block is held to the same structural rules
-as a constructed one, then compares the replayed list against
-`ReputationBlock.reputation_list`. Node-set and value
-differences are reported separately as `MissingReputationBlockEntry`,
-`UnexpectedReputationBlockEntry`, and `ReputationValueMismatch`. Replay is
-read-only: it does not mutate `ReputationState`, publish blocks, or perform
-networking.
+`verify_reputation_transition` applies `validate_reputation_block` first, then
+checks the expected shard, source finalized wave, previous-block hash,
+configuration commitment, and signed-rating commitment before comparing the
+replayed list against `ReputationBlock.reputation_list`. Node-set, value, and
+exclusion differences are reported separately. Replay is read-only: it does
+not mutate `ReputationState`, publish blocks, or perform networking.
 
 Future work remains:
 
@@ -449,8 +513,12 @@ Planned shape:
 
 ```text
 ReputationBlockHeader {
+    version,
+    shard_id,
+    source_finalized_wave,
     round,
     previous_reputation_hash,
+    config_hash,
     ratings_hash,
     reputation_root,
 }
