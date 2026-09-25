@@ -31,7 +31,8 @@ pub use lifecycle::{
     PorRatingRoundError, PorRatingRoundStatus,
 };
 pub use persistence::{
-    POR_STATE_DIRECTORY, POR_STATE_FILE_NAME, PorStateStore, PorStateStoreError,
+    DurablePorState, DurablePorStateError, POR_STATE_DIRECTORY, POR_STATE_FILE_NAME, PorStateStore,
+    PorStateStoreError,
 };
 pub use ratings::{
     PorRatingError, build_finalized_block_production_rating_batch, build_verified_rating_batch,

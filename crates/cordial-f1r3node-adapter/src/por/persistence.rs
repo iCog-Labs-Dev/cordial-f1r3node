@@ -15,10 +15,15 @@ use std::{
 };
 
 use cordial_por::{
-    MAX_REPUTATION_STATE_SNAPSHOT_LEN, PorError, ReputationState, decode_reputation_state_snapshot,
-    encode_reputation_state_snapshot,
+    MAX_REPUTATION_STATE_SNAPSHOT_LEN, PorConfig, PorError, ReputationState,
+    decode_reputation_state_snapshot, encode_reputation_state_snapshot,
 };
 use thiserror::Error;
+
+use super::{
+    lifecycle::CompletedPorRatingRound,
+    transition::{AppliedPorReputationRound, stage_completed_reputation_round},
+};
 
 /// Directory below the node data directory containing PoR state.
 pub const POR_STATE_DIRECTORY: &str = "por";
@@ -39,6 +44,19 @@ pub enum PorStateStoreError {
 
     #[error("PoR state writer lock is poisoned")]
     WriterLockPoisoned,
+}
+
+/// Failures while restoring or durably advancing live PoR state.
+#[derive(Debug, Error)]
+pub enum DurablePorStateError {
+    #[error("PoR state persistence failed: {0}")]
+    Persistence(#[source] PorStateStoreError),
+
+    #[error("PoR reputation transition failed: {0}")]
+    Transition(#[source] PorError),
+
+    #[error("durable PoR state requires recovery after a persistence failure")]
+    RecoveryRequired,
 }
 
 /// Filesystem-backed store for one shard's latest finalized PoR state.
@@ -126,5 +144,92 @@ impl PorStateStore {
         decode_reputation_state_snapshot(&encoded)
             .map(Some)
             .map_err(Into::into)
+    }
+}
+
+/// Startup and commit boundary for one shard's live reputation state.
+///
+/// A fresh data directory is initialized from the caller-supplied state and
+/// immediately persisted. An existing snapshot always takes precedence over
+/// that fallback. Completed rounds are fully staged and audited, then written
+/// through [`PorStateStore`] before the in-memory state is replaced.
+///
+/// A persistence error makes the owner unavailable until it is reopened. This
+/// fail-closed rule covers errors whose on-disk commit outcome may be
+/// ambiguous, such as a directory-sync failure after an atomic rename.
+#[derive(Debug)]
+pub struct DurablePorState {
+    store: PorStateStore,
+    state: ReputationState,
+    recovery_required: bool,
+}
+
+impl DurablePorState {
+    /// Restore committed state or durably initialize a fresh data directory.
+    pub fn open(
+        data_dir: &Path,
+        initial_state: ReputationState,
+    ) -> Result<Self, DurablePorStateError> {
+        let store = PorStateStore::open(data_dir).map_err(DurablePorStateError::Persistence)?;
+        let state = match store.restore().map_err(DurablePorStateError::Persistence)? {
+            Some(restored) => restored,
+            None => {
+                store
+                    .persist(&initial_state)
+                    .map_err(DurablePorStateError::Persistence)?;
+                initial_state
+            }
+        };
+
+        Ok(Self {
+            store,
+            state,
+            recovery_required: false,
+        })
+    }
+
+    /// Return the live state while the durable owner is healthy.
+    pub fn state(&self) -> Result<&ReputationState, DurablePorStateError> {
+        self.ensure_healthy()?;
+        Ok(&self.state)
+    }
+
+    /// Return the committed snapshot path for diagnostics and backup tooling.
+    pub fn snapshot_path(&self) -> &Path {
+        self.store.snapshot_path()
+    }
+
+    /// Stage, durably commit, and publish one completed reputation round.
+    ///
+    /// Transition failures happen before filesystem I/O and leave this owner
+    /// usable. Persistence failures leave the in-memory state unchanged and
+    /// fail-close the owner, requiring startup recovery before more state is
+    /// read or applied.
+    pub fn apply_completed_round(
+        &mut self,
+        completed: &CompletedPorRatingRound,
+        config: &PorConfig,
+        shard_id: &[u8],
+    ) -> Result<AppliedPorReputationRound, DurablePorStateError> {
+        self.ensure_healthy()?;
+        let (staged, applied) =
+            stage_completed_reputation_round(completed, &self.state, config, shard_id)
+                .map_err(DurablePorStateError::Transition)?;
+
+        if let Err(error) = self.store.persist(&staged) {
+            self.recovery_required = true;
+            return Err(DurablePorStateError::Persistence(error));
+        }
+
+        self.state = staged;
+        Ok(applied)
+    }
+
+    fn ensure_healthy(&self) -> Result<(), DurablePorStateError> {
+        if self.recovery_required {
+            Err(DurablePorStateError::RecoveryRequired)
+        } else {
+            Ok(())
+        }
     }
 }

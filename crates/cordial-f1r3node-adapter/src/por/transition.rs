@@ -35,6 +35,21 @@ pub fn apply_completed_reputation_round(
     config: &PorConfig,
     shard_id: &[u8],
 ) -> Result<AppliedPorReputationRound, PorError> {
+    let (staged, applied) = stage_completed_reputation_round(completed, state, config, shard_id)?;
+    *state = staged;
+    Ok(applied)
+}
+
+/// Build and audit the next state without changing the live state.
+///
+/// The persistence boundary uses this helper to durably commit `staged`
+/// before making it visible as the live reputation state.
+pub(super) fn stage_completed_reputation_round(
+    completed: &CompletedPorRatingRound,
+    state: &ReputationState,
+    config: &PorConfig,
+    shard_id: &[u8],
+) -> Result<(ReputationState, AppliedPorReputationRound), PorError> {
     let previous = ReputationVector {
         round: state.round(),
         values: state.reputation_list().entries.clone(),
@@ -63,10 +78,12 @@ pub fn apply_completed_reputation_round(
     )?;
     let weights = reputation_weights(&staged);
 
-    *state = staged;
-    Ok(AppliedPorReputationRound {
-        close_reason: completed.close_reason(),
-        block,
-        weights,
-    })
+    Ok((
+        staged,
+        AppliedPorReputationRound {
+            close_reason: completed.close_reason(),
+            block,
+            weights,
+        },
+    ))
 }
