@@ -200,8 +200,8 @@ Future:
 8. A finalized vector can be applied directly with `ReputationState::apply_reputation_vector`, or a proposed block can be replay-audited and applied atomically with `ReputationState::apply_reputation_block`. Successful block application also records `latest_block`; failure leaves the prior state unchanged.
 9. A `ReputationBlock` is assembled with `build_reputation_block`. The builder accepts finalized protocol inputs rather than caller-supplied hashes and derives the canonical configuration, signed-rating, reputation-list, and previous-block commitments. The v1 header binds the result to a shard and to the finalized wave that opens its reputation round.
 10. Any validator can replay steps 2-7 with `replay_reputation_transition` and check a proposed block with `verify_reputation_transition`. Verification checks the header version, shard, source wave, previous-block link, all derived commitments, exclusion flags, and the replayed reputation list. Both operations are read-only.
-11. The f1r3node adapter consumes a deterministically closed rating round, constructs and audits its reputation block against a cloned state, exports `reputation_weights`, and replaces the live state only after all fallible work succeeds.
-12. The finalized `ReputationState`, permanent ejection registry, and latest audited block can be encoded together with `encode_reputation_state_snapshot`. The adapter persists those bytes through atomic file replacement and restores them before processing another round.
+11. The f1r3node adapter consumes a deterministically closed rating round, constructs and audits its reputation block against a cloned state, exports `reputation_weights`, and produces a staged next state without changing the live state.
+12. `DurablePorState` persists that complete staged state through atomic file replacement and only then exposes it as the live state. Startup restores an existing snapshot or durably records the supplied initial state before processing a round.
 13. Block publication and consensus selection remain future stages.
 
 ## Adapter Finalization Boundary
@@ -231,7 +231,25 @@ The transition is atomic with respect to `ReputationState`: all work is staged o
 
 `PorStateStore::persist` validates and encodes before changing the filesystem, writes and syncs a temporary file, atomically renames it over the committed snapshot, and syncs the directory. An interrupted write therefore leaves the previous committed file available. `restore` returns `None` only when the committed file is absent; corruption, truncation, unsupported versions, and oversized files are startup errors rather than silent first boots.
 
-The snapshot contains finalized state only. A state with pending ratings is rejected instead of silently discarding in-flight work. Connecting persistence to the live node startup and round-application lifecycle remains a later runtime-wiring slice.
+The snapshot contains finalized state only. A state with pending ratings is rejected instead of silently discarding in-flight work. `DurablePorState` connects the store to startup and completed-round application:
+
+```text
+startup
+  -> restore committed snapshot
+  -> or validate and persist initial state
+
+completed round
+  -> stage and audit next state
+  -> persist and sync complete snapshot
+  -> replace live in-memory state
+```
+
+An existing snapshot always wins over the supplied startup fallback. Invalid
+snapshots fail startup. Transition errors occur before storage and leave the
+owner usable. A persistence error leaves the old in-memory state unpublished
+and fail-closes the owner: state access and further application return
+`RecoveryRequired` until the process reopens the store. This also handles the
+case where an I/O error makes the filesystem commit outcome ambiguous.
 
 ## Ownership Boundaries
 

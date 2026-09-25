@@ -378,10 +378,19 @@ exclusion flag exactly matches a zero-weight key in the permanent registry.
 `tests/snapshot.rs` locks the v1 format with a golden hash.
 
 The adapter writes these bytes to
-`<data_dir>/por/reputation-state.bin`. It syncs a temporary file, atomically
-renames it, and syncs the directory, so a failed replacement cannot destroy the
-last committed state. Runtime startup/application wiring remains intentionally
-outside this persistence slice.
+`<data_dir>/por/reputation-state.bin`. `PorStateStore` syncs a temporary
+file, atomically renames it, and syncs the directory. `DurablePorState::open`
+restores this file when present; on a fresh data directory it validates and
+persists the caller-supplied initial state before returning.
+
+Completed rounds use a persist-before-publish sequence. The next reputation
+block, state, and weights are staged and audited against a clone; the complete
+staged state is persisted before it replaces the in-memory state. Transition
+failure leaves memory and disk unchanged and remains retryable. Persistence
+failure leaves the previous in-memory state unpublished and fail-closes the
+owner until startup recovery, because an error after atomic rename can make
+the durable commit outcome ambiguous. Runtime callers cannot read or advance
+the owner while recovery is required.
 
 The `src/audit.rs` module replays the whole pipeline so that any member can
 audit a proposed reputation block:
