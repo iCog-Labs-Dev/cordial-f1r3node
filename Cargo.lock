@@ -733,6 +733,7 @@ dependencies = [
  "cordial-app-runtime",
  "cordial-f1r3space-adapter",
  "cordial-miners-core",
+ "cordial-por",
  "criterion",
  "crypto",
  "ed25519-dalek",

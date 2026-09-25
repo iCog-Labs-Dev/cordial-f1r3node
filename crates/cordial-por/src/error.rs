@@ -5,6 +5,15 @@ use std::fmt;
 pub enum PorError {
     InvalidConfiguration(String),
     InvalidRatingRound,
+    RatingRoundOverflow,
+    InvalidInteractionRound,
+    InvalidInteractionStateRound,
+    SelfInteraction,
+    MissingInteractionReference,
+    UnknownInteractionRater,
+    UnknownInteractionRecipient,
+    EjectedInteractionRater,
+    EjectedInteractionRecipient,
     SelfRating,
     RatingBelowMinimum,
     RatingAboveMaximum,
@@ -48,6 +57,40 @@ impl fmt::Display for PorError {
             }
             Self::InvalidRatingRound => {
                 write!(f, "rating round does not match the target batch round")
+            }
+            Self::RatingRoundOverflow => {
+                write!(f, "finalized wave cannot advance to a rating round")
+            }
+            Self::InvalidInteractionRound => {
+                write!(f, "interaction round does not follow its finalized wave")
+            }
+            Self::InvalidInteractionStateRound => write!(
+                f,
+                "interaction round must immediately follow the current reputation state"
+            ),
+            Self::SelfInteraction => {
+                write!(f, "interaction rater and recipient must be distinct")
+            }
+            Self::MissingInteractionReference => {
+                write!(f, "interaction evidence reference is empty")
+            }
+            Self::UnknownInteractionRater => {
+                write!(f, "interaction rater is not present in reputation state")
+            }
+            Self::UnknownInteractionRecipient => {
+                write!(
+                    f,
+                    "interaction recipient is not present in reputation state"
+                )
+            }
+            Self::EjectedInteractionRater => {
+                write!(f, "ejected validator cannot submit interaction evidence")
+            }
+            Self::EjectedInteractionRecipient => {
+                write!(
+                    f,
+                    "ejected validator cannot receive ordinary interaction ratings"
+                )
             }
             Self::SelfRating => write!(f, "rating cannot be self-issued"),
             Self::RatingBelowMinimum => write!(f, "rating score is below the configured minimum"),

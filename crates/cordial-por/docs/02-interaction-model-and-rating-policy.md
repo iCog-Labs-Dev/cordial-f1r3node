@@ -244,8 +244,8 @@ A `RatingRecord` is admissible only if all of the following hold:
 
 6. **Signed rating**
    - the rating must carry a non-empty signature.
-   - future implementation should verify that the signature belongs to
-     `rating.rater`.
+   - the adapter's signed-rating ingress verifies that the signature belongs
+     to `rating.rater` before verified batch construction.
 
 7. **Auditable interaction reference**
    - `interaction_ref` must be present for policy-generated ratings.
@@ -320,27 +320,31 @@ Recommended round lifecycle:
 
 ```text
 1. ReputationState_k exports weights W_k
-2. Cordial Miners uses W_k for weighted finality and tau ordering in round k
-3. f1r3node and the adapter observe protocol events in round k
-4. Interaction policy admits evidence-backed ratings for round k
-5. cordial-por batches ratings for round k
-6. cordial-por computes ReputationState_{k+1}
-7. a ReputationBlock_{k+1} can be built and audited
-8. ReputationState_{k+1} exports weights W_{k+1}
-9. Cordial Miners uses W_{k+1} in the next round
+2. Cordial Miners uses W_k for weighted finality and tau ordering in wave k
+3. f1r3node and the adapter observe protocol events during wave k
+4. Cordial Miners finalizes wave k
+5. Interaction policy admits evidence-backed interactions from finalized wave k
+6. cordial-por maps finalized wave k to rating round k+1
+7. cordial-por batches ratings and computes ReputationState_{k+1}
+8. a ReputationBlock_{k+1} can be built and audited
+9. ReputationState_{k+1} exports weights W_{k+1}
+10. Cordial Miners uses W_{k+1} in subsequent waves
 ```
 
 The important timing rule is:
 
 ```text
-round k interactions
-  -> round k rating batch
-  -> round k reputation update
-  -> round k+1 Cordial Miners weights
+wave k interactions
+  -> finalized wave k
+  -> rating round k+1
+  -> ReputationState k+1
+  -> subsequent Cordial Miners weights
 ```
 
-Weights must not change halfway through the same consensus round that produced
-the ratings. A one-round delay keeps replay and consensus behavior stable.
+Ratings must not affect the weights used to finalize the wave that produced
+them. Advancing the finalized wave index with
+`rating_round_from_finalized_wave` keeps this boundary explicit and prevents a
+circular dependency between ratings and finality.
 
 ---
 
@@ -369,8 +373,8 @@ the ratings. A one-round delay keeps replay and consensus behavior stable.
 - Cordial Miners tau ordering.
 - Cordial Miners blocklace validation.
 - Evidence extraction from live protocol traffic.
-- Signature verification against f1r3node key material unless explicitly wired
-  later.
+- Validator private-key custody, rating signing, or signature verification
+  against f1r3node key material.
 
 ### `cordial-miners-core` owns
 
@@ -384,55 +388,98 @@ the ratings. A one-round delay keeps replay and consensus behavior stable.
 - Translating f1r3node events into Cordial Miners structures.
 - Observing execution and block-production results.
 - Supplying protocol evidence that can become `interaction_ref`.
-- Future bridge from protocol events into PoR interaction evidence.
+- Extracting and admitting interactions from finalized Cordial output.
+- Validator private-key custody and canonical rating signatures.
+- Verifying signed ratings before deterministic batch construction.
+- Bridging a finalized wave atomically into its local signed rating batch.
+- Collecting local and received evidence-backed ratings into a round batch.
+- Encoding and decoding bounded versioned block-production rating envelopes.
+- Providing the transport-neutral rating broadcast and receive boundary.
+- Providing a bounded process-local Tokio channel transport.
+- Coordinating local production, resumable delivery, inbound collection, and
+  explicit closure for one rating round.
+- Evaluating complete-rater participation against a strict reputation-weighted
+  closure quorum.
+- Closing stalled rounds at a deterministic finalized-wave cutoff and recording
+  the applied close reason.
+
+The adapter groups these responsibilities under one domain module:
+
+```text
+src/por/
+  mod.rs
+  finality.rs
+  interactions.rs
+  ratings.rs
+  collector.rs
+  lifecycle/
+    mod.rs
+    cutoff.rs
+    quorum.rs
+  transport/
+    mod.rs
+    wire.rs
+    channel.rs
+```
+
+`por/mod.rs` is the public facade. Temporary aliases retain the original flat
+`por_*` module paths while callers migrate; implementation code uses the
+domain hierarchy directly.
 
 ---
 
-## 10. Future Implementation Shape
+## 10. Implemented Interaction Pipeline
 
-This specification does not require code immediately. When implemented, the
-natural source location is:
-
-```text
-crates/cordial-por/src/interactions.rs
-```
-
-Possible future types:
-
-```rust
-pub enum InteractionKind {
-    BlockProduction,
-    CordialReferences,
-    ExecutionResult,
-    DeployInclusion,
-}
-
-pub struct InteractionEvidence {
-    pub round: ReputationRound,
-    pub kind: InteractionKind,
-    pub rater: NodeId,
-    pub recipient: NodeId,
-    pub evidence_ref: Vec<u8>,
-}
-
-pub trait RatingAdmissionPolicy {
-    fn admit_rating(
-        &self,
-        evidence: InteractionEvidence,
-        state: &ReputationState,
-        config: &PorConfig,
-    ) -> Result<Option<RatingRecord>, PorError>;
-}
-```
-
-This sketch is intentionally non-binding. The main point is that the policy
-layer should transform:
+The implemented block-production path is:
 
 ```text
-protocol evidence -> admitted RatingRecord
+OrderedFinalizedOutput
+  -> canonical InteractionEvidence per producer
+  -> AdmittedInteraction
+  -> deterministic score
+  -> canonical signed payload
+  -> validator signature
+  -> verified RatingRecord
+  -> bounded v1 wire envelope
+  -> transport broadcast and receive
+  -> evidence-backed round collection
+  -> complete-rater weighted quorum or finalized-wave cutoff
+  -> rating-round closure
+  -> deterministic multi-validator RatingBatch
 ```
 
-and not:
+`cordial-por/src/interactions.rs` owns the interaction vocabulary, admission,
+and score policy. The adapter's `por/interactions.rs` extracts finalized
+evidence, while `por/ratings.rs` owns signing, verification, and the atomic
+`build_finalized_block_production_rating_batch` orchestration entry point.
+The adapter's `por/collector.rs` accepts local or received ratings,
+reconstructs their finalized block-production evidence, and closes them into
+one canonical round batch.
+
+The collector enforces:
+
+- a finalized-output anchor matching the opened rating round;
+- a reputation state from the immediately preceding round;
+- a valid signature from the declared rater;
+- active, known raters and recipients through interaction admission;
+- an exact match to the canonical finalized interaction reference;
+- the deterministic score for that admitted interaction;
+- one non-conflicting rating per `(rater, recipient)` pair;
+- atomic insertion of a supplied per-validator batch.
+
+The collector exposes whether a rater's complete deterministic recipient set
+has arrived, but does not itself close the round. The adapter's quorum policy
+combines that completeness result with active reputation weight. Closed
+snapshots retain only complete per-rater batches; accepted partial prefixes
+remain observable while collection is open but cannot influence reputation.
+
+This preserves the required direction:
+
+```text
+finalized protocol evidence -> admitted and signed RatingRecord
+```
+
+and excludes:
 
 ```text
 arbitrary node opinion -> RatingRecord
@@ -460,41 +507,203 @@ logic.
 
 ---
 
-## 12. Open Design Decisions
+## 12. Canonical Rating-Signing Protocol
 
-The following decisions are intentionally left open for implementation issues:
+The version 1 signed-rating protocol resolves the signing boundary as follows:
 
-1. **Exact evidence encoding**
-   - Should `interaction_ref` stay as raw bytes, or should it become a typed
-     enum?
+1. The signed fields are `round`, `rater`, `recipient`, `score`, and
+   `interaction_ref`. The signature field is excluded from its own payload.
+2. The canonical encoding is a fixed-order binary layout. Integers and
+   variable-field length prefixes are unsigned 64-bit big-endian values.
+   Optional interaction references have a one-byte presence tag before their
+   length and bytes.
+3. Every payload begins with the domain separator
+   `cordial-por:rating:v1`. Encoding revisions must use a new versioned domain.
+4. The canonical bytes are hashed with Blake2b-256 before signing.
+5. Ratings use secp256k1 ECDSA prehash signatures encoded as DER, matching the
+   primary f1r3node validator identity convention.
+6. `rating.rater` signs the rating. Its `NodeId` bytes are the SEC1-encoded
+   secp256k1 public key used for verification.
+7. Private-key access and signing remain adapter-owned. The adapter verifies
+   locally produced ratings and verifies remotely supplied ratings before its
+   verified batch entry point calls the structural `cordial-por` batch builder.
+8. Empty, malformed, wrong-key, and payload-mismatched signatures are rejected.
+9. Key parsing and signing failures propagate through the adapter's explicit
+   signed-rating error instead of producing a partial rating or batch.
+10. `interaction_ref` is mandatory for this interaction-derived signing path
+    and is covered by the signature.
+
+The canonical v1 byte layout is:
+
+```text
+"cordial-por:rating:v1"
+|| round_u64_be
+|| rater_len_u64_be || rater_bytes
+|| recipient_len_u64_be || recipient_bytes
+|| score_u64_be
+|| interaction_ref_presence_u8
+|| [interaction_ref_len_u64_be || interaction_ref_bytes]
+```
+
+This protocol deliberately does not place validator private keys in
+`cordial-por`. That crate defines the deterministic payload; the adapter owns
+the signing infrastructure and algorithm integration.
+
+### Block-Production Rating Envelope v1
+
+Signed block-production ratings use a transport-independent, bounded binary
+envelope before entering the evidence-backed collector. Its canonical layout
+is:
+
+```text
+"cordial-por:block-production-rating-envelope"
+|| version_u16_be
+|| finalized_wave_u64_be
+|| rating_round_u64_be
+|| rater_len_u16_be || rater_sec1_bytes
+|| recipient_len_u16_be || recipient_sec1_bytes
+|| score_u64_be
+|| block_hash_32_bytes
+|| signature_len_u16_be || secp256k1_der_signature
+```
+
+Version 1 requires:
+
+- envelope version `1`;
+- `rating_round = finalized_wave + 1` without overflow;
+- compressed or uncompressed SEC1 validator keys of 33 or 65 bytes;
+- a 32-byte block hash as the interaction reference;
+- a non-empty DER signature no longer than 72 bytes;
+- no truncated or trailing bytes;
+- an overall bounded envelope length.
+
+Wire decoding performs structural checks only. It does not make the rating
+admissible. The block-production rating collector subsequently verifies the
+signature, validator eligibility, finalized evidence reference, deterministic
+score, and collector round before retaining the rating.
+
+### Transport-Neutral Delivery Boundary
+
+The adapter exposes a synchronous rating-envelope broadcaster interface that
+can be implemented by gRPC, peer gossip, or another delivery mechanism.
+Outbound batch delivery first encodes the complete batch before sending any
+envelope. An encoding failure therefore has no transport side effects.
+
+A network failure can still occur after an earlier envelope was delivered. In
+that case the transport boundary reports the exact delivered prefix length.
+Retry policy remains external, and replayed envelopes are handled by the
+collector's duplicate rejection.
+
+Inbound delivery follows this fixed order:
+
+```text
+untrusted bytes
+  -> bounded v1 envelope decode
+  -> finalized-wave match
+  -> signature verification
+  -> finalized-evidence replay
+  -> collector insertion
+```
+
+The transport boundary does not close rating rounds or decide quorum and
+deadlines.
+
+### Bounded Tokio Channel Transport
+
+The first concrete transport is a process-local bounded Tokio channel. It is
+intended to exercise the complete asynchronous lifecycle before binding the
+protocol to gRPC or peer gossip.
+
+The channel transport:
+
+- rejects zero capacity instead of allowing the Tokio constructor to panic;
+- rejects envelopes above the v1 maximum before copying them into the queue;
+- uses synchronous `try_send` so a full queue reports backpressure without
+  blocking a consensus task;
+- distinguishes full and closed channel failures;
+- exposes a cloneable broadcaster for concurrent producers;
+- asynchronously receives, decodes, and submits envelopes to the
+  evidence-backed collector;
+- distinguishes an accepted item from orderly closure after all senders are
+  dropped.
+
+Queue capacity, retry scheduling, and failure escalation remain deployment
+policy rather than consensus rules.
+
+### Rating-Round Lifecycle Coordinator
+
+The adapter's `PorRatingRoundCoordinator` composes finality, rating production,
+transport, and collection for one local validator's view of an opened round.
+It has explicit `Open` and `Closed` states and preserves these lifecycle
+invariants:
+
+- construction validates the finalized-output anchor and preceding reputation
+  state through the evidence-backed collector;
+- local rating production signs and pre-encodes the complete batch before
+  mutating coordinator state, then atomically inserts it into local collection;
+- outbound delivery retains a cursor after each successful envelope, so a
+  retry resumes at the failed envelope instead of resending the delivered
+  prefix;
+- inbound envelopes pass through bounded decoding and all collector evidence
+  checks before changing the collected set;
+- closure requires a locally produced batch and no pending outbound envelope;
+- quorum closure requires complete batches holding strictly more than two
+  thirds of active reputation weight from the preceding state;
+- cutoff closure defaults to the next finalized Cordial wave and supports a
+  configured nonzero wave lag;
+- both closure paths discard every incomplete per-rater prefix and record
+  whether quorum or the finalized-wave cutoff triggered closure;
+- successful closure freezes a canonical verified `RatingBatch`, after which
+  production, delivery, receipt, and repeated closure are rejected.
+
+The strict threshold uses rational integer arithmetic: for total active weight
+`W`, the default required weight is `floor(2 * W / 3) + 1`. Ejected keys do not
+contribute to either side. A validator contributes its weight only when the
+collector contains every rating derived for it from finalized evidence; one
+envelope from a multi-rating batch is not participation. When the deterministic
+recipient set is empty, the canonical empty batch is complete without a wire
+message.
+
+`close_if_quorum` enforces weighted participation.
+`close_at_finalized_wave` supplies the liveness fallback and defaults to
+`opened.finalized_wave + 1`; checked arithmetic rejects overflow. Neither API
+uses local wall-clock time. Local batch production and complete outbound
+delivery remain prerequisites for both, while retry scheduling remains
+deployment policy.
+
+---
+
+## 13. Remaining Open Design Decisions
+
+The following decisions remain open beyond the version 1 signing protocol:
+
+1. **Evidence encoding for additional interaction kinds**
+   - Block-production envelope v1 fixes `interaction_ref` to a 32-byte block
+     hash. Execution, deploy, and Cordial-reference evidence still need typed
+     encodings before they receive wire envelopes.
 
 2. **Exact score levels**
    - Should the first policy be binary positive/no-rating, or should it include
      partial scores?
 
-3. **Who signs ratings**
-   - Should every observing validator sign ratings, or should ratings be
-     derived by the proposer from deterministic evidence?
-
-4. **Rater eligibility**
+3. **Rater eligibility**
    - Should only active consensus validators rate, or can observer nodes submit
      ratings?
 
-5. **Interaction window**
+4. **Interaction window**
    - Should "one rating per pair" mean per round, per block, or per configured
      time window?
 
-6. **Evidence availability**
+5. **Evidence availability**
    - Which evidence must be included in reputation blocks, and which evidence
      can be referenced by hash?
 
-7. **Adapter boundary**
-   - Should the adapter emit raw interaction evidence, or fully formed signed
-     ratings?
+6. **Transport binding**
+   - Should rating envelopes use peer gossip, gRPC, or both?
 
 ---
 
-## 13. Acceptance Criteria for This Specification
+## 14. Acceptance Criteria for This Specification
 
 - Defines "interaction" for this PoR implementation.
 - Cites the PoR paper sections that guide the model.

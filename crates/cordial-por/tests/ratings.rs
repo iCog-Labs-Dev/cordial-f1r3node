@@ -1,5 +1,8 @@
 use cordial_miners_core::NodeId;
-use cordial_por::{PorConfig, PorError, RatingRecord, build_rating_batch, validate_rating};
+use cordial_por::{
+    PorConfig, PorError, RatingRecord, build_rating_batch, rating_round_from_finalized_wave,
+    validate_rating,
+};
 
 fn cfg() -> PorConfig {
     PorConfig::default()
@@ -13,6 +16,20 @@ fn rating(round: u64, rater: u8, recipient: u8, score: u64, signature: Vec<u8>) 
         score,
         signature,
     )
+}
+
+#[test]
+fn finalized_wave_opens_the_next_rating_round() {
+    assert_eq!(rating_round_from_finalized_wave(0), Ok(1));
+    assert_eq!(rating_round_from_finalized_wave(41), Ok(42));
+}
+
+#[test]
+fn rejects_a_finalized_wave_that_cannot_advance() {
+    assert_eq!(
+        rating_round_from_finalized_wave(u64::MAX),
+        Err(PorError::RatingRoundOverflow)
+    );
 }
 
 #[test]

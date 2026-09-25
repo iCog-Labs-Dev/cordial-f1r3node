@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`cordial-por` is the dedicated crate for Proof-of-Reputation (PoR) state, reputation-derived weights, and (future) audit data that feed the weighted path of Cordial Miners.
+`cordial-por` is the dedicated crate for Proof-of-Reputation (PoR) state, deterministic transition audit, and reputation-derived weights that feed the weighted path of Cordial Miners.
 
 Cordial Miners approval, ratification, finality, τ-ordering and blocklace consensus rules remain exclusively inside `cordial-miners-core`.
 `cordial-por` computes and exports weights only; it never implements consensus.
@@ -173,7 +173,7 @@ flowchart TD
 | `liquid_rank` | Compute paper-guided contribution vector `P = S * R` | `NormalizedRatingMatrix`, previous `ReputationVector`, `PorConfig` | contribution `ReputationVector` | `config`, `types`, `error` | `compute_liquid_rank_contribution` |
 | `transition` | Blend contribution with previous reputation using checked fixed-point arithmetic and consecutive rounds, resolving sparse node sets through the configured policy | contribution `ReputationVector`, previous `ReputationVector`, `PorConfig` | next-round `ReputationVector` | `config`, `types`, `error` | `blend_reputation_transition` |
 | `clamp` | Apply deterministic fixed-point sigmoid clamp to reputation values; the pipeline clamp restores CarryForward entries from previous reputation so an already-finalized value is not decayed and a hand-built blend cannot preserve an arbitrary unclamped value | `ReputationVector`, previous and contribution vectors, `PorConfig` | clamped `ReputationVector` | `config`, `types`, `error` | `clamp_reputation_value`, `clamp_reputation_vector`, `clamp_reputation_transition` |
-| `state` | In-memory reputation snapshot keyed by `NodeId`; consumes finalized vectors into state | round, validator → weight, finalized `ReputationVector` | `ReputationState` | `types`, `error` | `new`, `round`, `reputation_list`, `pending_ratings`, `latest_block`, `add_rating`, `set_reputation`, `eject_validator`, `is_ejected`, `excluded_keys`, `apply_reputation_vector` |
+| `state` | In-memory reputation snapshot keyed by `NodeId`; consumes finalized vectors or audited blocks atomically | round, validator → weight, finalized `ReputationVector` or ratings + `ReputationBlock` | `ReputationState` | `audit`, `config`, `types`, `error` | `new`, `round`, `reputation_list`, `pending_ratings`, `latest_block`, `add_rating`, `set_reputation`, `eject_validator`, `is_ejected`, `excluded_keys`, `apply_reputation_vector`, `apply_reputation_block` |
 | `block` | Validate a reputation block and build one from a finalized reputation list and header | `ReputationBlockHeader`, `ReputationList` | `ReputationBlock` | `types`, `error` | `build_reputation_block`, `validate_reputation_block` |
 | `audit` | Replay the deterministic transition and verify it against a proposed reputation block | previous `ReputationVector`, `&[RatingRecord]`, `ReputationBlock`, `PorConfig` | expected `ReputationList` / verification result | `ratings`, `matrix`, `normalization`, `liquid_rank`, `transition`, `clamp`, `block`, `types`, `error` | `replay_reputation_transition`, `verify_reputation_transition` |
 | `weights` | Export current reputation map for the weighted path | `&ReputationState` | `HashMap<NodeId, ReputationWeight>` | `state`, `cordial-miners-core::NodeId` | `reputation_weights` |
@@ -189,11 +189,28 @@ flowchart TD
 5. The Liquid-Rank contribution vector is computed with `compute_liquid_rank_contribution`.
 6. The next vector is computed with `blend_reputation_transition`, which requires consecutive rounds and covers the union of both node sets, resolving nodes missing from either side through `PorConfig::missing_entry_policy`; this is a pure calculation and does not mutate state.
 7. The next vector is clamped with `clamp_reputation_transition`, which applies the sigmoid to rated and newly seeded nodes and restores CarryForward entries from previous reputation. The previous value is copied rather than taken from the blend, so a hand-built blended vector cannot preserve an arbitrary unclamped value. The sigmoid is not idempotent, so clamping those entries would decay them every sparse round. This is a pure calculation and does not mutate state.
-8. The finalized vector is applied with `ReputationState::apply_reputation_vector`, which validates canonical ordering and moves the vector entries into the state snapshot.
+8. A finalized vector can be applied directly with `ReputationState::apply_reputation_vector`, or a proposed block can be replay-audited and applied atomically with `ReputationState::apply_reputation_block`. Successful block application also records `latest_block`; failure leaves the prior state unchanged.
 9. A `ReputationBlock` can be assembled with `build_reputation_block`, which validates the header/list round match, required block hash fields, and canonical reputation-list ordering.
 10. Any validator can replay steps 2-7 with `replay_reputation_transition` and check a proposed block with `verify_reputation_transition`, which applies the same `validate_reputation_block` rules as construction before comparing the reputation list entry for entry. Both are read-only.
-11. A `ReputationState` can still be exported through `reputation_weights(&state)` for Cordial Miners weighted APIs.
+11. The f1r3node adapter consumes a deterministically closed rating round, constructs and audits its reputation block against a cloned state, exports `reputation_weights`, and replaces the live state only after all fallible work succeeds.
 12. Block publication and consensus selection remain future stages.
+
+## Adapter Finalization Boundary
+
+`PorRatingRoundCoordinator::into_completed` converts a closed lifecycle coordinator into an owned `CompletedPorRatingRound`. Open coordinators are rejected, so this handoff cannot bypass quorum or the finalized-wave cutoff. Owning the result also releases the coordinator's immutable borrow of the previous reputation state.
+
+The adapter's `apply_completed_reputation_round` function then performs the complete local transition:
+
+```text
+Completed RatingBatch
+  -> deterministic replay
+  -> ReputationBlock construction
+  -> audit replay
+  -> ReputationState application
+  -> Cordial weight export
+```
+
+The transition is atomic with respect to `ReputationState`: all work is staged on a clone and the caller's state is replaced only on success. The function accepts `previous_reputation_hash`, `ratings_hash`, and `reputation_root` bytes from the publication layer. Their canonical preimage encoding is not currently specified, so the adapter does not invent a consensus hashing format; current `cordial-por` validation requires the rating and reputation commitments to be non-empty.
 
 ## Ownership Boundaries
 
@@ -201,7 +218,7 @@ flowchart TD
 
 - Reputation state representation (`ReputationState`).
 - Fixed-point scale and initial-reputation configuration.
-- Rating validation, deterministic matrix construction, paper-guided rating normalization, Liquid-Rank contribution calculation, pure alpha-blend transition calculation with a configured no-rating fallback, deterministic sigmoid clamping (restoring CarryForward entries from previous reputation so finalized reputation is not decayed on a sparse round), explicit finalized-vector application to `ReputationState`, reputation-block construction and validation, and deterministic audit replay of a proposed reputation block.
+- Rating validation, deterministic matrix construction, paper-guided rating normalization, Liquid-Rank contribution calculation, pure alpha-blend transition calculation with a configured no-rating fallback, deterministic sigmoid clamping (restoring CarryForward entries from previous reputation so finalized reputation is not decayed on a sparse round), explicit finalized-vector application, atomic audited-block application to `ReputationState`, reputation-block construction and validation, and deterministic audit replay of a proposed reputation block.
 - Conversion of the current reputation map into the weight map expected by Cordial Miners.
 - Future PoR algorithms (penalties, audit, and selection) once implemented.
 

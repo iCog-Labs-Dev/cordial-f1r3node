@@ -39,6 +39,18 @@ pub mod live_ingress;
 pub mod ordered_output;
 pub mod ordered_output_file;
 pub mod ordered_output_server;
+pub mod por;
+// Temporary compatibility aliases for the original flat PoR module paths.
+pub use por::collector as por_rating_collector;
+pub use por::finality as por_finality;
+pub use por::interactions as por_interactions;
+pub use por::lifecycle as por_rating_round;
+pub use por::lifecycle::quorum as por_rating_quorum;
+pub use por::ratings as por_ratings;
+pub use por::transition as por_reputation_transition;
+pub use por::transport as por_rating_transport;
+pub use por::transport::channel as por_rating_channel;
+pub use por::transport::wire as por_rating_wire;
 pub mod proposer;
 pub mod repository;
 pub mod rspace_runtime;
