@@ -183,6 +183,7 @@ Future:
 | `commitments` | Define the canonical, domain-separated v1 commitments for configuration, signed ratings, reputation lists, and reputation blocks | protocol data | Blake2b-256 commitments | `config`, `ratings`, `types`, `error` | `config_commitment`, `rating_batch_commitment`, `reputation_list_commitment`, `reputation_block_hash` |
 | `block` | Derive and validate a versioned, shard-bound, finalized-wave-bound reputation block | `ReputationBlockContext`, `RatingBatch`, `ReputationList`, `PorConfig` | `ReputationBlock` | `commitments`, `ratings`, `types`, `error` | `build_reputation_block`, `validate_reputation_block` |
 | `audit` | Replay the deterministic transition and verify it, its commitments, and its chain context against a proposed reputation block | previous `ReputationVector`, `&[RatingRecord]`, `ReputationBlock`, `ReputationBlockContext`, `PorConfig` | expected `ReputationList` / verification result | `commitments`, `ratings`, `matrix`, `normalization`, `liquid_rank`, `transition`, `clamp`, `block`, `types`, `error` | `replay_reputation_transition`, `verify_reputation_transition` |
+| `snapshot` | Encode and validate the complete finalized state in a bounded, versioned, checksummed durable format | `ReputationState` / snapshot bytes | snapshot bytes / restored `ReputationState` | `state`, `block`, `commitments`, `types`, `error` | `encode_reputation_state_snapshot`, `decode_reputation_state_snapshot` |
 | `weights` | Export current reputation map for the weighted path | `&ReputationState` | `HashMap<NodeId, ReputationWeight>` | `state`, `cordial-miners-core::NodeId` | `reputation_weights` |
 | `error` | PoR validation, matrix, normalization, and calculation errors | — | `PorError` | none | `PorError` variants |
 | `lib` | Crate root, re-exports | — | public API surface | all of the above | `PorConfig`, `PorError`, `ReputationState`, rating/matrix/liquid-rank/transition/block APIs, types, `reputation_weights` |
@@ -200,7 +201,8 @@ Future:
 9. A `ReputationBlock` is assembled with `build_reputation_block`. The builder accepts finalized protocol inputs rather than caller-supplied hashes and derives the canonical configuration, signed-rating, reputation-list, and previous-block commitments. The v1 header binds the result to a shard and to the finalized wave that opens its reputation round.
 10. Any validator can replay steps 2-7 with `replay_reputation_transition` and check a proposed block with `verify_reputation_transition`. Verification checks the header version, shard, source wave, previous-block link, all derived commitments, exclusion flags, and the replayed reputation list. Both operations are read-only.
 11. The f1r3node adapter consumes a deterministically closed rating round, constructs and audits its reputation block against a cloned state, exports `reputation_weights`, and replaces the live state only after all fallible work succeeds.
-12. Block publication and consensus selection remain future stages.
+12. The finalized `ReputationState`, permanent ejection registry, and latest audited block can be encoded together with `encode_reputation_state_snapshot`. The adapter persists those bytes through atomic file replacement and restores them before processing another round.
+13. Block publication and consensus selection remain future stages.
 
 ## Adapter Finalization Boundary
 
@@ -219,6 +221,18 @@ Completed RatingBatch
 
 The transition is atomic with respect to `ReputationState`: all work is staged on a clone and the caller's state is replaced only on success. Its external chain input is the shard identifier. The finalized source wave and canonical rating batch come from `CompletedPorRatingRound`, while the previous reputation block comes from `ReputationState::latest_block`. `cordial-por` derives every commitment internally, so the adapter cannot inject opaque commitment bytes.
 
+## Adapter Persistence Boundary
+
+`cordial-por::snapshot` owns the v1 durable encoding, size bounds, checksum, and restored-state invariants. It performs no filesystem I/O. The adapter's `por::persistence::PorStateStore` owns the node data-directory layout:
+
+```text
+<data_dir>/por/reputation-state.bin
+```
+
+`PorStateStore::persist` validates and encodes before changing the filesystem, writes and syncs a temporary file, atomically renames it over the committed snapshot, and syncs the directory. An interrupted write therefore leaves the previous committed file available. `restore` returns `None` only when the committed file is absent; corruption, truncation, unsupported versions, and oversized files are startup errors rather than silent first boots.
+
+The snapshot contains finalized state only. A state with pending ratings is rejected instead of silently discarding in-flight work. Connecting persistence to the live node startup and round-application lifecycle remains a later runtime-wiring slice.
+
 ## Ownership Boundaries
 
 ### cordial-por owns
@@ -226,6 +240,7 @@ The transition is atomic with respect to `ReputationState`: all work is staged o
 - Reputation state representation (`ReputationState`).
 - Fixed-point scale and initial-reputation configuration.
 - Rating validation, deterministic matrix construction, paper-guided rating normalization, Liquid-Rank contribution calculation, pure alpha-blend transition calculation with a configured no-rating fallback, deterministic sigmoid clamping (restoring CarryForward entries from previous reputation so finalized reputation is not decayed on a sparse round), explicit finalized-vector application, canonical reputation commitments, atomic audited-block application to `ReputationState`, reputation-block construction and validation, and deterministic audit replay of a proposed reputation block.
+- Versioned durable-state bytes and validation for `ReputationState`, its permanent ejection registry, and latest audited block.
 - Conversion of the current reputation map into the weight map expected by Cordial Miners.
 - Future PoR algorithms (penalties and selection) once implemented.
 
@@ -238,6 +253,7 @@ The transition is atomic with respect to `ReputationState`: all work is staged o
 - Blocklace consensus rules
 - Equivocation detection / exclusion
 - Networking or block production
+- Filesystem paths or I/O
 
 ## Integration Contract
 
@@ -294,7 +310,7 @@ All of the above remain the exclusive responsibility of `cordial-miners-core`. T
 
 ### Reputation sidechain vs payload references
 
-- **Current implementation:** Reputation blocks can be assembled locally from finalized reputation lists and audited by replaying their round, but there is no sidechain publication or storage yet.
+- **Current implementation:** Reputation blocks can be assembled locally, replay-audited, and retained as the latest block in the durable state snapshot. There is no published sidechain or historical block store yet.
 - **Paper design:** Reputation updates may be carried as a sidechain or as payload references inside the main blocklace.
 - **Future work:** Choose the audit / publication path and the corresponding storage/replay structures.
 
@@ -303,9 +319,8 @@ All of the above remain the exclusive responsibility of `cordial-miners-core`. T
 Logical extension points that do not yet exist:
 
 - Penalty / slashing application that mutates `ReputationState`.
-- Reputation-block publication, storage, and a persisted audit trail.
+- Reputation-block publication, historical storage, and a persisted audit trail.
 - Committee selection policy that filters the exported weight map.
-- Persistence layer (snapshot / restore of `ReputationState`).
 - Configuration-driven weight policies (reputation-only, stake-times-reputation, capped stake, committee-only).
 
 None of the above are present in the current scaffold; they are documented solely as planned extension points.

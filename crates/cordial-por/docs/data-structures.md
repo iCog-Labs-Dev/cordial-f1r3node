@@ -74,8 +74,8 @@ rating transactions
 ```
 
 The current implementation covers this complete local calculation, commitment,
-audit, and state-application path. Reputation block publication and persistence
-remain future work.
+audit, state-application, and durable snapshot path. Reputation block
+publication and historical storage remain future work.
 
 ## File-Level Plan
 
@@ -327,6 +327,61 @@ well as the canonical signed payloads. Reputation entries must already be in
 strict `NodeId` order; the list commitment includes `is_excluded`, making
 exclusion part of the auditable state. Golden vectors in
 `tests/commitments.rs` lock the v1 formats against accidental changes.
+
+## Durable Reputation State Snapshot
+
+`src/snapshot.rs` encodes the complete finalized state required to resume after
+a restart: the current round and reputation list, the permanent ejection
+registry, and the latest audited reputation block. Pending ratings are not
+finalized state; encoding rejects a state containing them instead of silently
+dropping them.
+
+The outer v1 envelope is:
+
+```text
+"cordial-por-state"             17 bytes
+version                          u16 big-endian (= 1)
+payload_length                   u64 big-endian
+payload                          payload_length bytes
+checksum                         Blake2b-256
+```
+
+The checksum preimage is:
+
+```text
+"cordial-por:state-snapshot:v1"
+|| "cordial-por-state"
+|| version_u16
+|| payload_length_u64
+|| payload
+```
+
+The payload uses the same unsigned big-endian integers, `u64` lengths/counts,
+and one-byte `0`/`1` discriminants as the commitment formats:
+
+```text
+current_round
+reputation_list
+excluded_key_count || each(node_id_length || node_id)
+latest_block_presence || [latest_reputation_block]
+```
+
+A reputation list contains its round, entry count, and each node identifier,
+reputation value, and exclusion flag. A stored block contains the complete v1
+header and its reputation list, not merely its hash.
+
+Decode is bounded to 64 MiB, one million entries, 4 KiB per node identifier,
+and the existing 256-byte shard identifier limit. Restore checks the checksum,
+rejects trailing or truncated data, validates canonical ordering and the latest
+block, requires state/list/latest-block rounds to agree, and verifies that every
+exclusion flag exactly matches a zero-weight key in the permanent registry.
+`tests/snapshot.rs` locks the v1 format with a golden hash.
+
+The adapter writes these bytes to
+`<data_dir>/por/reputation-state.bin`. It syncs a temporary file, atomically
+renames it, and syncs the directory, so a failed replacement cannot destroy the
+last committed state. Runtime startup/application wiring remains intentionally
+outside this persistence slice.
 
 The `src/audit.rs` module replays the whole pipeline so that any member can
 audit a proposed reputation block:
