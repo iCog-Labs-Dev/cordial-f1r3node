@@ -1,10 +1,13 @@
 use cordial_miners_core::NodeId;
 use cordial_por::{
-    MissingEntryPolicy, PorConfig, PorError, RatingRecord, ReputationBlock, ReputationBlockHeader,
-    ReputationState, build_reputation_block, replay_reputation_transition, reputation_weights,
+    MissingEntryPolicy, PorConfig, PorError, RatingRecord, ReputationBlock, ReputationBlockContext,
+    ReputationState, build_rating_batch, build_reputation_block, replay_reputation_transition,
+    reputation_list_commitment, reputation_weights,
 };
 
 const ROUND: u64 = 1;
+const SOURCE_WAVE: u64 = ROUND - 1;
+const SHARD_ID: &[u8] = b"root";
 
 fn node(id: u8) -> NodeId {
     NodeId(vec![id])
@@ -41,15 +44,17 @@ fn valid_block(state: &ReputationState) -> ReputationBlock {
         values: state.reputation_list().entries.clone(),
     };
     let list = replay_reputation_transition(&previous, &ratings(), ROUND, &config()).unwrap();
+    let batch = build_rating_batch(ROUND, ratings(), &config()).unwrap();
 
     build_reputation_block(
-        ReputationBlockHeader {
-            round: ROUND,
-            previous_reputation_hash: Some(vec![0x01]),
-            ratings_hash: vec![0x02],
-            reputation_root: vec![0x03],
+        ReputationBlockContext {
+            shard_id: SHARD_ID,
+            source_finalized_wave: SOURCE_WAVE,
+            previous_block: state.latest_block(),
         },
+        &batch,
         list,
+        &config(),
     )
     .unwrap()
 }
@@ -60,7 +65,7 @@ fn audited_block_application_advances_state_and_records_latest_block() {
     let block = valid_block(&state);
 
     state
-        .apply_reputation_block(&ratings(), block.clone(), &config())
+        .apply_reputation_block(SHARD_ID, SOURCE_WAVE, &ratings(), block.clone(), &config())
         .unwrap();
 
     assert_eq!(state.round(), ROUND);
@@ -75,9 +80,10 @@ fn failed_block_audit_leaves_state_unchanged() {
     let before = state.clone();
     let mut block = valid_block(&state);
     block.reputation_list.entries[0].reputation += 1;
+    block.header.reputation_root = reputation_list_commitment(&block.reputation_list).unwrap();
 
     assert_eq!(
-        state.apply_reputation_block(&ratings(), block, &config()),
+        state.apply_reputation_block(SHARD_ID, SOURCE_WAVE, &ratings(), block, &config()),
         Err(PorError::ReputationValueMismatch)
     );
     assert_eq!(state, before);

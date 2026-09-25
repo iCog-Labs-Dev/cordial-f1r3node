@@ -1,11 +1,14 @@
 use cordial_miners_core::NodeId;
 use cordial_por::{
-    MissingEntryPolicy, PorConfig, PorError, RatingRecord, ReputationBlock, ReputationBlockHeader,
-    ReputationEntry, ReputationList, ReputationVector, clamp_reputation_value,
-    replay_reputation_transition, verify_reputation_transition,
+    MissingEntryPolicy, PorConfig, PorError, RatingRecord, ReputationBlock, ReputationBlockContext,
+    ReputationEntry, ReputationList, ReputationVector, build_rating_batch, build_reputation_block,
+    clamp_reputation_value, replay_reputation_transition, reputation_list_commitment,
+    verify_reputation_transition,
 };
 
 const ROUND: u64 = 7;
+const SOURCE_WAVE: u64 = ROUND - 1;
+const SHARD_ID: &[u8] = b"root";
 
 /// Small fixed-point scale so the expected values below stay hand-checkable.
 fn config() -> PorConfig {
@@ -76,16 +79,35 @@ fn expected_entries() -> Vec<ReputationEntry> {
     vec![entry(1, 64), entry(2, 61), entry(3, 61)]
 }
 
-fn block(round: u64, entries: Vec<ReputationEntry>) -> ReputationBlock {
-    ReputationBlock {
-        header: ReputationBlockHeader {
-            round,
-            previous_reputation_hash: Some(vec![0x01]),
-            ratings_hash: vec![0x02],
-            reputation_root: vec![0x03],
-        },
-        reputation_list: ReputationList { round, entries },
+fn context() -> ReputationBlockContext<'static> {
+    ReputationBlockContext {
+        shard_id: SHARD_ID,
+        source_finalized_wave: SOURCE_WAVE,
+        previous_block: None,
     }
+}
+
+fn block_for(
+    ratings: &[RatingRecord],
+    entries: Vec<ReputationEntry>,
+    config: &PorConfig,
+) -> ReputationBlock {
+    let batch = build_rating_batch(ROUND, ratings.to_vec(), config).unwrap();
+    build_reputation_block(
+        context(),
+        &batch,
+        ReputationList {
+            round: ROUND,
+            entries,
+        },
+        config,
+    )
+    .unwrap()
+}
+
+fn block(round: u64, entries: Vec<ReputationEntry>) -> ReputationBlock {
+    assert_eq!(round, ROUND);
+    block_for(&ratings(), entries, &config())
 }
 
 fn proposed_block() -> ReputationBlock {
@@ -93,7 +115,13 @@ fn proposed_block() -> ReputationBlock {
 }
 
 fn verify(block: &ReputationBlock) -> Result<(), PorError> {
-    verify_reputation_transition(&previous_reputation(), &ratings(), block, &config())
+    verify_reputation_transition(
+        &previous_reputation(),
+        &ratings(),
+        block,
+        context(),
+        &config(),
+    )
 }
 
 #[test]
@@ -136,9 +164,9 @@ fn rejects_extra_reputation_entry() {
 }
 
 #[test]
-fn rejects_header_round_that_differs_from_the_list_round() {
+fn rejects_list_round_that_differs_from_the_header_round() {
     let mut block = proposed_block();
-    block.header.round = ROUND + 1;
+    block.reputation_list.round = ROUND + 1;
 
     assert_eq!(verify(&block), Err(PorError::InvalidReputationBlockRound));
 }
@@ -151,7 +179,13 @@ fn rejects_a_round_that_does_not_follow_the_previous_reputation() {
     };
 
     assert_eq!(
-        verify_reputation_transition(&stale_previous, &ratings(), &proposed_block(), &config()),
+        verify_reputation_transition(
+            &stale_previous,
+            &ratings(),
+            &proposed_block(),
+            context(),
+            &config()
+        ),
         Err(PorError::InvalidTransitionRound)
     );
 }
@@ -166,6 +200,7 @@ fn rejects_ratings_from_another_round() {
             &previous_reputation(),
             &ratings,
             &proposed_block(),
+            context(),
             &config()
         ),
         Err(PorError::InvalidRatingRound)
@@ -182,6 +217,7 @@ fn rejects_invalid_rating_input() {
             &previous_reputation(),
             &ratings,
             &proposed_block(),
+            context(),
             &config()
         ),
         Err(PorError::SelfRating)
@@ -189,36 +225,149 @@ fn rejects_invalid_rating_input() {
 }
 
 #[test]
-fn rejects_block_with_empty_ratings_hash() {
+fn rejects_a_tampered_rating_batch_commitment() {
     let mut block = proposed_block();
-    block.header.ratings_hash.clear();
+    block.header.ratings_hash[0] ^= 1;
 
     assert_eq!(
         verify(&block),
-        Err(PorError::MissingReputationBlockRatingsHash)
+        Err(PorError::ReputationBlockRatingsHashMismatch)
     );
 }
 
 #[test]
-fn rejects_block_with_empty_reputation_root() {
+fn rejects_a_tampered_reputation_root() {
     let mut block = proposed_block();
-    block.header.reputation_root.clear();
+    block.header.reputation_root[0] ^= 1;
 
-    assert_eq!(verify(&block), Err(PorError::MissingReputationBlockRoot));
+    assert_eq!(verify(&block), Err(PorError::ReputationBlockRootMismatch));
+}
+
+#[test]
+fn rejects_tampered_context_and_configuration_commitments() {
+    let block = proposed_block();
+    let wrong_context = ReputationBlockContext {
+        shard_id: b"other-shard",
+        ..context()
+    };
+    assert_eq!(
+        verify_reputation_transition(
+            &previous_reputation(),
+            &ratings(),
+            &block,
+            wrong_context,
+            &config(),
+        ),
+        Err(PorError::ReputationBlockShardMismatch)
+    );
+
+    let wrong_wave_context = ReputationBlockContext {
+        source_finalized_wave: SOURCE_WAVE + 1,
+        ..context()
+    };
+    assert_eq!(
+        verify_reputation_transition(
+            &previous_reputation(),
+            &ratings(),
+            &block,
+            wrong_wave_context,
+            &config(),
+        ),
+        Err(PorError::ReputationBlockSourceWaveMismatch)
+    );
+
+    let changed_config = PorConfig {
+        liquid_rank_alpha: 40,
+        ..config()
+    };
+    assert_eq!(
+        verify_reputation_transition(
+            &previous_reputation(),
+            &ratings(),
+            &block,
+            context(),
+            &changed_config,
+        ),
+        Err(PorError::ReputationBlockConfigHashMismatch)
+    );
+}
+
+#[test]
+fn rejects_a_tampered_previous_block_commitment() {
+    let config = config();
+    let previous_block = build_reputation_block(
+        ReputationBlockContext {
+            shard_id: SHARD_ID,
+            source_finalized_wave: SOURCE_WAVE - 1,
+            previous_block: None,
+        },
+        &cordial_por::RatingBatch {
+            round: ROUND - 1,
+            ratings: Vec::new(),
+        },
+        ReputationList {
+            round: ROUND - 1,
+            entries: previous_reputation().values,
+        },
+        &config,
+    )
+    .unwrap();
+    let batch = build_rating_batch(ROUND, ratings(), &config).unwrap();
+    let mut block = build_reputation_block(
+        ReputationBlockContext {
+            shard_id: SHARD_ID,
+            source_finalized_wave: SOURCE_WAVE,
+            previous_block: Some(&previous_block),
+        },
+        &batch,
+        ReputationList {
+            round: ROUND,
+            entries: expected_entries(),
+        },
+        &config,
+    )
+    .unwrap();
+    block.header.previous_reputation_hash.as_mut().unwrap()[0] ^= 1;
+
+    assert_eq!(
+        verify_reputation_transition(
+            &previous_reputation(),
+            &ratings(),
+            &block,
+            ReputationBlockContext {
+                shard_id: SHARD_ID,
+                source_finalized_wave: SOURCE_WAVE,
+                previous_block: Some(&previous_block),
+            },
+            &config,
+        ),
+        Err(PorError::ReputationBlockPreviousHashMismatch)
+    );
 }
 
 #[test]
 fn rejects_unsorted_reputation_list() {
-    let block = block(ROUND, vec![entry(2, 61), entry(1, 64), entry(3, 61)]);
+    let mut block = proposed_block();
+    block.reputation_list.entries.swap(0, 1);
 
     assert_eq!(verify(&block), Err(PorError::UnsortedReputationVector));
 }
 
 #[test]
 fn rejects_duplicate_reputation_entries() {
-    let block = block(ROUND, vec![entry(1, 64), entry(1, 64), entry(3, 61)]);
+    let mut block = proposed_block();
+    block.reputation_list.entries[1].node_id = node(1);
 
     assert_eq!(verify(&block), Err(PorError::DuplicateReputationEntry));
+}
+
+#[test]
+fn rejects_a_self_consistent_but_incorrect_exclusion_flag() {
+    let mut block = proposed_block();
+    block.reputation_list.entries[0].is_excluded = true;
+    block.header.reputation_root = reputation_list_commitment(&block.reputation_list).unwrap();
+
+    assert_eq!(verify(&block), Err(PorError::ReputationExclusionMismatch));
 }
 
 #[test]
@@ -237,6 +386,7 @@ fn replays_deterministically_from_shuffled_ratings() {
             &previous_reputation(),
             &shuffled_ratings(),
             &proposed_block(),
+            context(),
             &config()
         ),
         Ok(())
@@ -269,10 +419,21 @@ fn replays_a_sparse_round_and_carries_the_unrated_node_forward() {
 
 #[test]
 fn verifies_a_block_built_from_a_sparse_round() {
-    let block = block(ROUND, vec![entry(1, 64), entry(2, 61), entry(3, 20)]);
+    let sparse_ratings = sparse_ratings();
+    let block = block_for(
+        &sparse_ratings,
+        vec![entry(1, 64), entry(2, 61), entry(3, 20)],
+        &config(),
+    );
 
     assert_eq!(
-        verify_reputation_transition(&previous_reputation(), &sparse_ratings(), &block, &config()),
+        verify_reputation_transition(
+            &previous_reputation(),
+            &sparse_ratings,
+            &block,
+            context(),
+            &config()
+        ),
         Ok(())
     );
 }

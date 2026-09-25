@@ -17,7 +17,7 @@ use cordial_f1r3node_adapter::{
     },
     por_rating_wire::PorRatingWireError,
     por_ratings::{PorRatingError, build_finalized_block_production_rating_batch},
-    por_reputation_transition::{PorReputationBlockCommitments, apply_completed_reputation_round},
+    por_reputation_transition::apply_completed_reputation_round,
 };
 use cordial_miners_core::{
     Block, BlockContent, BlockIdentity, Blocklace, NodeId, crypto::CryptoVerifier,
@@ -29,6 +29,7 @@ use cordial_por::{
 use k256::ecdsa::SigningKey;
 
 const WAVELENGTH: u64 = 3;
+const SHARD_ID: &[u8] = b"root";
 
 struct AcceptAll;
 
@@ -211,14 +212,6 @@ fn complete_local_round(fixture: &Fixture) -> CompletedPorRatingRound {
     coordinator.into_completed().unwrap()
 }
 
-fn block_commitments() -> PorReputationBlockCommitments {
-    PorReputationBlockCommitments {
-        previous_reputation_hash: Some(vec![0x01]),
-        ratings_hash: vec![0x02],
-        reputation_root: vec![0x03],
-    }
-}
-
 #[test]
 fn coordinates_local_production_broadcast_and_close() {
     let fixture = fixture();
@@ -293,13 +286,9 @@ fn completed_round_drives_the_full_atomic_reputation_transition() {
     .unwrap();
     let config = fixture.config.clone();
 
-    let applied = apply_completed_reputation_round(
-        &completed,
-        &mut fixture.state,
-        &config,
-        block_commitments(),
-    )
-    .unwrap();
+    let applied =
+        apply_completed_reputation_round(&completed, &mut fixture.state, &config, SHARD_ID)
+            .unwrap();
 
     assert_eq!(applied.close_reason, completed.close_reason());
     assert_eq!(applied.block.reputation_list, expected);
@@ -314,12 +303,10 @@ fn transition_failure_leaves_previous_reputation_state_unchanged() {
     let completed = complete_local_round(&fixture);
     let before = fixture.state.clone();
     let config = fixture.config.clone();
-    let mut commitments = block_commitments();
-    commitments.ratings_hash.clear();
 
     assert_eq!(
-        apply_completed_reputation_round(&completed, &mut fixture.state, &config, commitments,),
-        Err(PorError::MissingReputationBlockRatingsHash)
+        apply_completed_reputation_round(&completed, &mut fixture.state, &config, b""),
+        Err(PorError::MissingReputationBlockShardId)
     );
     assert_eq!(fixture.state, before);
 }
