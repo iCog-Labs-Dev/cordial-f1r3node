@@ -4,8 +4,8 @@ use cordial_miners_core::NodeId;
 
 use crate::{
     audit::verify_reputation_transition,
-    block::ReputationBlockContext,
-    commitments::validate_reputation_vector,
+    block::{ReputationBlockContext, validate_reputation_block},
+    commitments::{validate_reputation_entries, validate_reputation_vector},
     config::PorConfig,
     error::PorError,
     types::{
@@ -265,6 +265,59 @@ impl ReputationState {
 
         *self = staged;
         Ok(())
+    }
+
+    pub(crate) fn validate_snapshot_invariants(&self) -> Result<(), PorError> {
+        if !self.pending_ratings.is_empty() {
+            return Err(PorError::ReputationStateSnapshotHasPendingRatings);
+        }
+        if self.reputation_list.round != self.current_round {
+            return Err(PorError::ReputationStateSnapshotRoundMismatch);
+        }
+        validate_reputation_entries(&self.reputation_list.entries)?;
+
+        for entry in &self.reputation_list.entries {
+            let is_registered = self.excluded_keys.contains(&entry.node_id);
+            if entry.is_excluded != is_registered || (is_registered && entry.reputation != 0) {
+                return Err(PorError::ReputationStateSnapshotExclusionMismatch);
+            }
+        }
+        for excluded in &self.excluded_keys {
+            if self
+                .reputation_list
+                .entries
+                .binary_search_by(|entry| entry.node_id.cmp(excluded))
+                .is_err()
+            {
+                return Err(PorError::ReputationStateSnapshotExclusionMismatch);
+            }
+        }
+
+        if let Some(block) = &self.latest_block {
+            validate_reputation_block(block)?;
+            if block.header.round != self.current_round {
+                return Err(PorError::ReputationStateSnapshotBlockRoundMismatch);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn from_snapshot_parts(
+        current_round: ReputationRound,
+        reputation_list: ReputationList,
+        excluded_keys: BTreeSet<NodeId>,
+        latest_block: Option<ReputationBlock>,
+    ) -> Result<Self, PorError> {
+        let state = Self {
+            current_round,
+            reputation_list,
+            excluded_keys,
+            pending_ratings: Vec::new(),
+            latest_block,
+        };
+        state.validate_snapshot_invariants()?;
+        Ok(state)
     }
 }
 

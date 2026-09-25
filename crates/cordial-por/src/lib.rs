@@ -15,6 +15,7 @@ pub mod liquid_rank;
 pub mod matrix;
 pub mod normalization;
 pub mod ratings;
+pub mod snapshot;
 pub mod state;
 pub mod transition;
 pub mod types;
@@ -38,6 +39,11 @@ pub use normalization::normalize_rating_matrix;
 pub use ratings::{
     RATING_SIGNING_DOMAIN, build_rating_batch, canonical_rating_payload,
     rating_round_from_finalized_wave, validate_rating,
+};
+pub use snapshot::{
+    MAX_REPUTATION_STATE_ENTRIES, MAX_REPUTATION_STATE_NODE_ID_LEN,
+    MAX_REPUTATION_STATE_SNAPSHOT_LEN, POR_STATE_SNAPSHOT_MAGIC, POR_STATE_SNAPSHOT_VERSION,
+    decode_reputation_state_snapshot, encode_reputation_state_snapshot,
 };
 pub use state::ReputationState;
 

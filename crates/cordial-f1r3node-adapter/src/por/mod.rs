@@ -8,6 +8,7 @@ pub mod collector;
 pub mod finality;
 pub mod interactions;
 pub mod lifecycle;
+pub mod persistence;
 pub mod ratings;
 pub mod transition;
 pub mod transport;
@@ -28,6 +29,9 @@ pub use lifecycle::quorum::{
 pub use lifecycle::{
     CompletedPorRatingRound, PorRatingRoundCloseReason, PorRatingRoundCoordinator,
     PorRatingRoundError, PorRatingRoundStatus,
+};
+pub use persistence::{
+    POR_STATE_DIRECTORY, POR_STATE_FILE_NAME, PorStateStore, PorStateStoreError,
 };
 pub use ratings::{
     PorRatingError, build_finalized_block_production_rating_batch, build_verified_rating_batch,

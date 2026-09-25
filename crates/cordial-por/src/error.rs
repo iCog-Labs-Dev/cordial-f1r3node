@@ -52,6 +52,15 @@ pub enum PorError {
     ReputationBlockRootMismatch,
     ReputationExclusionMismatch,
     CommitmentLengthOverflow,
+    // Durable-state snapshot errors
+    UnsupportedReputationStateSnapshotVersion(u16),
+    ReputationStateSnapshotTooLarge,
+    MalformedReputationStateSnapshot,
+    ReputationStateSnapshotChecksumMismatch,
+    ReputationStateSnapshotRoundMismatch,
+    ReputationStateSnapshotExclusionMismatch,
+    ReputationStateSnapshotBlockRoundMismatch,
+    ReputationStateSnapshotHasPendingRatings,
     // Audit-replay-specific errors
     MissingReputationBlockEntry,
     UnexpectedReputationBlockEntry,
@@ -219,6 +228,39 @@ impl fmt::Display for PorError {
             }
             Self::CommitmentLengthOverflow => {
                 write!(f, "canonical reputation commitment input is too large")
+            }
+            Self::UnsupportedReputationStateSnapshotVersion(version) => {
+                write!(f, "unsupported reputation state snapshot version {version}")
+            }
+            Self::ReputationStateSnapshotTooLarge => {
+                write!(f, "reputation state snapshot exceeds the protocol limit")
+            }
+            Self::MalformedReputationStateSnapshot => {
+                write!(f, "reputation state snapshot is malformed")
+            }
+            Self::ReputationStateSnapshotChecksumMismatch => {
+                write!(f, "reputation state snapshot checksum does not match")
+            }
+            Self::ReputationStateSnapshotRoundMismatch => {
+                write!(f, "reputation state snapshot rounds do not match")
+            }
+            Self::ReputationStateSnapshotExclusionMismatch => {
+                write!(
+                    f,
+                    "reputation state snapshot exclusion registry is inconsistent"
+                )
+            }
+            Self::ReputationStateSnapshotBlockRoundMismatch => {
+                write!(
+                    f,
+                    "reputation state snapshot latest block is from another round"
+                )
+            }
+            Self::ReputationStateSnapshotHasPendingRatings => {
+                write!(
+                    f,
+                    "reputation state with pending ratings cannot be snapshotted"
+                )
             }
             Self::MissingReputationBlockEntry => {
                 write!(f, "reputation block is missing a replayed reputation entry")
