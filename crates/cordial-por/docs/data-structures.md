@@ -57,7 +57,12 @@ Relevant sections:
 - Section 4.1.3, "Block Publication"
 - Section 4.2, "Reputation System"
 
-The strict paper-first flow remains:
+Sections 4.1.1 and 4.1.2 describe the paper's standalone consensus
+mechanism. This repository uses those sections as background only: Cordial
+Miners already owns validator membership and leader selection, while PoR
+implements the Section 4.2 reputation path as a weight engine.
+
+The adopted reputation flow is:
 
 ```text
 rating transactions
@@ -75,10 +80,10 @@ rating transactions
 
 The current implementation covers this complete local calculation, commitment,
 audit, state-application, durable snapshot path, canonical reputation-block
-envelope, append-only block history, signed transport-neutral publication, and
-strict weighted admission of replay-valid received blocks. Concrete peer-network
-binding, committee selection, durable certificate retention, and consensus
-selection remain future work.
+envelope, append-only block history, optional signed checkpoint attestation, and
+fail-closed projection onto Cordial's existing authorized validator set.
+Concrete peer-network binding and durable attestation retention remain future
+work.
 
 ## File-Level Plan
 
@@ -102,9 +107,6 @@ Planned types:
 - `ReputationVector`
 - `ReputationBlockHeader`
 - `ReputationBlock`
-- `ConsensusGroup`
-- `ConsensusGroupMember`
-- `LeaderSelection`
 
 Rules:
 
@@ -136,10 +138,6 @@ Planned fields:
 - `initial_reputation`
 - liquid-rank `alpha`
 - rating bounds
-- consensus group quota, paper default: reputation sum greater than 50 percent
-  of total network reputation
-- block publication quorum, paper default: greater than two-thirds of selected
-  group reputation
 
 ### `src/state.rs`
 
@@ -162,9 +160,11 @@ Own conversion from reputation state to Cordial Miners weighted-path inputs.
 
 Planned role:
 
-- export `HashMap<NodeId, u64>`
-- keep the boundary explicit: `cordial-por` computes weights,
-  `cordial-miners-core` consumes weights
+- export the raw reputation-state map for inspection and transition results
+- project weights onto validator identities supplied by Cordial
+- reject missing identities or a zero-total projection without mutation
+- keep the boundary explicit: `cordial-por` computes numeric weights, while
+  `cordial-miners-core` owns membership and consumes those values
 
 This file should not implement ratification, finality, or tau ordering.
 
@@ -432,54 +432,55 @@ explicit failures. An already signed publication can be retried without
 reconstructing or re-signing it.
 
 This envelope proves only that the key identified as `publisher_key` signed
-the exact block bytes. It does not prove committee membership, publication
-quorum, expected shard or round, the previous-block link relative to local
-state, or the deterministic rating transition. Inbound code must treat a
-verified publication as a proposal and run those admission checks before
+the exact block bytes. It does not establish Cordial validator authority or
+finality, validate the expected shard or round, prove the previous-block link,
+or replay the deterministic transition. Inbound code treats a verified
+publication as an optional checkpoint attestation and repeats local audit before
 persistence or state mutation. Adapter integration tests lock the framing,
 signature, tamper detection, and bounded-channel behavior.
 
-## Received Reputation Block Admission
+## Optional Reputation Checkpoint Attestation
 
-The adapter's `PorReputationBlockAdmissionCoordinator` accepts an explicit
-eligible publisher set. It snapshots each member's current reputation weight,
-rejects unknown or excluded members, deduplicates repeated member identifiers,
-and rejects an empty or zero-total-weight set. Committee selection is not
-inferred here: the caller must supply either the selected group or, until that
-stage exists, an explicitly chosen active-validator set.
+The adapter's `PorCheckpointCollector` accepts attester identities supplied by
+Cordial's existing authorized validator set. It snapshots their preceding
+reputation weights, rejects unknown or excluded attesters, deduplicates repeated
+identities, and rejects an empty or zero-total set. It does not select a
+committee and its threshold is not Cordial finality.
 
-The quorum policy is a strict rational threshold. Its default is greater than
-two thirds, calculated without floating point as:
+The default attestation threshold is strictly greater than two thirds:
 
 ```text
-required_weight = floor(total_eligible_weight * numerator / denominator) + 1
+required_weight = floor(total_attester_weight * numerator / denominator) + 1
 ```
 
-A publication contributes its publisher's weight only after the canonical
-block passes `verify_reputation_transition` against the receiver's current
-state, completed rating batch, configuration, shard, finalized source wave, and
-previous block. The coordinator applies these rules:
+A publication contributes only after `verify_reputation_transition` accepts its
+canonical block against the receiver's current state, completed rating batch,
+configuration, shard, finalized source wave, and previous block. Duplicate
+attestations are idempotent; unauthorized or invalid publications do not mutate
+progress; conflicting blocks from one attester return both authenticated
+publications as evidence.
 
-- one publisher contributes weight at most once;
-- replaying the same publisher/block pair is an idempotent duplicate;
-- an unexpected publisher is rejected;
-- an invalid candidate leaves all progress unchanged;
-- two block hashes signed by one publisher return both authenticated
-  publications as conflict evidence while retaining the first vote;
-- collection freezes once the strict threshold is reached.
+`into_attested` cannot succeed below the configured threshold. On success it
+returns a private-invariant `AttestedPorCheckpoint` containing the replayed
+block, commitment hash, ordered signed publications, and weighted progress.
+`DurablePorState::apply_attested_checkpoint` repeats the replay audit before
+storage, closing the time-of-check/time-of-use gap. The signatures cannot
+override a local audit failure and never activate Cordial weights by themselves.
 
-`into_admitted` cannot succeed below quorum. On success it returns a
-private-invariant `AdmittedPorReputationBlock` containing the audited block,
-its commitment hash, ordered signed publications, and weighted progress. This
-certificate is retained in memory but is not yet encoded into the durable
-snapshot or block-history format.
+## Cordial Weight Activation
 
-`DurablePorState::apply_admitted_block` replays the admitted block again
-against current state and caller-supplied context. This second audit closes the
-time-of-check/time-of-use gap: a certificate collected before a state, rating,
-configuration, or shard-context change cannot reach storage. Audit failure is
-side-effect free. Success persists the complete snapshot, appends the immutable
-block envelope, and only then replaces live state.
+`authorized_validator_weights` projects `ReputationState` values onto exactly
+the validator identities supplied by Cordial. Extra PoR entries are ignored, a
+missing Cordial validator fails closed, and an ejected validator remains in the
+map with zero weight so PoR never mutates membership. A zero-total projection is
+rejected.
+
+`LiveIngress::apply_por_weights` performs the runtime handoff atomically. It
+rejects non-genesis state without an audited checkpoint, requires the
+checkpoint's source wave to be covered by the published finalized output,
+prospectively verifies that the new values preserve the exported finalized prefix, replaces only the values, and clears the weighted ordering
+cache. Ratings from wave `k` therefore influence only subsequent Cordial
+decisions.
 
 ## Durable Reputation State Snapshot
 
@@ -607,17 +608,11 @@ replayed list against `ReputationBlock.reputation_list`. Node-set, value, and
 exclusion differences are reported separately. Replay is read-only: it does
 not mutate `ReputationState`, publish blocks, or perform networking.
 
-Future work remains:
-
-- `src/committee.rs`: consensus group selection
-- `src/leader.rs`: leader selection from the consensus group
-
-`EquivocationPenalty` and `InactivityPenalty` remain intentionally as Cordial
-integration extensions and are not part of the first reputation calculation
-step. Signed publication and strict weighted received-block admission are
-implemented. Concrete peer-network binding, committee and leader selection,
-durable quorum-certificate retention, and later consensus-selection logic
-remain future work.
+`EquivocationPenalty` and `InactivityPenalty` remain deterministic penalty
+extension points around the weight engine. Signed publication, optional
+checkpoint attestation, and Cordial-owned validator projection are implemented.
+Concrete peer-network binding and durable attestation retention remain future
+work; committee and leader selection stay exclusively in Cordial Miners.
 
 ## Paper-Aligned Structures
 
@@ -793,52 +788,24 @@ ReputationBlock {
 }
 ```
 
-### Consensus Group
+### Paper Consensus Stages Outside Scope
 
-Paper concept:
-
-```text
-G_k is selected from highest-reputation nodes whose collective reputation
-exceeds 50 percent of total network reputation.
-```
-
-Implementation target:
-
-```text
-src/types.rs
-src/committee.rs
-```
-
-`src/types.rs` should define the data shape. `src/committee.rs` should later
-implement selection.
-
-### Leader Selection
-
-Paper concept:
-
-```text
-Leader L_k is randomly selected from G_k.
-```
-
-Implementation target:
-
-```text
-src/types.rs
-src/leader.rs
-```
-
-`src/types.rs` should define the selected leader record. `src/leader.rs`
-should later implement deterministic leader selection policy.
+The paper also defines a highest-reputation consensus group and selects a leader
+from it. Those concepts are intentionally not represented by `cordial-por`
+types or planned `committee.rs` / `leader.rs` modules in this repository.
+Cordial Miners already owns validator membership and leader selection. The only
+integration output from PoR is a numeric weight for each Cordial-authorized
+validator.
 
 ## Explicit Non-Goals
 
-Do not include these in the current normalization stage:
+Do not add these responsibilities to `cordial-por`:
 
-- Liquid-rank calculation implementation
-- Committee selection implementation
-- Leader selection implementation
+- validator membership or committee selection
+- leader selection
 - Cordial Miners approval, ratification, finality, or tau ordering
-- Cordial-specific penalty or slashing behavior implementation
+- peer-network ownership
+- subjective penalty or slashing decisions
 
 Cordial-specific penalty behavior should come after the paper-guided reputation
 calculation path is implemented.
