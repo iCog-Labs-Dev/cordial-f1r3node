@@ -49,6 +49,19 @@ pub use transport::channel::{
     ChannelRatingEnvelopeBroadcaster, ChannelRatingEnvelopeReceiver, PorRatingChannelError,
     RatingEnvelopeReceiveOutcome, bounded_rating_envelope_channel,
 };
+pub use transport::reputation_block::{
+    MAX_REPUTATION_BLOCK_PUBLICATION_LEN, PorReputationBlockPublicationError,
+    PorReputationBlockTransportError, REPUTATION_BLOCK_PUBLICATION_DOMAIN,
+    REPUTATION_BLOCK_PUBLICATION_VERSION, ReputationBlockEnvelopeBroadcaster,
+    ReputationBlockPublicationV1, broadcast_reputation_block,
+    broadcast_reputation_block_publication, receive_reputation_block_envelope,
+    reputation_block_publication_signing_hash,
+};
+pub use transport::reputation_block_channel::{
+    ChannelReputationBlockEnvelopeBroadcaster, ChannelReputationBlockEnvelopeReceiver,
+    PorReputationBlockChannelError, ReputationBlockReceiveOutcome,
+    bounded_reputation_block_envelope_channel,
+};
 pub use transport::wire::{
     BLOCK_PRODUCTION_RATING_ENVELOPE_DOMAIN, BLOCK_PRODUCTION_RATING_ENVELOPE_VERSION,
     BlockProductionRatingEnvelopeV1, MAX_BLOCK_PRODUCTION_RATING_ENVELOPE_LEN, PorRatingWireError,

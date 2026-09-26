@@ -1,10 +1,12 @@
-//! Transport-neutral delivery of PoR block-production rating envelopes.
+//! Transport-neutral delivery of PoR ratings and signed reputation blocks.
 //!
 //! This module defines the boundary used by future gRPC or peer-gossip
 //! implementations. It does not choose a network protocol, retry policy,
-//! quorum, or collection deadline.
+//! quorum policy, transition-admission policy, or collection deadline.
 
 pub mod channel;
+pub mod reputation_block;
+pub mod reputation_block_channel;
 pub mod wire;
 
 use std::fmt;
