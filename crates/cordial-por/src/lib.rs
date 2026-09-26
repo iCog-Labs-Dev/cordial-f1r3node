@@ -48,8 +48,11 @@ pub use snapshot::{
 pub use state::ReputationState;
 
 pub use block::{
-    MAX_REPUTATION_BLOCK_SHARD_ID_LEN, REPUTATION_BLOCK_VERSION, ReputationBlockContext,
-    build_reputation_block, validate_reputation_block,
+    MAX_REPUTATION_BLOCK_ENTRIES, MAX_REPUTATION_BLOCK_NODE_ID_LEN,
+    MAX_REPUTATION_BLOCK_SHARD_ID_LEN, MAX_REPUTATION_BLOCK_WIRE_LEN, POR_REPUTATION_BLOCK_MAGIC,
+    POR_REPUTATION_BLOCK_WIRE_VERSION, REPUTATION_BLOCK_VERSION, ReputationBlockContext,
+    build_reputation_block, decode_reputation_block, encode_reputation_block,
+    validate_reputation_block,
 };
 pub use types::{
     EquivocationPenalty, InactivityPenalty, NormalizedRatingEntry, NormalizedRatingMatrix,

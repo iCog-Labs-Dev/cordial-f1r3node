@@ -13,11 +13,14 @@ use cordial_miners_core::{
 };
 
 use crate::{
-    block::validate_reputation_block,
+    block::{
+        MAX_REPUTATION_BLOCK_ENTRIES, MAX_REPUTATION_BLOCK_NODE_ID_LEN,
+        decode_reputation_block_payload, encode_reputation_block_payload,
+    },
     commitments::validate_reputation_entries,
     error::PorError,
     state::ReputationState,
-    types::{ReputationBlock, ReputationBlockHeader, ReputationEntry, ReputationList},
+    types::{ReputationEntry, ReputationList},
 };
 
 /// Fixed prefix identifying a durable PoR state snapshot.
@@ -30,10 +33,10 @@ pub const POR_STATE_SNAPSHOT_VERSION: u16 = 1;
 pub const MAX_REPUTATION_STATE_SNAPSHOT_LEN: usize = 64 * 1024 * 1024;
 
 /// Maximum number of reputation or exclusion entries in one snapshot.
-pub const MAX_REPUTATION_STATE_ENTRIES: usize = 1_000_000;
+pub const MAX_REPUTATION_STATE_ENTRIES: usize = MAX_REPUTATION_BLOCK_ENTRIES;
 
 /// Allocation bound for a persisted node identifier.
-pub const MAX_REPUTATION_STATE_NODE_ID_LEN: usize = 4 * 1024;
+pub const MAX_REPUTATION_STATE_NODE_ID_LEN: usize = MAX_REPUTATION_BLOCK_NODE_ID_LEN;
 
 const SNAPSHOT_CHECKSUM_DOMAIN: &[u8] = b"cordial-por:state-snapshot:v1";
 const CHECKSUM_LEN: usize = 32;
@@ -55,7 +58,16 @@ pub fn encode_reputation_state_snapshot(state: &ReputationState) -> Result<Vec<u
     match state.latest_block() {
         Some(block) => {
             payload.push(1);
-            encode_reputation_block(&mut payload, block)?;
+            let encoded =
+                encode_reputation_block_payload(block).map_err(map_reputation_block_wire_error)?;
+            let next_len = payload
+                .len()
+                .checked_add(encoded.len())
+                .ok_or(PorError::ReputationStateSnapshotTooLarge)?;
+            if next_len > MAX_REPUTATION_STATE_SNAPSHOT_LEN - FIXED_ENVELOPE_LEN {
+                return Err(PorError::ReputationStateSnapshotTooLarge);
+            }
+            payload.extend_from_slice(&encoded);
         }
         None => payload.push(0),
     }
@@ -133,7 +145,14 @@ pub fn decode_reputation_state_snapshot(bytes: &[u8]) -> Result<ReputationState,
 
     let latest_block = match decoder.read_discriminant()? {
         false => None,
-        true => Some(decode_reputation_block(&mut decoder)?),
+        true => {
+            let remaining = decoder.remaining();
+            let encoded = decoder.read_exact(remaining)?;
+            Some(
+                decode_reputation_block_payload(encoded)
+                    .map_err(map_reputation_block_wire_error)?,
+            )
+        }
     };
     if decoder.remaining() != 0 {
         return Err(PorError::MalformedReputationStateSnapshot);
@@ -147,50 +166,16 @@ pub fn decode_reputation_state_snapshot(bytes: &[u8]) -> Result<ReputationState,
     )
 }
 
-fn encode_reputation_block(output: &mut Vec<u8>, block: &ReputationBlock) -> Result<(), PorError> {
-    validate_reputation_block(block)?;
-    let header = &block.header;
-    output.extend_from_slice(&header.version.to_be_bytes());
-    put_bytes(output, &header.shard_id)?;
-    put_u64(output, header.source_finalized_wave);
-    put_u64(output, header.round);
-    match header.previous_reputation_hash {
-        Some(hash) => {
-            output.push(1);
-            output.extend_from_slice(&hash);
+fn map_reputation_block_wire_error(error: PorError) -> PorError {
+    match error {
+        PorError::ReputationBlockWireTooLarge => PorError::ReputationStateSnapshotTooLarge,
+        PorError::MalformedReputationBlockWire
+        | PorError::UnsupportedReputationBlockWireVersion(_)
+        | PorError::ReputationBlockWireChecksumMismatch => {
+            PorError::MalformedReputationStateSnapshot
         }
-        None => output.push(0),
+        other => other,
     }
-    output.extend_from_slice(&header.config_hash);
-    output.extend_from_slice(&header.ratings_hash);
-    output.extend_from_slice(&header.reputation_root);
-    encode_reputation_list(output, &block.reputation_list)
-}
-
-fn decode_reputation_block(decoder: &mut Decoder<'_>) -> Result<ReputationBlock, PorError> {
-    let version = decoder.read_u16()?;
-    let shard_id = decoder.read_bytes(crate::MAX_REPUTATION_BLOCK_SHARD_ID_LEN)?;
-    let source_finalized_wave = decoder.read_u64()?;
-    let round = decoder.read_u64()?;
-    let previous_reputation_hash = match decoder.read_discriminant()? {
-        false => None,
-        true => Some(decoder.read_array::<32>()?),
-    };
-    let block = ReputationBlock {
-        header: ReputationBlockHeader {
-            version,
-            shard_id,
-            source_finalized_wave,
-            round,
-            previous_reputation_hash,
-            config_hash: decoder.read_array::<32>()?,
-            ratings_hash: decoder.read_array::<32>()?,
-            reputation_root: decoder.read_array::<32>()?,
-        },
-        reputation_list: decode_reputation_list(decoder)?,
-    };
-    validate_reputation_block(&block)?;
-    Ok(block)
 }
 
 fn encode_reputation_list(output: &mut Vec<u8>, list: &ReputationList) -> Result<(), PorError> {

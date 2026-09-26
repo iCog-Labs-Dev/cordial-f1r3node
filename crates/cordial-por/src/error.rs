@@ -37,6 +37,10 @@ pub enum PorError {
     InvalidClampScale,
     ClampOverflow,
     // Reputation-block-specific errors
+    UnsupportedReputationBlockWireVersion(u16),
+    ReputationBlockWireTooLarge,
+    MalformedReputationBlockWire,
+    ReputationBlockWireChecksumMismatch,
     UnsupportedReputationBlockVersion(u16),
     MissingReputationBlockShardId,
     ReputationBlockShardIdTooLong,
@@ -171,6 +175,21 @@ impl fmt::Display for PorError {
             }
             Self::InvalidClampScale => write!(f, "clamp scale must be greater than zero"),
             Self::ClampOverflow => write!(f, "clamp arithmetic overflowed"),
+            Self::UnsupportedReputationBlockWireVersion(version) => {
+                write!(f, "unsupported reputation block wire version {version}")
+            }
+            Self::ReputationBlockWireTooLarge => {
+                write!(
+                    f,
+                    "reputation block wire envelope exceeds the protocol limit"
+                )
+            }
+            Self::MalformedReputationBlockWire => {
+                write!(f, "reputation block wire envelope is malformed")
+            }
+            Self::ReputationBlockWireChecksumMismatch => {
+                write!(f, "reputation block wire checksum does not match")
+            }
             Self::UnsupportedReputationBlockVersion(version) => {
                 write!(f, "unsupported reputation block version {version}")
             }
