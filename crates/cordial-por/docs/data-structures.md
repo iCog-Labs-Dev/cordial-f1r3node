@@ -74,9 +74,9 @@ rating transactions
 ```
 
 The current implementation covers this complete local calculation, commitment,
-audit, state-application, durable snapshot path, and canonical reputation-block
-publication envelope. Peer transport, historical storage, and consensus
-selection remain future work.
+audit, state-application, durable snapshot path, canonical reputation-block
+publication envelope, and append-only block history. Peer transport and
+consensus selection remain future work.
 
 ## File-Level Plan
 
@@ -450,6 +450,51 @@ owner until startup recovery, because an error after atomic rename can make
 the durable commit outcome ambiguous. Runtime callers cannot read or advance
 the owner while recovery is required.
 
+## Durable Reputation Block History
+
+The adapter stores canonical block envelopes under:
+
+```text
+<data_dir>/por/reputation-blocks/
+  reputation-block-00000000000000000001.bin
+  reputation-block-00000000000000000002.bin
+  ...
+```
+
+File names use the round as exactly 20 decimal digits, preserving numeric order
+under lexical sorting. `PorReputationBlockHistory::append` validates and
+encodes the block before taking its writer lock. It writes and syncs one
+temporary file, creates the final round path with a hard link, removes the
+temporary name, and syncs the directory. The hard-link step cannot replace an
+existing round. An identical append is idempotent; a different block at an
+already committed round is rejected.
+
+Startup scans every controlled history file with the 64 MiB wire bound, decodes
+the canonical envelope, and checks that the filename round equals the embedded
+round. In ascending order it requires consecutive rounds, one shard, and the
+exact `previous_reputation_hash` derived from the preceding retained block.
+Corruption, gaps, malformed controlled names, shard changes, and broken links
+are startup errors. The single internal temporary name and unrelated files are
+ignored. For upgrades from snapshot-only storage, an empty history may begin at
+the snapshot's latest audited block as an explicit local checkpoint; every
+subsequent block must continue that checkpoint.
+
+`DurablePorState` uses this commit sequence:
+
+```text
+stage and audit next state
+  -> persist and sync complete state snapshot
+  -> append and sync immutable reputation block
+  -> publish the staged state in memory
+```
+
+Snapshot-first ordering makes the only supported cross-file crash window
+recoverable. On startup, history may equal the snapshot tip, be exactly one
+valid block behind it, or be empty during migration. The latter two cases are
+completed from the snapshot's embedded latest block. Any other divergence is a
+hard startup error. A storage error before in-memory publication fail-closes
+the runtime until this startup reconciliation runs.
+
 The `src/audit.rs` module replays the whole pipeline so that any member can
 audit a proposed reputation block:
 
@@ -474,8 +519,8 @@ Future work remains:
 
 `EquivocationPenalty` and `InactivityPenalty` remain intentionally as Cordial
 integration extensions and are not part of the first reputation calculation
-step. Reputation block publication and later consensus-selection logic remain
-future work.
+step. Peer publication, received-block audit orchestration, and later
+consensus-selection logic remain future work.
 
 ## Paper-Aligned Structures
 

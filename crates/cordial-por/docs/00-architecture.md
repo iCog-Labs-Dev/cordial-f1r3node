@@ -147,7 +147,7 @@ flowchart TD
 ### Implemented And Future PoR Stages
 
 > **Implementation Note:**  
-> The solid edges are implemented. Dotted edges remain future extensions described by the paper (arXiv:2108.03542 and related Liquid-Rank literature). The implemented transition requires consecutive rounds and resolves sparse node sets through a configured no-rating fallback policy. Reputation-block construction derives canonical commitments, audit replay verifies them, and a canonical envelope supplies publication bytes; peer transport is still external.
+> The solid edges are implemented. Dotted edges remain future extensions described by the paper (arXiv:2108.03542 and related Liquid-Rank literature). The implemented transition requires consecutive rounds and resolves sparse node sets through a configured no-rating fallback policy. Reputation-block construction derives canonical commitments, audit replay verifies them, a canonical envelope supplies publication bytes, and the adapter retains a crash-safe append-only history; peer transport is still external.
 
 Implemented:
 
@@ -161,11 +161,12 @@ Implemented:
 - Versioned reputation-block construction and canonical commitments
 - Reputation transition and commitment audit replay
 - Bounded, versioned reputation-block wire encoding
+- Crash-safe reputation-state snapshots and append-only block history
 
 Future:
 
 - Penalties / slashing
-- Reputation block peer transport and historical storage
+- Reputation block peer transport and received-block audit orchestration
 - Committee selection
 
 ## Module Responsibilities
@@ -202,9 +203,9 @@ Future:
 9. A `ReputationBlock` is assembled with `build_reputation_block`. The builder accepts finalized protocol inputs rather than caller-supplied hashes and derives the canonical configuration, signed-rating, reputation-list, and previous-block commitments. The v1 header binds the result to a shard and to the finalized wave that opens its reputation round.
 10. Any validator can replay steps 2-7 with `replay_reputation_transition` and check a proposed block with `verify_reputation_transition`. Verification checks the header version, shard, source wave, previous-block link, all derived commitments, exclusion flags, and the replayed reputation list. Both operations are read-only.
 11. The f1r3node adapter consumes a deterministically closed rating round, constructs and audits its reputation block against a cloned state, exports `reputation_weights`, and produces a staged next state without changing the live state.
-12. `DurablePorState` persists that complete staged state through atomic file replacement and only then exposes it as the live state. Startup restores an existing snapshot or durably records the supplied initial state before processing a round.
-13. A committed `ReputationBlock` can be encoded into or decoded from the canonical bounded v1 publication envelope. The durable snapshot embeds the same block payload.
-14. Peer transport, historical storage, received-block audit orchestration, and consensus selection remain future stages.
+12. A committed `ReputationBlock` can be encoded into or decoded from the canonical bounded v1 publication envelope. The durable snapshot embeds the same block payload.
+13. `DurablePorState` commits the complete staged snapshot, appends the same block envelope to immutable round history, and only then exposes the state in memory. Startup validates the retained chain and completes a missing tip from the snapshot after an interrupted append.
+14. Peer transport, received-block audit orchestration, and consensus selection remain future stages.
 
 ## Adapter Finalization Boundary
 
@@ -228,10 +229,20 @@ The transition is atomic with respect to `ReputationState`: all work is staged o
 `cordial-por::snapshot` owns the v1 durable encoding, size bounds, checksum, and restored-state invariants. It performs no filesystem I/O. The adapter's `por::persistence::PorStateStore` owns the node data-directory layout:
 
 ```text
-<data_dir>/por/reputation-state.bin
+<data_dir>/por/
+  reputation-state.bin
+  reputation-blocks/
+    reputation-block-{round as 20 decimal digits}.bin
 ```
 
 `PorStateStore::persist` validates and encodes before changing the filesystem, writes and syncs a temporary file, atomically renames it over the committed snapshot, and syncs the directory. An interrupted write therefore leaves the previous committed file available. `restore` returns `None` only when the committed file is absent; corruption, truncation, unsupported versions, and oversized files are startup errors rather than silent first boots.
+
+`por::history::PorReputationBlockHistory` stores the canonical publication
+envelope for every retained round. It syncs a temporary file, creates the final
+path without replacement, removes the temporary name, and syncs the directory.
+Recovery decodes every retained file and validates its filename round,
+consecutive order, shard, and previous-block hash. Corruption, gaps, conflicting
+rounds, and broken links fail closed.
 
 The snapshot contains finalized state only. A state with pending ratings is rejected instead of silently discarding in-flight work. `DurablePorState` connects the store to startup and completed-round application:
 
@@ -243,15 +254,19 @@ startup
 completed round
   -> stage and audit next state
   -> persist and sync complete snapshot
+  -> append and sync immutable reputation block
   -> replace live in-memory state
 ```
 
 An existing snapshot always wins over the supplied startup fallback. Invalid
-snapshots fail startup. Transition errors occur before storage and leave the
-owner usable. A persistence error leaves the old in-memory state unpublished
-and fail-closes the owner: state access and further application return
-`RecoveryRequired` until the process reopens the store. This also handles the
-case where an I/O error makes the filesystem commit outcome ambiguous.
+snapshots or histories fail startup. Transition errors occur before storage and
+leave the owner usable. The snapshot is intentionally committed before its
+history entry. If that second write is interrupted, startup appends the
+snapshot's latest audited block when it is the valid next history block. An
+empty history can likewise start from the latest snapshot as an upgrade
+checkpoint. All other state/history divergence is rejected. Any storage error
+leaves the old in-memory state unpublished and returns `RecoveryRequired`
+until the process reopens and reconciles the stores.
 
 ## Ownership Boundaries
 
@@ -330,16 +345,16 @@ All of the above remain the exclusive responsibility of `cordial-miners-core`. T
 
 ### Reputation sidechain vs payload references
 
-- **Current implementation:** Reputation blocks can be assembled locally, replay-audited, retained as the latest block in the durable state snapshot, and encoded in a canonical bounded publication envelope. There is no peer publication transport, published sidechain, or historical block store yet.
+- **Current implementation:** Reputation blocks can be assembled locally, replay-audited, retained in a validated append-only history, and encoded in a canonical bounded publication envelope. There is no peer publication transport or published sidechain yet.
 - **Paper design:** Reputation updates may be carried as a sidechain or as payload references inside the main blocklace.
-- **Future work:** Choose the peer carriage path and add corresponding historical storage and received-block audit orchestration.
+- **Future work:** Choose the peer carriage path and add received-block audit orchestration.
 
 ## Future Extensions
 
 Logical extension points that do not yet exist:
 
 - Penalty / slashing application that mutates `ReputationState`.
-- Reputation-block peer transport, historical storage, and a persisted audit trail.
+- Reputation-block peer transport, received-block audit orchestration, and a persisted evidence trail.
 - Committee selection policy that filters the exported weight map.
 - Configuration-driven weight policies (reputation-only, stake-times-reputation, capped stake, committee-only).
 
