@@ -4,7 +4,8 @@ use cordial_f1r3node_adapter::{
     ordered_output::OrderedFinalizedOutput,
     por::{
         CompletedPorRatingRound, DurablePorState, DurablePorStateError, PorFinalityTracker,
-        PorRatingRoundCoordinator, PorRatingRoundCutoffPolicy, PorStateStore, PorStateStoreError,
+        PorRatingRoundCoordinator, PorRatingRoundCutoffPolicy, PorReputationBlockHistory,
+        PorReputationBlockHistoryError, PorStateStore, PorStateStoreError,
         RatingEnvelopeBroadcaster,
     },
 };
@@ -181,6 +182,10 @@ fn completed_round_is_durable_before_reopen_exposes_it() {
     assert_eq!(committed.latest_block(), Some(&applied.block));
     assert_eq!(applied.weights, reputation_weights(&committed));
     drop(runtime);
+    let history = PorReputationBlockHistory::open(directory.path()).unwrap();
+    assert_eq!(history.len().unwrap(), 1);
+    assert_eq!(history.latest().unwrap(), Some(applied.block));
+    drop(history);
 
     let fallback = ReputationState::new(99);
     let reopened = DurablePorState::open(directory.path(), fallback).unwrap();
@@ -247,6 +252,42 @@ fn persistence_failure_fail_closes_until_startup_recovery() {
 
     let reopened = DurablePorState::open(directory.path(), ReputationState::new(99)).unwrap();
     assert_eq!(reopened.state().unwrap(), &initial);
+}
+
+#[test]
+fn startup_completes_history_when_snapshot_commit_won_the_crash_window() {
+    let directory = tempdir().unwrap();
+    let fixture = fixture();
+    let completed = completed_round(&fixture);
+    let expected_round = completed.batch().round;
+    let mut runtime = DurablePorState::open(directory.path(), fixture.state).unwrap();
+    let temporary_path = runtime
+        .history_directory_path()
+        .join(".reputation-block.bin.tmp");
+    std::fs::create_dir(&temporary_path).unwrap();
+
+    assert!(matches!(
+        runtime.apply_completed_round(&completed, &fixture.config, SHARD_ID),
+        Err(DurablePorStateError::History(
+            PorReputationBlockHistoryError::Io(_)
+        ))
+    ));
+    assert!(matches!(
+        runtime.state(),
+        Err(DurablePorStateError::RecoveryRequired)
+    ));
+    std::fs::remove_dir(temporary_path).unwrap();
+    drop(runtime);
+
+    let reopened = DurablePorState::open(directory.path(), ReputationState::new(99)).unwrap();
+    let restored = reopened.state().unwrap().clone();
+    assert_eq!(restored.round(), expected_round);
+    let expected_block = restored.latest_block().cloned().unwrap();
+    drop(reopened);
+
+    let history = PorReputationBlockHistory::open(directory.path()).unwrap();
+    assert_eq!(history.len().unwrap(), 1);
+    assert_eq!(history.latest().unwrap(), Some(expected_block));
 }
 
 #[test]
