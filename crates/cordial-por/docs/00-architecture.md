@@ -147,7 +147,7 @@ flowchart TD
 ### Implemented And Future PoR Stages
 
 > **Implementation Note:**  
-> The solid edges are implemented. Dotted edges remain future extensions described by the paper (arXiv:2108.03542 and related Liquid-Rank literature). The implemented transition requires consecutive rounds and resolves sparse node sets through a configured no-rating fallback policy. Reputation-block construction derives canonical commitments, audit replay verifies them, a canonical envelope supplies publication bytes, and the adapter retains a crash-safe append-only history; peer transport is still external.
+> The solid edges are implemented. Dotted edges remain future extensions described by the paper (arXiv:2108.03542 and related Liquid-Rank literature). The implemented transition requires consecutive rounds and resolves sparse node sets through a configured no-rating fallback policy. Reputation-block construction derives canonical commitments, audit replay verifies them, and a canonical envelope supplies the block bytes. The adapter retains a crash-safe append-only history and adds a signed, bounded publication boundary; binding that boundary to a concrete peer network and admitting received transitions remain external.
 
 Implemented:
 
@@ -162,11 +162,12 @@ Implemented:
 - Reputation transition and commitment audit replay
 - Bounded, versioned reputation-block wire encoding
 - Crash-safe reputation-state snapshots and append-only block history
+- Signed, versioned reputation-block publications with a bounded adapter channel
 
 Future:
 
 - Penalties / slashing
-- Reputation block peer transport and received-block audit orchestration
+- Concrete peer-network binding and received-block audit orchestration
 - Committee selection
 
 ## Module Responsibilities
@@ -203,9 +204,10 @@ Future:
 9. A `ReputationBlock` is assembled with `build_reputation_block`. The builder accepts finalized protocol inputs rather than caller-supplied hashes and derives the canonical configuration, signed-rating, reputation-list, and previous-block commitments. The v1 header binds the result to a shard and to the finalized wave that opens its reputation round.
 10. Any validator can replay steps 2-7 with `replay_reputation_transition` and check a proposed block with `verify_reputation_transition`. Verification checks the header version, shard, source wave, previous-block link, all derived commitments, exclusion flags, and the replayed reputation list. Both operations are read-only.
 11. The f1r3node adapter consumes a deterministically closed rating round, constructs and audits its reputation block against a cloned state, exports `reputation_weights`, and produces a staged next state without changing the live state.
-12. A committed `ReputationBlock` can be encoded into or decoded from the canonical bounded v1 publication envelope. The durable snapshot embeds the same block payload.
+12. A committed `ReputationBlock` can be encoded into or decoded from the canonical bounded v1 block envelope. The durable snapshot embeds the same block payload.
 13. `DurablePorState` commits the complete staged snapshot, appends the same block envelope to immutable round history, and only then exposes the state in memory. Startup validates the retained chain and completes a missing tip from the snapshot after an interrupted append.
-14. Peer transport, received-block audit orchestration, and consensus selection remain future stages.
+14. The adapter wraps a canonical block envelope with a version, publisher public key, and secp256k1 signature, then exposes broadcaster/receiver traits and a bounded Tokio handoff. Reception authenticates the publisher and bytes but does not admit the transition.
+15. A concrete peer-network binding, received-block quorum and replay-audit orchestration, and consensus selection remain future stages.
 
 ## Adapter Finalization Boundary
 
@@ -267,6 +269,33 @@ empty history can likewise start from the latest snapshot as an upgrade
 checkpoint. All other state/history divergence is rejected. Any storage error
 leaves the old in-memory state unpublished and returns `RecoveryRequired`
 until the process reopens and reconciles the stores.
+
+## Adapter Publication Boundary
+
+The adapter's `por::transport::reputation_block` module owns the signed outer
+publication envelope. It signs the Blake2b-256 hash of the domain, publication
+version, publisher key, and exact canonical block envelope. The publisher key
+is a compressed or uncompressed secp256k1 public key, and signatures use the
+existing DER-encoded secp256k1 scheme. All fields and the complete message have
+explicit size limits.
+
+Outbound code can sign and broadcast in one operation or retain an authenticated
+`ReputationBlockPublicationV1` and retry the same bytes. Inbound decoding
+checks framing, the inner block checksum and structure, and the publisher
+signature before returning a proposal. Private fields prevent safe code from
+changing the authenticated publisher, block, or signature after verification.
+
+The `por::transport::reputation_block_channel` module provides a bounded Tokio
+handoff with non-blocking sends and explicit `Full` and `Closed` failures.
+It is a process-local adapter seam, not a peer protocol. A concrete gRPC or
+peer-gossip implementation can implement the broadcaster trait or feed this
+channel without coupling network code to PoR calculation.
+
+Authentication answers only “which key published these exact bytes.” It does
+not establish publication quorum, prove that the publisher was selected,
+replay the ratings, validate the expected shard or previous block, persist the
+block, or mutate live reputation state. Those checks must happen in the later
+received-block admission flow before `ReputationState::apply_reputation_block`.
 
 ## Ownership Boundaries
 

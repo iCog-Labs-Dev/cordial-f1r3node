@@ -75,8 +75,10 @@ rating transactions
 
 The current implementation covers this complete local calculation, commitment,
 audit, state-application, durable snapshot path, canonical reputation-block
-publication envelope, and append-only block history. Peer transport and
-consensus selection remain future work.
+envelope, append-only block history, and a signed transport-neutral publication
+boundary with a bounded process-local channel. Concrete peer-network binding,
+received-block admission orchestration, and consensus selection remain future
+work.
 
 ## File-Level Plan
 
@@ -386,6 +388,57 @@ one block encoding across persistence and publication. `tests/block.rs` locks
 the v1 envelope with a golden hash, while `tests/snapshot.rs` confirms that
 sharing the payload leaves the existing state-snapshot golden format unchanged.
 
+## Signed Reputation Block Publication Envelope
+
+The f1r3node adapter wraps the canonical block envelope in a second, signed
+envelope. Keeping this layer outside `cordial-por` preserves the core crate's
+network-free boundary while letting any concrete transport carry one
+authenticated representation.
+
+The v1 publication is:
+
+```text
+"cordial-por:reputation-block-publication"  40 bytes
+publication_version                         u16 big-endian (= 1)
+publisher_key_length                        u16 big-endian
+publisher_key                               compressed or uncompressed secp256k1 key
+block_envelope_length                       u64 big-endian
+canonical_block_envelope                    block_envelope_length bytes
+signature_length                            u16 big-endian
+signature                                   DER-encoded secp256k1 signature
+```
+
+The signature is over this Blake2b-256 digest:
+
+```text
+H(
+    "cordial-por:reputation-block-publication"
+    || publication_version_u16
+    || publisher_key_length_u16 || publisher_key
+    || block_envelope_length_u64 || canonical_block_envelope
+)
+```
+
+Thus the signature binds the domain, format version, publisher identity, and
+every byte of the checksummed canonical block envelope. Decoding bounds the
+complete message and inner block, accepts only 33-byte compressed or 65-byte
+uncompressed publisher keys, validates the canonical block, rejects empty or
+oversized signatures, and verifies the signature before returning a
+`ReputationBlockPublicationV1`.
+
+The adapter exposes a synchronous broadcaster trait plus a bounded Tokio
+channel implementation. Sending is non-blocking: saturation and closure are
+explicit failures. An already signed publication can be retried without
+reconstructing or re-signing it.
+
+This envelope proves only that the key identified as `publisher_key` signed
+the exact block bytes. It does not prove committee membership, publication
+quorum, expected shard or round, the previous-block link relative to local
+state, or the deterministic rating transition. Inbound code must treat a
+verified publication as a proposal and run those admission checks before
+persistence or state mutation. Adapter integration tests lock the framing,
+signature, tamper detection, and bounded-channel behavior.
+
 ## Durable Reputation State Snapshot
 
 `src/snapshot.rs` encodes the complete finalized state required to resume after
@@ -519,7 +572,8 @@ Future work remains:
 
 `EquivocationPenalty` and `InactivityPenalty` remain intentionally as Cordial
 integration extensions and are not part of the first reputation calculation
-step. Peer publication, received-block audit orchestration, and later
+step. The signed publication boundary is implemented; concrete peer-network
+binding, publication quorum, received-block audit admission, and later
 consensus-selection logic remain future work.
 
 ## Paper-Aligned Structures
