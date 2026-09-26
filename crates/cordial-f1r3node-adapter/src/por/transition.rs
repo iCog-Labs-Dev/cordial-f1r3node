@@ -1,8 +1,8 @@
 //! Atomic handoff from a completed adapter rating round into PoR state.
 //!
 //! This module connects lifecycle-owned rating collection to the deterministic
-//! calculation and audit APIs owned by `cordial-por`. It does not define the
-//! peer publication transport for reputation blocks.
+//! calculation and audit APIs owned by `cordial-por`. Authentication and
+//! weighted peer-publication admission remain separate adapter boundaries.
 
 use std::collections::HashMap;
 
@@ -68,6 +68,32 @@ pub(super) fn stage_completed_reputation_round(
         config,
     )?;
 
+    stage_reputation_block(completed, state, config, shard_id, block)
+}
+
+/// Re-audit an admitted peer block against current state without publishing it.
+///
+/// The durable boundary calls this after quorum admission so a certificate
+/// created against stale state, ratings, configuration, or shard context cannot
+/// be committed.
+pub(super) fn stage_admitted_reputation_block(
+    completed: &CompletedPorRatingRound,
+    state: &ReputationState,
+    config: &PorConfig,
+    shard_id: &[u8],
+    block: &ReputationBlock,
+) -> Result<(ReputationState, AppliedPorReputationRound), PorError> {
+    stage_reputation_block(completed, state, config, shard_id, block.clone())
+}
+
+fn stage_reputation_block(
+    completed: &CompletedPorRatingRound,
+    state: &ReputationState,
+    config: &PorConfig,
+    shard_id: &[u8],
+    block: ReputationBlock,
+) -> Result<(ReputationState, AppliedPorReputationRound), PorError> {
+    let batch = completed.batch();
     let mut staged = state.clone();
     staged.apply_reputation_block(
         shard_id,

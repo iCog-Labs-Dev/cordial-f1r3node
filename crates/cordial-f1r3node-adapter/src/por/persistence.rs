@@ -22,9 +22,13 @@ use cordial_por::{
 use thiserror::Error;
 
 use super::{
+    admission::AdmittedPorReputationBlock,
     history::{PorReputationBlockHistory, PorReputationBlockHistoryError},
     lifecycle::CompletedPorRatingRound,
-    transition::{AppliedPorReputationRound, stage_completed_reputation_round},
+    transition::{
+        AppliedPorReputationRound, stage_admitted_reputation_block,
+        stage_completed_reputation_round,
+    },
 };
 
 /// Directory below the node data directory containing PoR state.
@@ -242,6 +246,40 @@ impl DurablePorState {
             stage_completed_reputation_round(completed, &self.state, config, shard_id)
                 .map_err(DurablePorStateError::Transition)?;
 
+        self.commit_staged(staged, applied)
+    }
+
+    /// Re-audit, durably commit, and publish a quorum-admitted peer block.
+    ///
+    /// Replaying at this boundary prevents a certificate collected against
+    /// stale state or different ratings, configuration, or shard context from
+    /// reaching disk. Storage uses the same snapshot-first fail-closed sequence
+    /// as locally constructed rounds.
+    pub fn apply_admitted_block(
+        &mut self,
+        admitted: &AdmittedPorReputationBlock,
+        completed: &CompletedPorRatingRound,
+        config: &PorConfig,
+        shard_id: &[u8],
+    ) -> Result<AppliedPorReputationRound, DurablePorStateError> {
+        self.ensure_healthy()?;
+        let (staged, applied) = stage_admitted_reputation_block(
+            completed,
+            &self.state,
+            config,
+            shard_id,
+            admitted.block(),
+        )
+        .map_err(DurablePorStateError::Transition)?;
+
+        self.commit_staged(staged, applied)
+    }
+
+    fn commit_staged(
+        &mut self,
+        staged: ReputationState,
+        applied: AppliedPorReputationRound,
+    ) -> Result<AppliedPorReputationRound, DurablePorStateError> {
         if let Err(error) = self.store.persist(&staged) {
             self.recovery_required = true;
             return Err(DurablePorStateError::Persistence(error));

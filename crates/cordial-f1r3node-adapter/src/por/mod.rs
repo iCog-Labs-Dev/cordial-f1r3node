@@ -1,9 +1,10 @@
 //! Proof-of-Reputation integration at the f1r3node adapter boundary.
 //!
-//! This facade groups finalized evidence, rating signing and collection,
-//! lifecycle policy, and transport implementations without moving those
-//! adapter-owned responsibilities into the protocol-math crate.
+//! This facade groups finalized evidence, rating collection, publication
+//! admission, persistence, and transport without moving those adapter-owned
+//! responsibilities into the protocol-math crate.
 
+pub mod admission;
 pub mod collector;
 pub mod finality;
 pub mod history;
@@ -14,6 +15,13 @@ pub mod ratings;
 pub mod transition;
 pub mod transport;
 
+pub use admission::{
+    AdmittedPorReputationBlock, DEFAULT_REPUTATION_BLOCK_QUORUM_DENOMINATOR,
+    DEFAULT_REPUTATION_BLOCK_QUORUM_NUMERATOR, PorReputationBlockAdmissionCoordinator,
+    PorReputationBlockAdmissionError, PorReputationBlockAdmissionProgress,
+    PorReputationBlockConflictEvidence, PorReputationBlockObservation,
+    PorReputationBlockQuorumPolicy,
+};
 pub use collector::{BlockProductionRatingCollector, PorRatingCollectorError};
 pub use finality::{FinalizedRatingRound, PorFinalityError, PorFinalityTracker};
 pub use history::{
