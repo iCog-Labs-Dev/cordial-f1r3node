@@ -6,6 +6,7 @@
 
 pub mod collector;
 pub mod finality;
+pub mod history;
 pub mod interactions;
 pub mod lifecycle;
 pub mod persistence;
@@ -15,6 +16,10 @@ pub mod transport;
 
 pub use collector::{BlockProductionRatingCollector, PorRatingCollectorError};
 pub use finality::{FinalizedRatingRound, PorFinalityError, PorFinalityTracker};
+pub use history::{
+    POR_REPUTATION_BLOCK_HISTORY_DIRECTORY, PorReputationBlockAppendOutcome,
+    PorReputationBlockHistory, PorReputationBlockHistoryError,
+};
 pub use interactions::{
     PorInteractionError, admit_finalized_block_production_interactions,
     extract_block_production_evidence, validate_finalized_rating_round,

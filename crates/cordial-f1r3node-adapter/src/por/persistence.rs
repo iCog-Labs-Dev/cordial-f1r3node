@@ -1,11 +1,12 @@
 //! Crash-safe filesystem persistence for finalized Proof-of-Reputation state.
 //!
 //! `cordial-por` owns the versioned snapshot bytes and their validation. This
-//! adapter owns only the node data-directory layout and durable replacement.
-//! A write is flushed to a temporary file, atomically renamed over the current
-//! snapshot, and followed by a directory sync. Restore never consumes the
-//! temporary file, so an interrupted write leaves the last committed snapshot
-//! readable.
+//! adapter owns the node data-directory layout, durable replacement, and
+//! append-only reputation-block history. A snapshot write is flushed to a
+//! temporary file, atomically renamed over the current snapshot, and followed
+//! by a directory sync. A history append creates a new immutable round file.
+//! Startup validates both stores and reconciles the one supported crash window
+//! in which the snapshot committed immediately before its history entry.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -21,6 +22,7 @@ use cordial_por::{
 use thiserror::Error;
 
 use super::{
+    history::{PorReputationBlockHistory, PorReputationBlockHistoryError},
     lifecycle::CompletedPorRatingRound,
     transition::{AppliedPorReputationRound, stage_completed_reputation_round},
 };
@@ -52,10 +54,13 @@ pub enum DurablePorStateError {
     #[error("PoR state persistence failed: {0}")]
     Persistence(#[source] PorStateStoreError),
 
+    #[error("PoR reputation-block history failed: {0}")]
+    History(#[source] PorReputationBlockHistoryError),
+
     #[error("PoR reputation transition failed: {0}")]
     Transition(#[source] PorError),
 
-    #[error("durable PoR state requires recovery after a persistence failure")]
+    #[error("durable PoR state requires startup recovery after a storage failure")]
     RecoveryRequired,
 }
 
@@ -151,15 +156,19 @@ impl PorStateStore {
 ///
 /// A fresh data directory is initialized from the caller-supplied state and
 /// immediately persisted. An existing snapshot always takes precedence over
-/// that fallback. Completed rounds are fully staged and audited, then written
-/// through [`PorStateStore`] before the in-memory state is replaced.
+/// that fallback. Startup validates the retained block chain and reconciles an
+/// empty or one-block-behind history from the snapshot's latest audited block.
+/// Completed rounds are fully staged and audited, then written through
+/// [`PorStateStore`] and [`PorReputationBlockHistory`] before the in-memory
+/// state is replaced.
 ///
-/// A persistence error makes the owner unavailable until it is reopened. This
-/// fail-closed rule covers errors whose on-disk commit outcome may be
-/// ambiguous, such as a directory-sync failure after an atomic rename.
+/// A storage error makes the owner unavailable until it is reopened. This
+/// fail-closed rule covers errors whose on-disk commit outcome may be ambiguous
+/// and the supported snapshot-before-history crash window.
 #[derive(Debug)]
 pub struct DurablePorState {
     store: PorStateStore,
+    history: PorReputationBlockHistory,
     state: ReputationState,
     recovery_required: bool,
 }
@@ -180,9 +189,15 @@ impl DurablePorState {
                 initial_state
             }
         };
+        let history =
+            PorReputationBlockHistory::open(data_dir).map_err(DurablePorStateError::History)?;
+        history
+            .reconcile_state_tip(state.latest_block())
+            .map_err(DurablePorStateError::History)?;
 
         Ok(Self {
             store,
+            history,
             state,
             recovery_required: false,
         })
@@ -199,12 +214,23 @@ impl DurablePorState {
         self.store.snapshot_path()
     }
 
+    /// Return the immutable block-history directory for diagnostics and backup tooling.
+    pub fn history_directory_path(&self) -> &Path {
+        self.history.directory_path()
+    }
+
+    /// Return the validated append-only history owned by this runtime.
+    pub fn history(&self) -> &PorReputationBlockHistory {
+        &self.history
+    }
+
     /// Stage, durably commit, and publish one completed reputation round.
     ///
     /// Transition failures happen before filesystem I/O and leave this owner
-    /// usable. Persistence failures leave the in-memory state unchanged and
-    /// fail-close the owner, requiring startup recovery before more state is
-    /// read or applied.
+    /// usable. The staged snapshot is committed first, followed by its immutable
+    /// block-history entry. Storage failures leave the in-memory state
+    /// unpublished and fail-close the owner, requiring startup recovery before
+    /// more state is read or applied.
     pub fn apply_completed_round(
         &mut self,
         completed: &CompletedPorRatingRound,
@@ -219,6 +245,10 @@ impl DurablePorState {
         if let Err(error) = self.store.persist(&staged) {
             self.recovery_required = true;
             return Err(DurablePorStateError::Persistence(error));
+        }
+        if let Err(error) = self.history.append(&applied.block) {
+            self.recovery_required = true;
+            return Err(DurablePorStateError::History(error));
         }
 
         self.state = staged;
