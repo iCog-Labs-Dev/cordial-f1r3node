@@ -37,8 +37,8 @@ pub struct ReputationState {
 
     /// Permanent ejection registry.
     ///
-    /// Keys present here are excluded from the consensus weighted path
-    /// regardless of what `reputation_list` contains.
+    /// Keys present here export zero reputation through the Cordial-authorized
+    /// projection regardless of what `reputation_list` contains.
     excluded_keys: BTreeSet<NodeId>,
 
     pending_ratings: Vec<RatingRecord>,
@@ -123,7 +123,7 @@ impl ReputationState {
         }
     }
 
-    /// Permanently eject a validator key from the active set.
+    /// Permanently zero and exclude a validator key from active reputation.
     ///
     /// Records `node_id` in the `excluded_keys` registry so that ejection
     /// survives future calls to `apply_reputation_vector` and

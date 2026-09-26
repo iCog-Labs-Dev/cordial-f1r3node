@@ -2,7 +2,7 @@
 //!
 //! This module connects lifecycle-owned rating collection to the deterministic
 //! calculation and audit APIs owned by `cordial-por`. Authentication and
-//! weighted peer-publication admission remain separate adapter boundaries.
+//! weighted peer-checkpoint attestation remain separate adapter boundaries.
 
 use std::collections::HashMap;
 
@@ -20,15 +20,15 @@ use super::lifecycle::{CompletedPorRatingRound, PorRatingRoundCloseReason};
 pub struct AppliedPorReputationRound {
     pub close_reason: PorRatingRoundCloseReason,
     pub block: ReputationBlock,
-    pub weights: HashMap<NodeId, ReputationWeight>,
+    pub reputation_weights: HashMap<NodeId, ReputationWeight>,
 }
 
 /// Replay, construct, audit, and atomically apply one completed PoR round.
 ///
 /// All fallible work is performed against a cloned state. The caller's state
 /// is replaced only after the completed rating batch has produced a valid
-/// reputation block, audit replay has accepted it, and Cordial weights have
-/// been exported. Any error leaves `state` unchanged.
+/// reputation block, audit replay has accepted it, and raw reputation
+/// weights have been calculated. Any error leaves `state` unchanged.
 pub fn apply_completed_reputation_round(
     completed: &CompletedPorRatingRound,
     state: &mut ReputationState,
@@ -71,12 +71,12 @@ pub(super) fn stage_completed_reputation_round(
     stage_reputation_block(completed, state, config, shard_id, block)
 }
 
-/// Re-audit an admitted peer block against current state without publishing it.
+/// Re-audit an attested peer block against current state without publishing it.
 ///
-/// The durable boundary calls this after quorum admission so a certificate
+/// The durable boundary calls this after checkpoint attestation so an attestation
 /// created against stale state, ratings, configuration, or shard context cannot
 /// be committed.
-pub(super) fn stage_admitted_reputation_block(
+pub(super) fn stage_attested_checkpoint(
     completed: &CompletedPorRatingRound,
     state: &ReputationState,
     config: &PorConfig,
@@ -109,7 +109,7 @@ fn stage_reputation_block(
         AppliedPorReputationRound {
             close_reason: completed.close_reason(),
             block,
-            weights,
+            reputation_weights: weights,
         },
     ))
 }

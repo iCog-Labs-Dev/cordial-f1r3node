@@ -3,8 +3,7 @@
 //! This module defines the paper-aligned PoR vocabulary:
 //! ratings, reputation snapshots, penalties, and reputation blocks.
 //!
-//! No reputation calculation logic exists here.
-//! Committee selection and leader selection are implemented in future modules.
+//! No reputation calculation or Cordial consensus logic exists here.
 
 use cordial_miners_core::NodeId;
 
@@ -200,16 +199,6 @@ pub struct ReputationBlock {
     pub reputation_list: ReputationList,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConsensusGroupMember {
-    pub node_id: NodeId,
-    pub reputation: ReputationWeight,
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConsensusGroup {
-    pub round: ReputationRound,
-    pub members: Vec<ConsensusGroupMember>,
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RatingMatrix {
     pub round: ReputationRound,
     pub ratings: Vec<RatingRecord>,
@@ -235,10 +224,4 @@ pub struct NormalizedRatingEntry {
 pub struct NormalizedRatingMatrix {
     pub round: ReputationRound,
     pub ratings: Vec<NormalizedRatingEntry>,
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LeaderSelection {
-    pub round: ReputationRound,
-
-    pub leader: NodeId,
 }

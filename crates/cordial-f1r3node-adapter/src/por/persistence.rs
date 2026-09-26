@@ -22,12 +22,11 @@ use cordial_por::{
 use thiserror::Error;
 
 use super::{
-    admission::AdmittedPorReputationBlock,
+    checkpoint::AttestedPorCheckpoint,
     history::{PorReputationBlockHistory, PorReputationBlockHistoryError},
     lifecycle::CompletedPorRatingRound,
     transition::{
-        AppliedPorReputationRound, stage_admitted_reputation_block,
-        stage_completed_reputation_round,
+        AppliedPorReputationRound, stage_attested_checkpoint, stage_completed_reputation_round,
     },
 };
 
@@ -249,28 +248,23 @@ impl DurablePorState {
         self.commit_staged(staged, applied)
     }
 
-    /// Re-audit, durably commit, and publish a quorum-admitted peer block.
+    /// Re-audit, durably commit, and publish an attested peer checkpoint.
     ///
-    /// Replaying at this boundary prevents a certificate collected against
+    /// Replaying at this boundary prevents an attestation collected against
     /// stale state or different ratings, configuration, or shard context from
     /// reaching disk. Storage uses the same snapshot-first fail-closed sequence
     /// as locally constructed rounds.
-    pub fn apply_admitted_block(
+    pub fn apply_attested_checkpoint(
         &mut self,
-        admitted: &AdmittedPorReputationBlock,
+        attested: &AttestedPorCheckpoint,
         completed: &CompletedPorRatingRound,
         config: &PorConfig,
         shard_id: &[u8],
     ) -> Result<AppliedPorReputationRound, DurablePorStateError> {
         self.ensure_healthy()?;
-        let (staged, applied) = stage_admitted_reputation_block(
-            completed,
-            &self.state,
-            config,
-            shard_id,
-            admitted.block(),
-        )
-        .map_err(DurablePorStateError::Transition)?;
+        let (staged, applied) =
+            stage_attested_checkpoint(completed, &self.state, config, shard_id, attested.block())
+                .map_err(DurablePorStateError::Transition)?;
 
         self.commit_staged(staged, applied)
     }

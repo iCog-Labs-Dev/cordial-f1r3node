@@ -1,5 +1,7 @@
 use std::fmt;
 
+use cordial_miners_core::NodeId;
+
 /// Errors for Proof-of-Reputation validation and calculation stages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PorError {
@@ -69,6 +71,11 @@ pub enum PorError {
     MissingReputationBlockEntry,
     UnexpectedReputationBlockEntry,
     ReputationValueMismatch,
+    // Cordial weight-activation errors
+    EmptyAuthorizedValidatorSet,
+    MissingAuthorizedValidatorReputation(NodeId),
+    ZeroAuthorizedValidatorWeight,
+    AuthorizedValidatorWeightOverflow,
     // Key-ejection errors
     /// The requested node is not present in the current `ReputationState`.
     UnknownNode,
@@ -294,6 +301,22 @@ impl fmt::Display for PorError {
                 f,
                 "reputation block entry does not match the replayed reputation value"
             ),
+            Self::EmptyAuthorizedValidatorSet => {
+                write!(f, "Cordial authorized validator set is empty")
+            }
+            Self::MissingAuthorizedValidatorReputation(node_id) => write!(
+                f,
+                "Cordial authorized validator {node_id:?} is missing from reputation state"
+            ),
+            Self::ZeroAuthorizedValidatorWeight => {
+                write!(
+                    f,
+                    "Cordial authorized validators have zero total reputation weight"
+                )
+            }
+            Self::AuthorizedValidatorWeightOverflow => {
+                write!(f, "Cordial authorized validator weight total overflowed")
+            }
             Self::UnknownNode => write!(f, "node is not present in the current reputation state"),
         }
     }

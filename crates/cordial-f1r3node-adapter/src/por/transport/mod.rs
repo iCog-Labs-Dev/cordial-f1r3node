@@ -2,7 +2,7 @@
 //!
 //! This module defines the boundary used by future gRPC or peer-gossip
 //! implementations. It does not choose a network protocol, retry policy,
-//! quorum policy, transition-admission policy, or collection deadline.
+//! checkpoint-attestation policy, transition replay, or collection deadline.
 
 pub mod channel;
 pub mod reputation_block;

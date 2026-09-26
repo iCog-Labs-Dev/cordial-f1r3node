@@ -31,10 +31,11 @@ use std::collections::HashMap;
 
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::consensus::OrderingCache;
+use cordial_miners_core::consensus::{OrderingCache, depth, wave_of_round};
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::types::BlockIdentity;
 use cordial_miners_core::types::{BlockContent, NodeId};
+use cordial_por::{PorError, ReputationState, authorized_validator_weights};
 
 use crate::block_translation::BlockMessage;
 use crate::deploy_trace::DeployTracer;
@@ -88,6 +89,67 @@ impl std::fmt::Display for LiveIngressError {
 }
 
 impl std::error::Error for LiveIngressError {}
+
+/// Failure to activate PoR output as the weights for Cordial's existing
+/// authorized validator set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PorWeightActivationError {
+    Projection(PorError),
+    MissingReputationCheckpoint { round: u64 },
+    MissingFinalizedOutput { source_wave: u64 },
+    InvalidWavelength,
+    UnknownFinalizedAnchor,
+    FinalizedWaveBehind { required: u64, available: u64 },
+    WouldRewriteFinalizedOutput,
+}
+
+impl std::fmt::Display for PorWeightActivationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Projection(error) => write!(f, "cannot project PoR weights: {error}"),
+            Self::MissingReputationCheckpoint { round } => {
+                write!(f, "PoR reputation round {round} has no audited checkpoint")
+            }
+            Self::MissingFinalizedOutput { source_wave } => write!(
+                f,
+                "PoR weights require finalized Cordial source wave {source_wave}, but no ordered output is published"
+            ),
+            Self::InvalidWavelength => write!(f, "Cordial ordered output has zero wavelength"),
+            Self::UnknownFinalizedAnchor => {
+                write!(
+                    f,
+                    "Cordial ordered-output anchor is absent from the local blocklace"
+                )
+            }
+            Self::FinalizedWaveBehind {
+                required,
+                available,
+            } => write!(
+                f,
+                "PoR weights require finalized Cordial source wave {required}, but latest published wave is {available}"
+            ),
+            Self::WouldRewriteFinalizedOutput => write!(
+                f,
+                "PoR weight activation would rewrite the published Cordial finalized prefix"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PorWeightActivationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Projection(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<PorError> for PorWeightActivationError {
+    fn from(error: PorError) -> Self {
+        Self::Projection(error)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirrorDisposition {
@@ -472,7 +534,74 @@ impl<A> LiveIngress<A> {
         Ok(())
     }
 
+    /// Replace only the weights of Cordial's existing authorized validators.
+    ///
+    /// Validator identities come from `self.bonds`; PoR cannot add or remove
+    /// membership. For non-genesis reputation state, activation also proves
+    /// that Cordial has already published the source finalized wave. A
+    /// prospective weighted-order calculation must preserve the published
+    /// finalized prefix, so a weight change cannot rewrite prior finality.
+    /// Projection and safety checks finish before the live weights change.
+    pub fn apply_por_weights(
+        &mut self,
+        state: &ReputationState,
+    ) -> Result<(), PorWeightActivationError> {
+        let mut authorized_validators: Vec<_> = self.bonds.keys().cloned().collect();
+        authorized_validators.sort();
+        let next_weights = authorized_validator_weights(state, &authorized_validators)?;
+
+        if state.round() != 0 && state.latest_block().is_none() {
+            return Err(PorWeightActivationError::MissingReputationCheckpoint {
+                round: state.round(),
+            });
+        }
+
+        if let Some(checkpoint) = state.latest_block() {
+            let source_wave = checkpoint.header.source_finalized_wave;
+            let output = self
+                .shared_ordered_output
+                .latest()
+                .ok_or(PorWeightActivationError::MissingFinalizedOutput { source_wave })?;
+            if output.wavelength == 0 {
+                return Err(PorWeightActivationError::InvalidWavelength);
+            }
+            let anchor = output
+                .anchor
+                .as_ref()
+                .ok_or(PorWeightActivationError::MissingFinalizedOutput { source_wave })?;
+            let anchor_round = depth(self.blocklace(), anchor)
+                .ok_or(PorWeightActivationError::UnknownFinalizedAnchor)?;
+            let available = wave_of_round(anchor_round, output.wavelength)
+                .ok_or(PorWeightActivationError::InvalidWavelength)?;
+            if available < source_wave {
+                return Err(PorWeightActivationError::FinalizedWaveBehind {
+                    required: source_wave,
+                    available,
+                });
+            }
+        }
+
+        if let Some(previous) = self.shared_ordered_output.latest() {
+            let mut prospective_cache = OrderingCache::default();
+            let (prospective, _) = ordered_block_identities_with_cache(
+                self.blocklace(),
+                &next_weights,
+                &mut prospective_cache,
+            );
+            if !prospective.starts_with(&previous.blocks) {
+                return Err(PorWeightActivationError::WouldRewriteFinalizedOutput);
+            }
+        }
+
+        self.bonds = next_weights;
+        self.ordering_cache = OrderingCache::default();
+        Ok(())
+    }
+
     /// Replace the bonded validator set used for finality and ordering views.
+    ///
+    /// This is the Cordial membership/configuration boundary. PoR integration
+    /// must use [`Self::apply_por_weights`] instead.
     pub fn set_bonds(&mut self, bonds: HashMap<NodeId, u64>) {
         self.bonds = bonds;
     }

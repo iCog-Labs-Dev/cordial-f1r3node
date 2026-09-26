@@ -63,4 +63,4 @@ pub use types::{
 
 pub use clamp::{clamp_reputation_transition, clamp_reputation_value, clamp_reputation_vector};
 pub use transition::blend_reputation_transition;
-pub use weights::{reputation_weights, selected_validator_weights};
+pub use weights::{authorized_validator_weights, reputation_weights};
