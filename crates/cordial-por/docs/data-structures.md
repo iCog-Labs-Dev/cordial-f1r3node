@@ -74,8 +74,9 @@ rating transactions
 ```
 
 The current implementation covers this complete local calculation, commitment,
-audit, state-application, and durable snapshot path. Reputation block
-publication and historical storage remain future work.
+audit, state-application, durable snapshot path, and canonical reputation-block
+publication envelope. Peer transport, historical storage, and consensus
+selection remain future work.
 
 ## File-Level Plan
 
@@ -327,6 +328,63 @@ well as the canonical signed payloads. Reputation entries must already be in
 strict `NodeId` order; the list commitment includes `is_excluded`, making
 exclusion part of the auditable state. Golden vectors in
 `tests/commitments.rs` lock the v1 formats against accidental changes.
+
+## Canonical Reputation Block Wire Envelope
+
+`src/block.rs` exposes `encode_reputation_block` and
+`decode_reputation_block` as the transport-independent publication boundary.
+The wire envelope version is separate from the reputation-block header version,
+so framing can evolve without changing the committed block semantics.
+
+The outer v1 envelope is:
+
+```text
+"cordial-por-block"             17 bytes
+wire_version                     u16 big-endian (= 1)
+payload_length                   u64 big-endian
+payload                          payload_length bytes
+checksum                         Blake2b-256
+```
+
+The checksum preimage is:
+
+```text
+"cordial-por:reputation-block-envelope:v1"
+|| "cordial-por-block"
+|| wire_version_u16
+|| payload_length_u64
+|| payload
+```
+
+The canonical payload is:
+
+```text
+block_version_u16
+shard_id_length_u64 || shard_id
+source_finalized_wave_u64
+round_u64
+previous_hash_presence_u8 || [previous_hash_32]
+config_hash_32
+ratings_hash_32
+reputation_root_32
+reputation_list
+```
+
+Unsigned integers are big-endian. Lengths and counts are `u64`; optional
+values and exclusion flags use one-byte `0`/`1` discriminants. Encoding
+validates the block before producing bytes. Decoding is bounded to 64 MiB, one
+million reputation entries, 4 KiB per node identifier, and a 256-byte shard
+identifier. It rejects bad magic, unsupported wire versions, inconsistent
+lengths, truncation, trailing bytes, checksum corruption, invalid
+discriminants, non-canonical entry ordering, and reputation-root mismatches.
+
+The checksum protects framing integrity; it does not replace full transition
+audit or peer authentication. `verify_reputation_transition` remains the
+acceptance boundary for a received proposal. The durable state snapshot embeds
+this exact canonical block payload without its outer wire envelope, preserving
+one block encoding across persistence and publication. `tests/block.rs` locks
+the v1 envelope with a golden hash, while `tests/snapshot.rs` confirms that
+sharing the payload leaves the existing state-snapshot golden format unchanged.
 
 ## Durable Reputation State Snapshot
 

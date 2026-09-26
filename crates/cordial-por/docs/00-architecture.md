@@ -147,7 +147,7 @@ flowchart TD
 ### Implemented And Future PoR Stages
 
 > **Implementation Note:**  
-> The solid edges are implemented. Dotted edges remain future extensions described by the paper (arXiv:2108.03542 and related Liquid-Rank literature). The implemented transition requires consecutive rounds and resolves sparse node sets through a configured no-rating fallback policy. Reputation-block construction derives canonical commitments and audit replay verifies them, but these stages do not publish blocks.
+> The solid edges are implemented. Dotted edges remain future extensions described by the paper (arXiv:2108.03542 and related Liquid-Rank literature). The implemented transition requires consecutive rounds and resolves sparse node sets through a configured no-rating fallback policy. Reputation-block construction derives canonical commitments, audit replay verifies them, and a canonical envelope supplies publication bytes; peer transport is still external.
 
 Implemented:
 
@@ -160,11 +160,12 @@ Implemented:
 - Reputation state application
 - Versioned reputation-block construction and canonical commitments
 - Reputation transition and commitment audit replay
+- Bounded, versioned reputation-block wire encoding
 
 Future:
 
 - Penalties / slashing
-- Reputation block publication
+- Reputation block peer transport and historical storage
 - Committee selection
 
 ## Module Responsibilities
@@ -181,7 +182,7 @@ Future:
 | `clamp` | Apply deterministic fixed-point sigmoid clamp to reputation values; the pipeline clamp restores CarryForward entries from previous reputation so an already-finalized value is not decayed and a hand-built blend cannot preserve an arbitrary unclamped value | `ReputationVector`, previous and contribution vectors, `PorConfig` | clamped `ReputationVector` | `config`, `types`, `error` | `clamp_reputation_value`, `clamp_reputation_vector`, `clamp_reputation_transition` |
 | `state` | In-memory reputation snapshot keyed by `NodeId`; consumes finalized vectors or audited blocks atomically | round, validator → weight, finalized `ReputationVector` or ratings + `ReputationBlock` | `ReputationState` | `audit`, `config`, `types`, `error` | `new`, `round`, `reputation_list`, `pending_ratings`, `latest_block`, `add_rating`, `set_reputation`, `eject_validator`, `is_ejected`, `excluded_keys`, `apply_reputation_vector`, `apply_reputation_block` |
 | `commitments` | Define the canonical, domain-separated v1 commitments for configuration, signed ratings, reputation lists, and reputation blocks | protocol data | Blake2b-256 commitments | `config`, `ratings`, `types`, `error` | `config_commitment`, `rating_batch_commitment`, `reputation_list_commitment`, `reputation_block_hash` |
-| `block` | Derive and validate a versioned, shard-bound, finalized-wave-bound reputation block | `ReputationBlockContext`, `RatingBatch`, `ReputationList`, `PorConfig` | `ReputationBlock` | `commitments`, `ratings`, `types`, `error` | `build_reputation_block`, `validate_reputation_block` |
+| `block` | Derive, validate, and canonically encode a versioned, shard-bound, finalized-wave-bound reputation block | `ReputationBlockContext`, `RatingBatch`, `ReputationList`, `PorConfig` / wire bytes | `ReputationBlock` / bounded wire envelope | `commitments`, `ratings`, `types`, `error` | `build_reputation_block`, `validate_reputation_block`, `encode_reputation_block`, `decode_reputation_block` |
 | `audit` | Replay the deterministic transition and verify it, its commitments, and its chain context against a proposed reputation block | previous `ReputationVector`, `&[RatingRecord]`, `ReputationBlock`, `ReputationBlockContext`, `PorConfig` | expected `ReputationList` / verification result | `commitments`, `ratings`, `matrix`, `normalization`, `liquid_rank`, `transition`, `clamp`, `block`, `types`, `error` | `replay_reputation_transition`, `verify_reputation_transition` |
 | `snapshot` | Encode and validate the complete finalized state in a bounded, versioned, checksummed durable format | `ReputationState` / snapshot bytes | snapshot bytes / restored `ReputationState` | `state`, `block`, `commitments`, `types`, `error` | `encode_reputation_state_snapshot`, `decode_reputation_state_snapshot` |
 | `weights` | Export current reputation map for the weighted path | `&ReputationState` | `HashMap<NodeId, ReputationWeight>` | `state`, `cordial-miners-core::NodeId` | `reputation_weights` |
@@ -202,7 +203,8 @@ Future:
 10. Any validator can replay steps 2-7 with `replay_reputation_transition` and check a proposed block with `verify_reputation_transition`. Verification checks the header version, shard, source wave, previous-block link, all derived commitments, exclusion flags, and the replayed reputation list. Both operations are read-only.
 11. The f1r3node adapter consumes a deterministically closed rating round, constructs and audits its reputation block against a cloned state, exports `reputation_weights`, and produces a staged next state without changing the live state.
 12. `DurablePorState` persists that complete staged state through atomic file replacement and only then exposes it as the live state. Startup restores an existing snapshot or durably records the supplied initial state before processing a round.
-13. Block publication and consensus selection remain future stages.
+13. A committed `ReputationBlock` can be encoded into or decoded from the canonical bounded v1 publication envelope. The durable snapshot embeds the same block payload.
+14. Peer transport, historical storage, received-block audit orchestration, and consensus selection remain future stages.
 
 ## Adapter Finalization Boundary
 
@@ -328,16 +330,16 @@ All of the above remain the exclusive responsibility of `cordial-miners-core`. T
 
 ### Reputation sidechain vs payload references
 
-- **Current implementation:** Reputation blocks can be assembled locally, replay-audited, and retained as the latest block in the durable state snapshot. There is no published sidechain or historical block store yet.
+- **Current implementation:** Reputation blocks can be assembled locally, replay-audited, retained as the latest block in the durable state snapshot, and encoded in a canonical bounded publication envelope. There is no peer publication transport, published sidechain, or historical block store yet.
 - **Paper design:** Reputation updates may be carried as a sidechain or as payload references inside the main blocklace.
-- **Future work:** Choose the audit / publication path and the corresponding storage/replay structures.
+- **Future work:** Choose the peer carriage path and add corresponding historical storage and received-block audit orchestration.
 
 ## Future Extensions
 
 Logical extension points that do not yet exist:
 
 - Penalty / slashing application that mutates `ReputationState`.
-- Reputation-block publication, historical storage, and a persisted audit trail.
+- Reputation-block peer transport, historical storage, and a persisted audit trail.
 - Committee selection policy that filters the exported weight map.
 - Configuration-driven weight policies (reputation-only, stake-times-reputation, capped stake, committee-only).
 
