@@ -1,4 +1,10 @@
 use cordial_miners_core::NodeId;
+use cordial_miners_core::crypto::{Blake2b256Hasher, Hasher};
+use cordial_por::{
+    MAX_REPUTATION_BLOCK_NODE_ID_LEN, MAX_REPUTATION_BLOCK_WIRE_LEN, POR_REPUTATION_BLOCK_MAGIC,
+    POR_REPUTATION_BLOCK_WIRE_VERSION, ReputationBlock, decode_reputation_block,
+    encode_reputation_block,
+};
 use cordial_por::{
     MAX_REPUTATION_BLOCK_SHARD_ID_LEN, PorConfig, PorError, REPUTATION_BLOCK_VERSION, RatingBatch,
     RatingRecord, ReputationBlockContext, ReputationEntry, ReputationList, build_rating_batch,
@@ -276,5 +282,134 @@ fn structural_validation_rejects_header_or_root_tampering() {
     assert_eq!(
         validate_reputation_block(&block),
         Err(PorError::ReputationBlockRootMismatch)
+    );
+}
+
+fn canonical_wire_block() -> ReputationBlock {
+    build_reputation_block(
+        context(SOURCE_WAVE, None),
+        &batch(ROUND),
+        list(
+            ROUND,
+            vec![
+                ReputationEntry::new(NodeId(vec![1]), 90),
+                ReputationEntry::ejected(NodeId(vec![2])),
+            ],
+        ),
+        &PorConfig::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn v1_wire_round_trips_genesis_and_chained_blocks() {
+    let previous = canonical_wire_block();
+    let next = build_reputation_block(
+        context(SOURCE_WAVE + 1, Some(&previous)),
+        &batch(ROUND + 1),
+        list(ROUND + 1, vec![entry(1, 80), entry(2, 70)]),
+        &PorConfig::default(),
+    )
+    .unwrap();
+
+    for block in [previous, next] {
+        let encoded = encode_reputation_block(&block).unwrap();
+        assert!(encoded.starts_with(POR_REPUTATION_BLOCK_MAGIC));
+        assert_eq!(decode_reputation_block(&encoded), Ok(block));
+    }
+}
+
+#[test]
+fn v1_wire_encoding_is_deterministic_and_matches_golden_hash() {
+    let block = canonical_wire_block();
+    let first = encode_reputation_block(&block).unwrap();
+    let second = encode_reputation_block(&block).unwrap();
+
+    assert_eq!(first, second);
+    assert_eq!(
+        Blake2b256Hasher.hash(&first),
+        [
+            36, 31, 240, 195, 171, 18, 220, 162, 249, 166, 24, 40, 238, 159, 234, 10, 146, 82, 174,
+            106, 120, 235, 123, 251, 152, 216, 216, 129, 6, 14, 90, 171,
+        ]
+    );
+}
+
+#[test]
+fn wire_rejects_checksum_corruption_and_trailing_bytes() {
+    let encoded = encode_reputation_block(&canonical_wire_block()).unwrap();
+    let payload_start = POR_REPUTATION_BLOCK_MAGIC.len() + 2 + 8;
+
+    let mut corrupted = encoded.clone();
+    corrupted[payload_start] ^= 1;
+    assert_eq!(
+        decode_reputation_block(&corrupted),
+        Err(PorError::ReputationBlockWireChecksumMismatch)
+    );
+
+    let mut trailing = encoded;
+    trailing.push(0);
+    assert_eq!(
+        decode_reputation_block(&trailing),
+        Err(PorError::MalformedReputationBlockWire)
+    );
+}
+
+#[test]
+fn wire_rejects_bad_magic_version_length_and_truncation() {
+    let encoded = encode_reputation_block(&canonical_wire_block()).unwrap();
+
+    let mut bad_magic = encoded.clone();
+    bad_magic[0] ^= 1;
+    assert_eq!(
+        decode_reputation_block(&bad_magic),
+        Err(PorError::MalformedReputationBlockWire)
+    );
+
+    let mut unsupported = encoded.clone();
+    let version_offset = POR_REPUTATION_BLOCK_MAGIC.len();
+    unsupported[version_offset..version_offset + 2]
+        .copy_from_slice(&(POR_REPUTATION_BLOCK_WIRE_VERSION + 1).to_be_bytes());
+    assert_eq!(
+        decode_reputation_block(&unsupported),
+        Err(PorError::UnsupportedReputationBlockWireVersion(
+            POR_REPUTATION_BLOCK_WIRE_VERSION + 1
+        ))
+    );
+
+    let mut oversized = encoded.clone();
+    let length_offset = version_offset + 2;
+    oversized[length_offset..length_offset + 8]
+        .copy_from_slice(&(MAX_REPUTATION_BLOCK_WIRE_LEN as u64).to_be_bytes());
+    assert_eq!(
+        decode_reputation_block(&oversized),
+        Err(PorError::ReputationBlockWireTooLarge)
+    );
+
+    assert_eq!(
+        decode_reputation_block(&encoded[..encoded.len() - 1]),
+        Err(PorError::MalformedReputationBlockWire)
+    );
+}
+
+#[test]
+fn wire_bounds_encoded_node_identifiers() {
+    let block = build_reputation_block(
+        context(SOURCE_WAVE, None),
+        &batch(ROUND),
+        list(
+            ROUND,
+            vec![ReputationEntry::new(
+                NodeId(vec![0; MAX_REPUTATION_BLOCK_NODE_ID_LEN + 1]),
+                90,
+            )],
+        ),
+        &PorConfig::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        encode_reputation_block(&block),
+        Err(PorError::ReputationBlockWireTooLarge)
     );
 }
