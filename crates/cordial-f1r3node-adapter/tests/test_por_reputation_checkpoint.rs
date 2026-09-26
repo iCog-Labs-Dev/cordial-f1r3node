@@ -3,11 +3,10 @@ use std::{cell::RefCell, collections::HashSet};
 use cordial_f1r3node_adapter::{
     ordered_output::OrderedFinalizedOutput,
     por::{
-        AdmittedPorReputationBlock, CompletedPorRatingRound, DurablePorState, DurablePorStateError,
+        AttestedPorCheckpoint, CompletedPorRatingRound, DurablePorState, DurablePorStateError,
+        PorCheckpointCollector, PorCheckpointError, PorCheckpointObservation, PorCheckpointPolicy,
         PorFinalityTracker, PorRatingRoundCoordinator, PorRatingRoundCutoffPolicy,
-        PorReputationBlockAdmissionCoordinator, PorReputationBlockAdmissionError,
-        PorReputationBlockObservation, PorReputationBlockQuorumPolicy, RatingEnvelopeBroadcaster,
-        ReputationBlockPublicationV1, apply_completed_reputation_round,
+        RatingEnvelopeBroadcaster, ReputationBlockPublicationV1, apply_completed_reputation_round,
     },
 };
 use cordial_miners_core::{
@@ -157,7 +156,7 @@ fn candidate_block(fixture: &Fixture, completed: &CompletedPorRatingRound) -> Re
         .block
 }
 
-fn eligible_publishers() -> Vec<NodeId> {
+fn authorized_attesters() -> Vec<NodeId> {
     vec![node(1), node(2), node(8), node(9)]
 }
 
@@ -170,33 +169,33 @@ fn admit(
     completed: &CompletedPorRatingRound,
     config: &PorConfig,
     block: &ReputationBlock,
-) -> AdmittedPorReputationBlock {
-    let mut coordinator = PorReputationBlockAdmissionCoordinator::new(
+) -> AttestedPorCheckpoint {
+    let mut coordinator = PorCheckpointCollector::new(
         state,
         completed,
         config,
         SHARD_ID,
-        eligible_publishers(),
-        PorReputationBlockQuorumPolicy::default(),
+        authorized_attesters(),
+        PorCheckpointPolicy::default(),
     )
     .unwrap();
     coordinator.observe(publication(1, block)).unwrap();
     coordinator.observe(publication(2, block)).unwrap();
-    coordinator.into_admitted().unwrap()
+    coordinator.into_attested().unwrap()
 }
 
 #[test]
-fn policy_and_eligible_set_validation_fail_closed() {
+fn policy_and_authorized_attester_set_validation_fail_closed() {
     assert_eq!(
-        PorReputationBlockQuorumPolicy::new(0, 3),
-        Err(PorReputationBlockAdmissionError::InvalidThreshold {
+        PorCheckpointPolicy::new(0, 3),
+        Err(PorCheckpointError::InvalidThreshold {
             numerator: 0,
             denominator: 3,
         })
     );
     assert_eq!(
-        PorReputationBlockQuorumPolicy::new(3, 3),
-        Err(PorReputationBlockAdmissionError::InvalidThreshold {
+        PorCheckpointPolicy::new(3, 3),
+        Err(PorCheckpointError::InvalidThreshold {
             numerator: 3,
             denominator: 3,
         })
@@ -204,55 +203,55 @@ fn policy_and_eligible_set_validation_fail_closed() {
 
     let fixture = fixture();
     let completed = completed_round(&fixture);
-    let deduplicated = PorReputationBlockAdmissionCoordinator::new(
+    let deduplicated = PorCheckpointCollector::new(
         &fixture.state,
         &completed,
         &fixture.config,
         SHARD_ID,
         vec![node(1), node(1)],
-        PorReputationBlockQuorumPolicy::default(),
+        PorCheckpointPolicy::default(),
     )
     .unwrap();
-    assert_eq!(deduplicated.progress().eligible_publishers, 1);
-    assert_eq!(deduplicated.progress().total_eligible_weight, 40);
+    assert_eq!(deduplicated.progress().authorized_attesters, 1);
+    assert_eq!(deduplicated.progress().total_attester_weight, 40);
     assert_eq!(deduplicated.progress().required_weight, 27);
     assert!(matches!(
-        PorReputationBlockAdmissionCoordinator::new(
+        PorCheckpointCollector::new(
             &fixture.state,
             &completed,
             &fixture.config,
             SHARD_ID,
             Vec::new(),
-            PorReputationBlockQuorumPolicy::default(),
+            PorCheckpointPolicy::default(),
         ),
-        Err(PorReputationBlockAdmissionError::EmptyEligiblePublisherSet)
+        Err(PorCheckpointError::EmptyAttesterSet)
     ));
     assert!(matches!(
-        PorReputationBlockAdmissionCoordinator::new(
+        PorCheckpointCollector::new(
             &fixture.state,
             &completed,
             &fixture.config,
             SHARD_ID,
             vec![node(7)],
-            PorReputationBlockQuorumPolicy::default(),
+            PorCheckpointPolicy::default(),
         ),
-        Err(PorReputationBlockAdmissionError::UnknownEligiblePublisher(publisher))
-            if publisher == node(7)
+        Err(PorCheckpointError::UnknownAttester(attester))
+            if attester == node(7)
     ));
 
     let mut excluded = fixture.state.clone();
     excluded.eject_validator(&node(8)).unwrap();
     assert!(matches!(
-        PorReputationBlockAdmissionCoordinator::new(
+        PorCheckpointCollector::new(
             &excluded,
             &completed,
             &fixture.config,
             SHARD_ID,
             vec![node(8)],
-            PorReputationBlockQuorumPolicy::default(),
+            PorCheckpointPolicy::default(),
         ),
-        Err(PorReputationBlockAdmissionError::ExcludedEligiblePublisher(publisher))
-            if publisher == node(8)
+        Err(PorCheckpointError::ExcludedAttester(attester))
+            if attester == node(8)
     ));
 
     let mut zero_weight = fixture.state.clone();
@@ -260,91 +259,91 @@ fn policy_and_eligible_set_validation_fail_closed() {
         zero_weight.set_reputation(node(seed), 0);
     }
     assert!(matches!(
-        PorReputationBlockAdmissionCoordinator::new(
+        PorCheckpointCollector::new(
             &zero_weight,
             &completed,
             &fixture.config,
             SHARD_ID,
-            eligible_publishers(),
-            PorReputationBlockQuorumPolicy::default(),
+            authorized_attesters(),
+            PorCheckpointPolicy::default(),
         ),
-        Err(PorReputationBlockAdmissionError::ZeroEligibleWeight)
+        Err(PorCheckpointError::ZeroAttesterWeight)
     ));
 }
 
 #[test]
-fn distinct_audited_publishers_reach_strict_weighted_quorum() {
+fn distinct_audited_attesters_reach_checkpoint_threshold() {
     let fixture = fixture();
     let completed = completed_round(&fixture);
     let block = candidate_block(&fixture, &completed);
     let expected_hash = reputation_block_hash(&block).unwrap();
-    let mut coordinator = PorReputationBlockAdmissionCoordinator::new(
+    let mut coordinator = PorCheckpointCollector::new(
         &fixture.state,
         &completed,
         &fixture.config,
         SHARD_ID,
-        eligible_publishers(),
-        PorReputationBlockQuorumPolicy::default(),
+        authorized_attesters(),
+        PorCheckpointPolicy::default(),
     )
     .unwrap();
 
-    assert_eq!(coordinator.progress().total_eligible_weight, 100);
+    assert_eq!(coordinator.progress().total_attester_weight, 100);
     assert_eq!(coordinator.progress().required_weight, 67);
     assert_eq!(
         coordinator.observe(publication(1, &block)),
-        Ok(PorReputationBlockObservation::Counted)
+        Ok(PorCheckpointObservation::Counted)
     );
     assert_eq!(coordinator.progress().signed_weight, 40);
     assert!(!coordinator.progress().is_reached());
 
     assert_eq!(
         coordinator.observe(publication(1, &block)),
-        Ok(PorReputationBlockObservation::Duplicate)
+        Ok(PorCheckpointObservation::Duplicate)
     );
     assert_eq!(coordinator.progress().signed_weight, 40);
     assert_eq!(
         coordinator.observe(publication(2, &block)),
-        Ok(PorReputationBlockObservation::Counted)
+        Ok(PorCheckpointObservation::Counted)
     );
     assert!(coordinator.progress().is_reached());
     assert_eq!(coordinator.progress().signed_weight, 70);
     assert_eq!(
         coordinator.observe(publication(8, &block)),
-        Err(PorReputationBlockAdmissionError::QuorumAlreadyReached)
+        Err(PorCheckpointError::ThresholdAlreadyReached)
     );
 
-    let admitted = coordinator.into_admitted().unwrap();
-    assert_eq!(admitted.block(), &block);
-    assert_eq!(admitted.block_hash(), expected_hash);
-    assert_eq!(admitted.publications().len(), 2);
-    assert_eq!(admitted.progress().required_weight, 67);
-    let mut expected_publishers = vec![node(1), node(2)];
-    expected_publishers.sort();
+    let attested = coordinator.into_attested().unwrap();
+    assert_eq!(attested.block(), &block);
+    assert_eq!(attested.block_hash(), expected_hash);
+    assert_eq!(attested.publications().len(), 2);
+    assert_eq!(attested.progress().required_weight, 67);
+    let mut expected_attesters = vec![node(1), node(2)];
+    expected_attesters.sort();
     assert_eq!(
-        admitted.publishers().cloned().collect::<Vec<_>>(),
-        expected_publishers
+        attested.attesters().cloned().collect::<Vec<_>>(),
+        expected_attesters
     );
 }
 
 #[test]
-fn coordinator_cannot_emit_a_certificate_below_quorum() {
+fn collector_cannot_emit_a_checkpoint_below_threshold() {
     let fixture = fixture();
     let completed = completed_round(&fixture);
     let block = candidate_block(&fixture, &completed);
-    let mut coordinator = PorReputationBlockAdmissionCoordinator::new(
+    let mut coordinator = PorCheckpointCollector::new(
         &fixture.state,
         &completed,
         &fixture.config,
         SHARD_ID,
-        eligible_publishers(),
-        PorReputationBlockQuorumPolicy::default(),
+        authorized_attesters(),
+        PorCheckpointPolicy::default(),
     )
     .unwrap();
     coordinator.observe(publication(1, &block)).unwrap();
 
     assert_eq!(
-        coordinator.into_admitted(),
-        Err(PorReputationBlockAdmissionError::QuorumNotReached {
+        coordinator.into_attested(),
+        Err(PorCheckpointError::ThresholdNotReached {
             signed_weight: 40,
             required_weight: 67,
         })
@@ -356,20 +355,20 @@ fn unexpected_and_invalid_publications_do_not_change_progress() {
     let fixture = fixture();
     let completed = completed_round(&fixture);
     let block = candidate_block(&fixture, &completed);
-    let mut coordinator = PorReputationBlockAdmissionCoordinator::new(
+    let mut coordinator = PorCheckpointCollector::new(
         &fixture.state,
         &completed,
         &fixture.config,
         SHARD_ID,
-        eligible_publishers(),
-        PorReputationBlockQuorumPolicy::default(),
+        authorized_attesters(),
+        PorCheckpointPolicy::default(),
     )
     .unwrap();
 
     assert!(matches!(
         coordinator.observe(publication(7, &block)),
-        Err(PorReputationBlockAdmissionError::UnexpectedPublisher(publisher))
-            if publisher == node(7)
+        Err(PorCheckpointError::UnauthorizedAttester(attester))
+            if attester == node(7)
     ));
     assert_eq!(coordinator.progress().signed_weight, 0);
     assert_eq!(coordinator.progress().candidate_hash, None);
@@ -378,7 +377,7 @@ fn unexpected_and_invalid_publications_do_not_change_progress() {
     invalid.header.ratings_hash[0] ^= 1;
     assert_eq!(
         coordinator.observe(publication(1, &invalid)),
-        Err(PorReputationBlockAdmissionError::Audit(
+        Err(PorCheckpointError::Audit(
             PorError::ReputationBlockRatingsHashMismatch
         ))
     );
@@ -387,22 +386,22 @@ fn unexpected_and_invalid_publications_do_not_change_progress() {
 
     assert_eq!(
         coordinator.observe(publication(1, &block)),
-        Ok(PorReputationBlockObservation::Counted)
+        Ok(PorCheckpointObservation::Counted)
     );
     assert_eq!(coordinator.progress().signed_weight, 40);
 
     assert_eq!(
         coordinator.observe(publication(2, &invalid)),
-        Err(PorReputationBlockAdmissionError::Audit(
+        Err(PorCheckpointError::Audit(
             PorError::ReputationBlockRatingsHashMismatch
         ))
     );
     assert_eq!(coordinator.progress().signed_weight, 40);
-    assert_eq!(coordinator.progress().publishers, vec![node(1)]);
+    assert_eq!(coordinator.progress().attesters, vec![node(1)]);
 }
 
 #[test]
-fn a_publishers_conflicting_signature_is_reported_without_replacing_its_vote() {
+fn an_attesters_conflicting_signature_is_reported_without_replacing_its_vote() {
     let fixture = fixture();
     let completed = completed_round(&fixture);
     let block = candidate_block(&fixture, &completed);
@@ -410,13 +409,13 @@ fn a_publishers_conflicting_signature_is_reported_without_replacing_its_vote() {
     let mut conflicting = block.clone();
     conflicting.header.ratings_hash[0] ^= 1;
     let conflicting_hash = reputation_block_hash(&conflicting).unwrap();
-    let mut coordinator = PorReputationBlockAdmissionCoordinator::new(
+    let mut coordinator = PorCheckpointCollector::new(
         &fixture.state,
         &completed,
         &fixture.config,
         SHARD_ID,
-        eligible_publishers(),
-        PorReputationBlockQuorumPolicy::default(),
+        authorized_attesters(),
+        PorCheckpointPolicy::default(),
     )
     .unwrap();
 
@@ -426,31 +425,31 @@ fn a_publishers_conflicting_signature_is_reported_without_replacing_its_vote() {
     let error = coordinator
         .observe(conflicting_publication.clone())
         .unwrap_err();
-    let PorReputationBlockAdmissionError::ConflictingPublication(evidence) = error else {
+    let PorCheckpointError::ConflictingPublication(evidence) = error else {
         panic!("expected signed conflict evidence");
     };
-    assert_eq!(evidence.publisher(), &node(1));
+    assert_eq!(evidence.attester(), &node(1));
     assert_eq!(evidence.first_hash(), first_hash);
     assert_eq!(evidence.conflicting_hash(), conflicting_hash);
     assert_eq!(evidence.first_publication(), &first_publication);
     assert_eq!(evidence.conflicting_publication(), &conflicting_publication);
     assert_eq!(coordinator.progress().signed_weight, 40);
     assert_eq!(coordinator.progress().candidate_hash, Some(first_hash));
-    assert_eq!(coordinator.progress().publishers, vec![node(1)]);
+    assert_eq!(coordinator.progress().attesters, vec![node(1)]);
 }
 
 #[test]
-fn admitted_block_is_reaudited_and_durably_recovered() {
+fn attested_checkpoint_is_reaudited_and_durably_recovered() {
     let directory = tempdir().unwrap();
     let fixture = fixture();
     let completed = completed_round(&fixture);
     let block = candidate_block(&fixture, &completed);
-    let admitted = admit(&fixture.state, &completed, &fixture.config, &block);
+    let attested = admit(&fixture.state, &completed, &fixture.config, &block);
     let initial = fixture.state.clone();
     let mut runtime = DurablePorState::open(directory.path(), initial.clone()).unwrap();
 
     assert!(matches!(
-        runtime.apply_admitted_block(&admitted, &completed, &fixture.config, b"other"),
+        runtime.apply_attested_checkpoint(&attested, &completed, &fixture.config, b"other"),
         Err(DurablePorStateError::Transition(
             PorError::ReputationBlockShardMismatch
         ))
@@ -459,7 +458,7 @@ fn admitted_block_is_reaudited_and_durably_recovered() {
     assert!(runtime.history().is_empty().unwrap());
 
     let applied = runtime
-        .apply_admitted_block(&admitted, &completed, &fixture.config, SHARD_ID)
+        .apply_attested_checkpoint(&attested, &completed, &fixture.config, SHARD_ID)
         .unwrap();
     let committed = runtime.state().unwrap().clone();
     assert_eq!(applied.block, block);

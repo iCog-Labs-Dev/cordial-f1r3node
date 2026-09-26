@@ -180,7 +180,7 @@ fn completed_round_is_durable_before_reopen_exposes_it() {
 
     assert_eq!(committed.round(), completed.batch().round);
     assert_eq!(committed.latest_block(), Some(&applied.block));
-    assert_eq!(applied.weights, reputation_weights(&committed));
+    assert_eq!(applied.reputation_weights, reputation_weights(&committed));
     drop(runtime);
     let history = PorReputationBlockHistory::open(directory.path()).unwrap();
     assert_eq!(history.len().unwrap(), 1);

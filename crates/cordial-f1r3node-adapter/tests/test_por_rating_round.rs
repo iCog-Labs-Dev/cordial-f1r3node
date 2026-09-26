@@ -294,7 +294,10 @@ fn completed_round_drives_the_full_atomic_reputation_transition() {
     assert_eq!(applied.block.reputation_list, expected);
     assert_eq!(fixture.state.reputation_list(), &expected);
     assert_eq!(fixture.state.latest_block(), Some(&applied.block));
-    assert_eq!(applied.weights, reputation_weights(&fixture.state));
+    assert_eq!(
+        applied.reputation_weights,
+        reputation_weights(&fixture.state)
+    );
 }
 
 #[test]

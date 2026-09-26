@@ -4,13 +4,17 @@ use cordial_f1r3node_adapter::block_translation::{
     BlockMessage, Body, F1r3flyState, Header, Justification,
 };
 use cordial_f1r3node_adapter::grpc_ingest::BlocklaceAdapter;
-use cordial_f1r3node_adapter::live_ingress::{LiveIngress, LiveIngressError, LiveIngressPhase};
+use cordial_f1r3node_adapter::live_ingress::{
+    LiveIngress, LiveIngressError, LiveIngressPhase, PorWeightActivationError,
+};
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 use cordial_f1r3node_adapter::shared_ordered_output::ReadOrderedOutput;
 use cordial_miners_core::Block;
+use cordial_miners_core::consensus::is_weighted_supermajority;
 use cordial_miners_core::crypto::{hash_content, sign};
 use cordial_miners_core::execution::{BlockState, CordialBlockPayload};
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
+use cordial_por::{PorError, ReputationState};
 
 /// Number of rounds in one consensus wave which same as `ES_WAVELENGTH` in `snapshot.rs`.
 const WAVELENGTH: u64 = 3;
@@ -32,6 +36,56 @@ fn live_ingress_phase_can_progress_without_changing_adapter() {
     ingress.mark_connected();
     assert_eq!(ingress.phase(), LiveIngressPhase::Connected);
     assert_eq!(ingress.into_inner(), "adapter");
+}
+
+#[test]
+fn por_weights_replace_values_without_selecting_validators() {
+    let validator_a = NodeId(vec![1]);
+    let validator_b = NodeId(vec![2]);
+    let non_validator = NodeId(vec![3]);
+    let initial_bonds = HashMap::from([(validator_a.clone(), 50), (validator_b.clone(), 50)]);
+    let mut ingress =
+        LiveIngress::with_consensus_view((), initial_bonds, CasperShardConf::default(), "root");
+    let mut state = ReputationState::new(0);
+    state.set_reputation(validator_a.clone(), 20);
+    state.set_reputation(validator_b.clone(), 80);
+    state.set_reputation(non_validator.clone(), 1_000);
+
+    ingress.apply_por_weights(&state).unwrap();
+
+    assert_eq!(ingress.bonds().len(), 2);
+    assert_eq!(ingress.bonds().get(&validator_a), Some(&20));
+    assert_eq!(ingress.bonds().get(&validator_b), Some(&80));
+    assert!(!ingress.bonds().contains_key(&non_validator));
+    assert!(is_weighted_supermajority(
+        &HashSet::from([validator_b]),
+        ingress.bonds(),
+    ));
+}
+
+#[test]
+fn failed_por_weight_projection_leaves_cordial_weights_unchanged() {
+    let validator_a = NodeId(vec![1]);
+    let validator_b = NodeId(vec![2]);
+    let initial_bonds = HashMap::from([(validator_a.clone(), 50), (validator_b.clone(), 50)]);
+    let mut ingress = LiveIngress::with_consensus_view(
+        (),
+        initial_bonds.clone(),
+        CasperShardConf::default(),
+        "root",
+    );
+    let mut incomplete = ReputationState::new(0);
+    incomplete.set_reputation(validator_a, 100);
+
+    let error = ingress.apply_por_weights(&incomplete).unwrap_err();
+
+    assert_eq!(
+        error,
+        PorWeightActivationError::Projection(PorError::MissingAuthorizedValidatorReputation(
+            validator_b
+        ))
+    );
+    assert_eq!(ingress.bonds(), &initial_bonds);
 }
 
 #[test]
@@ -788,4 +842,26 @@ fn build_test_block_with_predecessors(
         },
         content,
     }
+}
+
+#[test]
+fn non_genesis_por_weights_require_an_audited_checkpoint() {
+    let validator = NodeId(vec![1]);
+    let initial_bonds = HashMap::from([(validator.clone(), 50)]);
+    let mut ingress = LiveIngress::with_consensus_view(
+        (),
+        initial_bonds.clone(),
+        CasperShardConf::default(),
+        "root",
+    );
+    let mut unaudited = ReputationState::new(1);
+    unaudited.set_reputation(validator, 100);
+
+    let error = ingress.apply_por_weights(&unaudited).unwrap_err();
+
+    assert_eq!(
+        error,
+        PorWeightActivationError::MissingReputationCheckpoint { round: 1 }
+    );
+    assert_eq!(ingress.bonds(), &initial_bonds);
 }

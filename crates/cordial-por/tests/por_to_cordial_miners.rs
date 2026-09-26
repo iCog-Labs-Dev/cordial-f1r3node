@@ -6,9 +6,9 @@ use cordial_miners_core::{
 };
 use cordial_por::{
     MissingEntryPolicy, PorConfig, RatingRecord, ReputationEntry, ReputationState,
-    ReputationVector, blend_reputation_transition, build_rating_batch, build_rating_matrix,
-    clamp_reputation_transition, compute_liquid_rank_contribution, normalize_rating_matrix,
-    reputation_weights,
+    ReputationVector, authorized_validator_weights, blend_reputation_transition,
+    build_rating_batch, build_rating_matrix, clamp_reputation_transition,
+    compute_liquid_rank_contribution, normalize_rating_matrix,
 };
 
 const PREVIOUS_ROUND: u64 = 0;
@@ -100,12 +100,13 @@ fn por_reputation_weights_drive_cordial_miners_weighted_supermajority() {
     state.apply_reputation_vector(clamped).unwrap();
     state.eject_validator(&node(4)).unwrap();
 
-    let weights = reputation_weights(&state);
+    let authorized = vec![node(1), node(2), node(3), node(4)];
+    let weights = authorized_validator_weights(&state, &authorized).unwrap();
 
     assert_eq!(weights.get(&node(1)), Some(&940));
     assert_eq!(weights.get(&node(2)), Some(&886));
     assert_eq!(weights.get(&node(3)), Some(&707));
-    assert!(!weights.contains_key(&node(4)));
+    assert_eq!(weights.get(&node(4)), Some(&0));
 
     let weighted_support = HashSet::from([node(1), node(2)]);
     assert!(is_weighted_supermajority(&weighted_support, &weights));
