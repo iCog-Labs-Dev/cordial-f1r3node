@@ -75,10 +75,10 @@ rating transactions
 
 The current implementation covers this complete local calculation, commitment,
 audit, state-application, durable snapshot path, canonical reputation-block
-envelope, append-only block history, and a signed transport-neutral publication
-boundary with a bounded process-local channel. Concrete peer-network binding,
-received-block admission orchestration, and consensus selection remain future
-work.
+envelope, append-only block history, signed transport-neutral publication, and
+strict weighted admission of replay-valid received blocks. Concrete peer-network
+binding, committee selection, durable certificate retention, and consensus
+selection remain future work.
 
 ## File-Level Plan
 
@@ -439,6 +439,48 @@ verified publication as a proposal and run those admission checks before
 persistence or state mutation. Adapter integration tests lock the framing,
 signature, tamper detection, and bounded-channel behavior.
 
+## Received Reputation Block Admission
+
+The adapter's `PorReputationBlockAdmissionCoordinator` accepts an explicit
+eligible publisher set. It snapshots each member's current reputation weight,
+rejects unknown or excluded members, deduplicates repeated member identifiers,
+and rejects an empty or zero-total-weight set. Committee selection is not
+inferred here: the caller must supply either the selected group or, until that
+stage exists, an explicitly chosen active-validator set.
+
+The quorum policy is a strict rational threshold. Its default is greater than
+two thirds, calculated without floating point as:
+
+```text
+required_weight = floor(total_eligible_weight * numerator / denominator) + 1
+```
+
+A publication contributes its publisher's weight only after the canonical
+block passes `verify_reputation_transition` against the receiver's current
+state, completed rating batch, configuration, shard, finalized source wave, and
+previous block. The coordinator applies these rules:
+
+- one publisher contributes weight at most once;
+- replaying the same publisher/block pair is an idempotent duplicate;
+- an unexpected publisher is rejected;
+- an invalid candidate leaves all progress unchanged;
+- two block hashes signed by one publisher return both authenticated
+  publications as conflict evidence while retaining the first vote;
+- collection freezes once the strict threshold is reached.
+
+`into_admitted` cannot succeed below quorum. On success it returns a
+private-invariant `AdmittedPorReputationBlock` containing the audited block,
+its commitment hash, ordered signed publications, and weighted progress. This
+certificate is retained in memory but is not yet encoded into the durable
+snapshot or block-history format.
+
+`DurablePorState::apply_admitted_block` replays the admitted block again
+against current state and caller-supplied context. This second audit closes the
+time-of-check/time-of-use gap: a certificate collected before a state, rating,
+configuration, or shard-context change cannot reach storage. Audit failure is
+side-effect free. Success persists the complete snapshot, appends the immutable
+block envelope, and only then replaces live state.
+
 ## Durable Reputation State Snapshot
 
 `src/snapshot.rs` encodes the complete finalized state required to resume after
@@ -572,9 +614,10 @@ Future work remains:
 
 `EquivocationPenalty` and `InactivityPenalty` remain intentionally as Cordial
 integration extensions and are not part of the first reputation calculation
-step. The signed publication boundary is implemented; concrete peer-network
-binding, publication quorum, received-block audit admission, and later
-consensus-selection logic remain future work.
+step. Signed publication and strict weighted received-block admission are
+implemented. Concrete peer-network binding, committee and leader selection,
+durable quorum-certificate retention, and later consensus-selection logic
+remain future work.
 
 ## Paper-Aligned Structures
 

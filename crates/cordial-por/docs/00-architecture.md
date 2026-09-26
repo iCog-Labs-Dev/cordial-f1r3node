@@ -147,7 +147,7 @@ flowchart TD
 ### Implemented And Future PoR Stages
 
 > **Implementation Note:**  
-> The solid edges are implemented. Dotted edges remain future extensions described by the paper (arXiv:2108.03542 and related Liquid-Rank literature). The implemented transition requires consecutive rounds and resolves sparse node sets through a configured no-rating fallback policy. Reputation-block construction derives canonical commitments, audit replay verifies them, and a canonical envelope supplies the block bytes. The adapter retains a crash-safe append-only history and adds a signed, bounded publication boundary; binding that boundary to a concrete peer network and admitting received transitions remain external.
+> The solid edges are implemented. Dotted edges remain future extensions described by the paper (arXiv:2108.03542 and related Liquid-Rank literature). The implemented transition requires consecutive rounds and resolves sparse node sets through a configured no-rating fallback policy. Reputation-block construction derives canonical commitments, audit replay verifies them, and a canonical envelope supplies the block bytes. The adapter retains crash-safe history, authenticates signed publications, forms strict weighted quorum certificates from replay-valid candidates, and re-audits before durable application. Concrete peer-network binding, committee selection, and durable certificate retention remain external.
 
 Implemented:
 
@@ -163,12 +163,14 @@ Implemented:
 - Bounded, versioned reputation-block wire encoding
 - Crash-safe reputation-state snapshots and append-only block history
 - Signed, versioned reputation-block publications with a bounded adapter channel
+- Strict weighted received-block admission with durable re-audit and application
 
 Future:
 
 - Penalties / slashing
-- Concrete peer-network binding and received-block audit orchestration
+- Concrete peer-network binding
 - Committee selection
+- Durable quorum-certificate retention
 
 ## Module Responsibilities
 
@@ -206,8 +208,10 @@ Future:
 11. The f1r3node adapter consumes a deterministically closed rating round, constructs and audits its reputation block against a cloned state, exports `reputation_weights`, and produces a staged next state without changing the live state.
 12. A committed `ReputationBlock` can be encoded into or decoded from the canonical bounded v1 block envelope. The durable snapshot embeds the same block payload.
 13. `DurablePorState` commits the complete staged snapshot, appends the same block envelope to immutable round history, and only then exposes the state in memory. Startup validates the retained chain and completes a missing tip from the snapshot after an interrupted append.
-14. The adapter wraps a canonical block envelope with a version, publisher public key, and secp256k1 signature, then exposes broadcaster/receiver traits and a bounded Tokio handoff. Reception authenticates the publisher and bytes but does not admit the transition.
-15. A concrete peer-network binding, received-block quorum and replay-audit orchestration, and consensus selection remain future stages.
+14. The adapter wraps a canonical block envelope with a version, publisher public key, and secp256k1 signature, then exposes broadcaster/receiver traits and a bounded Tokio handoff.
+15. Received publications are matched against an explicitly supplied eligible publisher set, replay-audited against the local completed rating round, deduplicated by publisher, and counted by snapshotted reputation weight. A strict configurable quorum produces an in-memory certificate containing the signed publications.
+16. `DurablePorState::apply_admitted_block` re-audits the certified block against current state and context before using the snapshot-first, history-second commit sequence.
+17. Concrete peer-network binding, committee selection, durable certificate retention, and consensus selection remain future stages.
 
 ## Adapter Finalization Boundary
 
@@ -246,15 +250,21 @@ Recovery decodes every retained file and validates its filename round,
 consecutive order, shard, and previous-block hash. Corruption, gaps, conflicting
 rounds, and broken links fail closed.
 
-The snapshot contains finalized state only. A state with pending ratings is rejected instead of silently discarding in-flight work. `DurablePorState` connects the store to startup and completed-round application:
+The snapshot contains finalized state only. A state with pending ratings is rejected instead of silently discarding in-flight work. `DurablePorState` connects the store to startup, local completed-round application, and admitted peer-block application:
 
 ```text
 startup
   -> restore committed snapshot
   -> or validate and persist initial state
 
-completed round
+local completed round
   -> stage and audit next state
+  -> persist and sync complete snapshot
+  -> append and sync immutable reputation block
+  -> replace live in-memory state
+
+quorum-admitted peer block
+  -> re-audit against current state and completed ratings
   -> persist and sync complete snapshot
   -> append and sync immutable reputation block
   -> replace live in-memory state
@@ -294,8 +304,36 @@ channel without coupling network code to PoR calculation.
 Authentication answers only “which key published these exact bytes.” It does
 not establish publication quorum, prove that the publisher was selected,
 replay the ratings, validate the expected shard or previous block, persist the
-block, or mutate live reputation state. Those checks must happen in the later
-received-block admission flow before `ReputationState::apply_reputation_block`.
+block, or mutate live reputation state. Those checks happen at the separate
+admission and durable-application boundaries.
+
+## Adapter Received-Block Admission Boundary
+
+`por::admission::PorReputationBlockAdmissionCoordinator` snapshots an
+explicitly supplied eligible publisher set against the current reputation
+state. Unknown and excluded members are rejected, duplicate member identifiers
+are counted once, and the set must have non-zero total reputation. Supplying
+the set is intentionally a caller responsibility so the future committee
+selector can own group membership without coupling selection to admission.
+
+The default policy requires strictly more than two thirds of eligible weight.
+For total weight `W` and ratio `n/d`, the required weight is
+`floor(W * n / d) + 1`. Each new publisher's authenticated block is replayed
+against the local `CompletedPorRatingRound`, previous state, configuration,
+shard, source wave, and previous block before its snapshotted weight counts.
+Repeated publication of the same block is idempotent. If one publisher signs
+two block hashes, admission returns both authenticated publications as conflict
+evidence and retains the first vote; penalty handling remains a separate
+policy.
+
+Once the threshold is reached, consuming the coordinator produces an
+`AdmittedPorReputationBlock` with private fields, the audited block, ordered
+signed publications, and quorum progress. The certificate is currently
+in-memory only. `DurablePorState::apply_admitted_block` does not trust its
+earlier audit blindly: it replays the block again against current state and
+caller-supplied context before any filesystem write. Audit failure leaves the
+runtime usable and unchanged. Success uses the same crash-safe
+snapshot-first/history-second commit sequence as a locally constructed block.
 
 ## Ownership Boundaries
 
