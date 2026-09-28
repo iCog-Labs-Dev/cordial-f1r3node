@@ -292,3 +292,89 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
         tokio::time::sleep(config.poll_interval).await;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(hashes: &[&str]) -> ShadowStatus {
+        ShadowStatus {
+            schema_version: 1,
+            shadow_mode: true,
+            active_por_round: 0,
+            weight_commitment: "abc".into(),
+            weights: BTreeMap::from([("key".into(), 1)]),
+            finalized_anchor: hashes.last().map(|hash| hash.to_string()),
+            finalized_hashes: hashes.iter().map(|hash| hash.to_string()).collect(),
+            mirrored_blocks: hashes.len(),
+            source_height: 10,
+        }
+    }
+
+    #[test]
+    fn recovered_prefix_and_projection_are_checked() {
+        let old = status(&["a", "b"]);
+        old.validate_recovered(&status(&["a", "b", "c"])).unwrap();
+        assert!(old.validate_recovered(&status(&["a", "x"])).is_err());
+        assert!(old.validate_recovered(&status(&["a"])).is_err());
+        let mut drifted = status(&["a", "b"]);
+        drifted.weights.insert("key".into(), 2);
+        assert!(old.validate_recovered(&drifted).is_err());
+    }
+
+    #[test]
+    fn genesis_projection_and_status_survive_runtime_reopen() {
+        let directory = tempfile::tempdir().unwrap();
+        let bonds = HashMap::from([(NodeId(vec![1]), 10), (NodeId(vec![2]), 20)]);
+        let config = PorConfig::default();
+        let open = || {
+            let ingress = LiveIngress::with_consensus_view(
+                PassthroughAdapter,
+                bonds.clone(),
+                CasperShardConf::default(),
+                "root",
+            );
+            PorRuntime::open(
+                directory.path(),
+                initial_state(&bonds, &config),
+                ingress,
+                config.clone(),
+                b"root".to_vec(),
+                CORDIAL_WAVELENGTH,
+            )
+            .unwrap()
+        };
+        let first = open();
+        let first_status =
+            ShadowStatus::from_runtime(&first, &OrderedFinalizedOutput::default(), 0).unwrap();
+        assert_eq!(first_status.active_por_round, 0);
+        assert_eq!(first_status.weights.len(), 2);
+        let path = status_path(directory.path());
+        write_status(&path, &first_status).unwrap();
+        drop(first);
+
+        let restored = open();
+        let restored_status =
+            ShadowStatus::from_runtime(&restored, &OrderedFinalizedOutput::default(), 0).unwrap();
+        assert_eq!(restored_status, first_status);
+        read_status(&path)
+            .unwrap()
+            .unwrap()
+            .validate_recovered(&restored_status)
+            .unwrap();
+    }
+
+    #[test]
+    fn config_rejects_invalid_polling() {
+        let mut config = ShadowConfig {
+            grpc_url: "http://127.0.0.1:40401".into(),
+            bonds_file: "bonds.txt".into(),
+            data_dir: "data".into(),
+            shard_id: "root".into(),
+            height_batch_size: 64,
+            poll_interval: Duration::from_secs(1),
+        };
+        config.height_batch_size = 0;
+        assert!(validate_config(&config).is_err());
+    }
+}
