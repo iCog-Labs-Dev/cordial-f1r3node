@@ -14,6 +14,7 @@ pub mod lifecycle;
 pub mod persistence;
 pub mod ratings;
 pub mod runtime;
+pub mod shadow;
 pub mod transition;
 pub mod transport;
 
