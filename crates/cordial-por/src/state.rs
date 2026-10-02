@@ -76,12 +76,64 @@ impl ReputationState {
         &self.pending_ratings
     }
 
+    pub fn pending_ratings_capacity(&self) -> usize {
+        self.pending_ratings.capacity()
+    }
+
     pub fn latest_block(&self) -> Option<&ReputationBlock> {
         self.latest_block.as_ref()
     }
 
     pub fn add_rating(&mut self, rating: RatingRecord) {
         self.pending_ratings.push(rating);
+    }
+
+    /// Append a rating record with a capacity limit to prevent uncontrolled memory growth.
+    pub fn add_rating_with_capacity(
+        &mut self,
+        rating: RatingRecord,
+        max_capacity: usize,
+    ) -> Result<(), PorError> {
+        if self.pending_ratings.len() >= max_capacity {
+            return Err(PorError::PendingRatingsCapacityExceeded);
+        }
+        self.pending_ratings.push(rating);
+        Ok(())
+    }
+
+    /// Extract and return all pending rating records while retaining vector allocation capacity.
+    #[allow(clippy::drain_collect)]
+    pub fn drain_all_pending_ratings(&mut self) -> Vec<RatingRecord> {
+        self.pending_ratings.drain(..).collect()
+    }
+
+    /// Extract and return all pending rating records, leaving the state empty (resets capacity).
+    pub fn take_pending_ratings(&mut self) -> Vec<RatingRecord> {
+        std::mem::take(&mut self.pending_ratings)
+    }
+
+    /// Clear all pending rating records.
+    pub fn clear_pending_ratings(&mut self) {
+        self.pending_ratings.clear();
+    }
+
+    /// Drain and return rating records for a specific consensus round.
+    ///
+    /// Preserves rating records for other rounds in `pending_ratings`.
+    pub fn drain_pending_ratings_for_round(&mut self, round: ReputationRound) -> Vec<RatingRecord> {
+        let (matching, remaining): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending_ratings)
+            .into_iter()
+            .partition(|r| r.round == round);
+        self.pending_ratings = remaining;
+        matching
+    }
+
+    /// Advance the state to a new consensus round and return all rating records
+    /// belonging to the completed round.
+    pub fn advance_round(&mut self, new_round: ReputationRound) -> Vec<RatingRecord> {
+        let old_round = self.current_round;
+        self.current_round = new_round;
+        self.drain_pending_ratings_for_round(old_round)
     }
 
     /// Returns `true` if `node_id` has been permanently ejected.
@@ -96,11 +148,6 @@ impl ReputationState {
     pub fn excluded_keys(&self) -> &BTreeSet<NodeId> {
         &self.excluded_keys
     }
-
-    /// Insert or update a validator's reputation weight.
-    ///
-    /// If `node_id` is present in the permanent ejection registry this call
-    /// is a no-op — ejection cannot be reversed through reputation assignment.
     pub fn set_reputation(&mut self, node_id: NodeId, reputation: ReputationWeight) {
         // Permanently ejected keys must never be re-inserted as active.
         if self.excluded_keys.contains(&node_id) {

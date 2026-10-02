@@ -289,3 +289,160 @@ fn is_ejected_consults_permanent_registry_not_list_flag() {
     // Node 2 must remain unaffected.
     assert!(!state.is_ejected(&NodeId(vec![2])));
 }
+
+#[test]
+fn take_pending_ratings_empties_state_and_returns_records() {
+    use cordial_por::RatingRecord;
+
+    let mut state = ReputationState::new(1);
+    let record1 = RatingRecord::new(1, NodeId(vec![1]), NodeId(vec![2]), 50, vec![1, 2, 3]);
+    let record2 = RatingRecord::new(1, NodeId(vec![2]), NodeId(vec![1]), 80, vec![4, 5, 6]);
+
+    state.add_rating(record1.clone());
+    state.add_rating(record2.clone());
+
+    assert_eq!(state.pending_ratings().len(), 2);
+
+    let taken = state.take_pending_ratings();
+
+    assert_eq!(taken.len(), 2);
+    assert_eq!(taken[0], record1);
+    assert_eq!(taken[1], record2);
+    assert!(state.pending_ratings().is_empty());
+}
+
+#[test]
+fn clear_pending_ratings_removes_all_records() {
+    use cordial_por::RatingRecord;
+
+    let mut state = ReputationState::new(1);
+    state.add_rating(RatingRecord::new(
+        1,
+        NodeId(vec![1]),
+        NodeId(vec![2]),
+        50,
+        vec![1, 2, 3],
+    ));
+
+    assert_eq!(state.pending_ratings().len(), 1);
+
+    state.clear_pending_ratings();
+
+    assert!(state.pending_ratings().is_empty());
+}
+
+#[test]
+fn drain_pending_ratings_for_round_filters_by_target_round() {
+    use cordial_por::RatingRecord;
+
+    let mut state = ReputationState::new(1);
+    let r1 = RatingRecord::new(1, NodeId(vec![1]), NodeId(vec![2]), 50, vec![1]);
+    let r2 = RatingRecord::new(2, NodeId(vec![1]), NodeId(vec![2]), 60, vec![2]);
+    let r3 = RatingRecord::new(1, NodeId(vec![2]), NodeId(vec![1]), 70, vec![3]);
+
+    state.add_rating(r1.clone());
+    state.add_rating(r2.clone());
+    state.add_rating(r3.clone());
+
+    let round1_ratings = state.drain_pending_ratings_for_round(1);
+
+    assert_eq!(round1_ratings.len(), 2);
+    assert_eq!(round1_ratings[0], r1);
+    assert_eq!(round1_ratings[1], r3);
+
+    // Remaining in state should only be round 2
+    assert_eq!(state.pending_ratings().len(), 1);
+    assert_eq!(state.pending_ratings()[0], r2);
+}
+
+#[test]
+fn empty_state_operations_return_empty_vectors_without_panic() {
+    let mut state = ReputationState::new(1);
+
+    assert!(state.pending_ratings().is_empty());
+    assert!(state.take_pending_ratings().is_empty());
+    assert!(state.drain_all_pending_ratings().is_empty());
+    assert!(state.drain_pending_ratings_for_round(1).is_empty());
+    state.clear_pending_ratings();
+    assert!(state.pending_ratings().is_empty());
+}
+
+#[test]
+fn state_reuse_over_multiple_round_cycles() {
+    use cordial_por::RatingRecord;
+
+    let mut state = ReputationState::new(1);
+    let r1 = RatingRecord::new(1, NodeId(vec![1]), NodeId(vec![2]), 50, vec![1]);
+
+    // Cycle 1
+    state.add_rating(r1.clone());
+    let taken1 = state.take_pending_ratings();
+    assert_eq!(taken1, vec![r1.clone()]);
+    assert!(state.pending_ratings().is_empty());
+
+    // Cycle 2
+    let r2 = RatingRecord::new(2, NodeId(vec![2]), NodeId(vec![1]), 70, vec![2]);
+    state.add_rating(r2.clone());
+    let taken2 = state.take_pending_ratings();
+    assert_eq!(taken2, vec![r2]);
+    assert!(state.pending_ratings().is_empty());
+}
+
+#[test]
+fn drain_all_pending_ratings_preserves_buffer_capacity() {
+    use cordial_por::RatingRecord;
+
+    let mut state = ReputationState::new(1);
+    for i in 0..100 {
+        state.add_rating(RatingRecord::new(
+            1,
+            NodeId(vec![1]),
+            NodeId(vec![2]),
+            50,
+            vec![i],
+        ));
+    }
+
+    let initial_capacity = state.pending_ratings_capacity();
+    assert!(initial_capacity >= 100);
+
+    let drained = state.drain_all_pending_ratings();
+    assert_eq!(drained.len(), 100);
+    assert!(state.pending_ratings().is_empty());
+    // Capacity should be preserved
+    assert_eq!(state.pending_ratings_capacity(), initial_capacity);
+}
+
+#[test]
+fn add_rating_with_capacity_enforces_limit() {
+    use cordial_por::{PorError, RatingRecord};
+
+    let mut state = ReputationState::new(1);
+    let r = RatingRecord::new(1, NodeId(vec![1]), NodeId(vec![2]), 50, vec![1]);
+
+    assert!(state.add_rating_with_capacity(r.clone(), 2).is_ok());
+    assert!(state.add_rating_with_capacity(r.clone(), 2).is_ok());
+
+    // Third rating exceeds capacity
+    let res = state.add_rating_with_capacity(r, 2);
+    assert_eq!(res, Err(PorError::PendingRatingsCapacityExceeded));
+    assert_eq!(state.pending_ratings().len(), 2);
+}
+
+#[test]
+fn advance_round_updates_round_and_returns_completed_ratings() {
+    use cordial_por::RatingRecord;
+
+    let mut state = ReputationState::new(1);
+    let r1 = RatingRecord::new(1, NodeId(vec![1]), NodeId(vec![2]), 50, vec![1]);
+    let r2 = RatingRecord::new(2, NodeId(vec![2]), NodeId(vec![1]), 60, vec![2]);
+
+    state.add_rating(r1.clone());
+    state.add_rating(r2.clone());
+
+    let completed = state.advance_round(2);
+
+    assert_eq!(state.round(), 2);
+    assert_eq!(completed, vec![r1]);
+    assert_eq!(state.pending_ratings(), &[r2]);
+}

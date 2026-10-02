@@ -79,6 +79,7 @@ pub enum PorError {
     // Key-ejection errors
     /// The requested node is not present in the current `ReputationState`.
     UnknownNode,
+    PendingRatingsCapacityExceeded,
 }
 
 impl fmt::Display for PorError {
@@ -318,6 +319,9 @@ impl fmt::Display for PorError {
                 write!(f, "Cordial authorized validator weight total overflowed")
             }
             Self::UnknownNode => write!(f, "node is not present in the current reputation state"),
+            Self::PendingRatingsCapacityExceeded => {
+                write!(f, "pending ratings buffer capacity exceeded")
+            }
         }
     }
 }
