@@ -21,6 +21,9 @@ use cordial_f1r3node_adapter::grpc_ingest::BlocklaceAdapter;
 use cordial_f1r3node_adapter::live_ingress::{AlreadyValidatedVerifier, LiveIngress};
 use cordial_f1r3node_adapter::repository::{BlocklaceRepository, RSpaceBlocklaceRepository};
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
+use cordial_f1r3space_adapter::lmdb_store::{
+    BLOCK_HASH_FORMAT_VERSION, BLOCK_HASH_FORMAT_VERSION_KEY,
+};
 use cordial_miners_core::Block;
 use cordial_miners_core::crypto::hash_content;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
@@ -296,6 +299,12 @@ fn recovery_skips_corrupt_lmdb_entries_without_panic() {
         let mut wtxn = env.write_txn().unwrap();
         let db: heed::Database<Bytes, Bytes> = env
             .create_database(&mut wtxn, Some("cordial-blocks"))
+            .unwrap();
+        let meta: heed::Database<Bytes, Bytes> = env
+            .create_database(&mut wtxn, Some("cordial-meta"))
+            .unwrap();
+        let version = BLOCK_HASH_FORMAT_VERSION.to_be_bytes();
+        meta.put(&mut wtxn, BLOCK_HASH_FORMAT_VERSION_KEY, version.as_slice())
             .unwrap();
 
         let good_key = bincode::serialize(&good.identity).unwrap();

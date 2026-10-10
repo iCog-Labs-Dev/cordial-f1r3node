@@ -231,8 +231,11 @@ fn protected_candidate_closure(
         }
 
         for pred_id in &content.predecessors {
-            if candidates.contains(pred_id) && protected.insert(pred_id.clone()) {
-                stack.push(pred_id.clone());
+            if let Some(resolved) = blocklace.resolve_identity(pred_id)
+                && candidates.contains(resolved)
+                && protected.insert(resolved.clone())
+            {
+                stack.push(resolved.clone());
             }
         }
     }
@@ -243,8 +246,11 @@ fn protected_candidate_closure(
         };
 
         for pred_id in &content.predecessors {
-            if candidates.contains(pred_id) && protected.insert(pred_id.clone()) {
-                stack.push(pred_id.clone());
+            if let Some(resolved) = blocklace.resolve_identity(pred_id)
+                && candidates.contains(resolved)
+                && protected.insert(resolved.clone())
+            {
+                stack.push(resolved.clone());
             }
         }
     }

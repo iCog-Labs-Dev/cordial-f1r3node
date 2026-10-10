@@ -322,8 +322,8 @@ fn equivocation_recording_does_not_stale_ordering_cache() {
 
     // The graph reference leader must still appear in the ordering.
     assert!(
-        after_evidence.contains(&graph.w0_leader.identity)
-            || after_evidence.contains(&graph.w1_leader.identity),
+        after_evidence.contains(&graph.w0_leader.identity.consensus_identity())
+            || after_evidence.contains(&graph.w1_leader.identity.consensus_identity()),
         "at least one finalized leader must appear in the ordered output"
     );
 }
@@ -401,7 +401,7 @@ fn equivocating_branch_excluded_from_finalized_output() {
         "finalized output must not be empty: two waves are present"
     );
     assert!(
-        !cached_tau.contains(&equivocating_block.identity),
+        !cached_tau.contains(&equivocating_block.identity.consensus_identity()),
         "the equivocating block's identity must not appear in tau output"
     );
 
@@ -423,14 +423,14 @@ fn equivocating_branch_excluded_from_finalized_output() {
         "cached and fresh weighted_tau must agree after equivocation detection"
     );
     assert!(
-        !cached_wtau.contains(&equivocating_block.identity),
+        !cached_wtau.contains(&equivocating_block.identity.consensus_identity()),
         "the equivocating block's identity must not appear in weighted_tau output"
     );
 
     // The honest w0_leader and w1_leader must remain in the output.
     assert!(
-        cached_wtau.contains(&graph.w0_leader.identity)
-            || cached_wtau.contains(&graph.w1_leader.identity),
+        cached_wtau.contains(&graph.w0_leader.identity.consensus_identity())
+            || cached_wtau.contains(&graph.w1_leader.identity.consensus_identity()),
         "at least one honest leader must appear in the weighted_tau output"
     );
 

@@ -10,7 +10,10 @@ use heed::EnvOpenOptions;
 
 use crate::error::RepoError;
 
-use super::{BLOCKS_DB, META_DB, RSpaceBlocklaceRepository};
+use super::{
+    BLOCK_HASH_FORMAT_VERSION, BLOCK_HASH_FORMAT_VERSION_KEY, BLOCKS_DB, META_DB,
+    RSpaceBlocklaceRepository,
+};
 
 impl RSpaceBlocklaceRepository {
     /// Open (or reopen) the LMDB environment at `data_dir/blocklace/`.
@@ -19,8 +22,13 @@ impl RSpaceBlocklaceRepository {
     ///
     /// - **Fresh boot**: creates `data_dir/blocklace/` and both named
     ///   databases from scratch.
-    /// - **Restart**: reopens the existing environment and databases.
-    ///   `create_database` is idempotent — existing data is never lost.
+    /// - **Restart**: reopens an environment written with the current block
+    ///   hash format. `create_database` is idempotent — existing data is never
+    ///   lost.
+    /// - **Unversioned non-empty store**: fails explicitly and requires a
+    ///   resync. Such stores may contain blocks signed under the legacy hash
+    ///   that included predecessor signatures; silently replaying and skipping
+    ///   them would expose a partial DAG.
     ///
     /// ## `map_size`
     ///
@@ -53,6 +61,35 @@ impl RSpaceBlocklaceRepository {
         let mut wtxn = env.write_txn()?;
         let blocks_db = env.create_database(&mut wtxn, Some(BLOCKS_DB))?;
         let meta_db = env.create_database(&mut wtxn, Some(META_DB))?;
+
+        match meta_db.get(&wtxn, BLOCK_HASH_FORMAT_VERSION_KEY)? {
+            Some(encoded) => {
+                let encoded: [u8; 4] = <[u8; 4]>::try_from(encoded).map_err(|_| {
+                    RepoError::IncompatibleStorage(
+                        "invalid block hash format marker; resynchronize the blocklace store"
+                            .into(),
+                    )
+                })?;
+                let found = u32::from_be_bytes(encoded);
+                if found != BLOCK_HASH_FORMAT_VERSION {
+                    return Err(RepoError::IncompatibleStorage(format!(
+                        "block hash format version {found} is not supported; expected version \
+                         {BLOCK_HASH_FORMAT_VERSION}. Resynchronize the blocklace store"
+                    )));
+                }
+            }
+            None if blocks_db.is_empty(&wtxn)? => {
+                let version = BLOCK_HASH_FORMAT_VERSION.to_be_bytes();
+                meta_db.put(&mut wtxn, BLOCK_HASH_FORMAT_VERSION_KEY, version.as_slice())?;
+            }
+            None => {
+                return Err(RepoError::IncompatibleStorage(
+                    "non-empty unversioned store may contain legacy hashes that included \
+                     predecessor signatures; resynchronize the blocklace store"
+                        .into(),
+                ));
+            }
+        }
         wtxn.commit()?;
 
         Ok(Self {

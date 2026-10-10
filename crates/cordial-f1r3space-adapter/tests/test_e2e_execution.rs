@@ -43,6 +43,7 @@
 //! | `failed_deploy_surfaces_as_is_failed` | A runtime-failing deploy appears with `is_failed: true` — not silently dropped |
 //! | `close_block_system_deploy_executes` | `SystemDeployRequest::CloseBlock` runs without error |
 //! | `multiple_deploys_all_appear_in_result` | Multi-deploy blocks return all deploys in the result |
+//! | `slash_updates_post_state_bonds` | A successful slash is reflected in `new_bonds` |
 //!
 //! ## Note on `rejected_deploys`
 //!
@@ -57,8 +58,8 @@ use casper::rust::test_utils::util::rholang::resources::{
 use casper::rust::util::rholang::runtime_manager::RuntimeManager as F1r3RuntimeManager;
 use cordial_f1r3space_adapter::F1r3RspaceRuntime;
 use cordial_miners_core::execution::{
-    Bond, Deploy, ExecutionRequest, ProcessedSystemDeploy, RuntimeManager as CoreRuntimeManager,
-    SignedDeploy, SystemDeployRequest,
+    Bond, Deploy, DeploySignatureAlgorithm, ExecutionRequest, ProcessedSystemDeploy,
+    RuntimeManager as CoreRuntimeManager, SignedDeploy, SystemDeployRequest,
 };
 use cordial_miners_core::types::NodeId;
 
@@ -68,6 +69,7 @@ use cordial_miners_core::types::NodeId;
 struct Setup {
     rt: F1r3RuntimeManager,
     genesis_hash: Vec<u8>,
+    genesis_bonds: Vec<Bond>,
 }
 
 /// Build a `RuntimeManager` connected to a bootstrapped genesis state.
@@ -92,11 +94,27 @@ async fn setup() -> Setup {
         .state
         .post_state_hash
         .to_vec();
+    let mut genesis_bonds: Vec<Bond> = genesis_ctx
+        .genesis_block
+        .body
+        .state
+        .bonds
+        .iter()
+        .map(|bond| Bond {
+            validator: NodeId(bond.validator.to_vec()),
+            stake: u64::try_from(bond.stake).expect("genesis stake must be non-negative"),
+        })
+        .collect();
+    genesis_bonds.sort_by(|left, right| left.validator.0.cmp(&right.validator.0));
 
     let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_ctx);
     let (rt, _history_repo) = mk_runtime_manager_with_history_at(&mut *kvm).await;
 
-    Setup { rt, genesis_hash }
+    Setup {
+        rt,
+        genesis_hash,
+        genesis_bonds,
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -111,25 +129,35 @@ async fn setup() -> Setup {
 /// Uses `DEFAULT_PUB` from f1r3node's `construct_deploy` module — this key has a
 /// genesis vault with `initial_balance: 9_000_000` REV, enough to cover phlo costs.
 fn signed_deploy_at(term: &str, ts_offset: u64) -> SignedDeploy {
-    use casper::rust::util::construct_deploy::DEFAULT_PUB;
-    // Each deploy needs a unique signature — f1r3node uses the signature as
-    // part of its deploy identity and refund accounting. Identical zero
-    // signatures across deploys in the same block cause GasRefundFailure.
-    let mut sig = vec![0u8; 64];
-    let offset_byte = (ts_offset & 0xff) as u8;
-    sig[0] = offset_byte;
-    sig[63] = offset_byte;
+    let timestamp = 1_700_000_000_000 + i64::try_from(ts_offset).unwrap();
+    let host = casper::rust::util::construct_deploy::source_deploy(
+        term.to_owned(),
+        timestamp,
+        Some(100_000),
+        Some(1),
+        None,
+        Some(0),
+        Some("root".to_owned()),
+    )
+    .expect("fixture deploy should sign");
     SignedDeploy {
         deploy: Deploy {
-            term: term.as_bytes().to_vec(),
-            timestamp: 1_700_000_000_000 + ts_offset,
-            phlo_price: 1,
-            phlo_limit: 100_000,
-            valid_after_block_number: 0,
-            shard_id: "root".to_string(),
+            term: host.data.term.as_bytes().to_vec(),
+            timestamp: u64::try_from(host.data.time_stamp).unwrap(),
+            phlo_price: u64::try_from(host.data.phlo_price).unwrap(),
+            phlo_limit: u64::try_from(host.data.phlo_limit).unwrap(),
+            valid_after_block_number: u64::try_from(host.data.valid_after_block_number).unwrap(),
+            shard_id: host.data.shard_id,
+            expiration_timestamp: host
+                .data
+                .expiration_timestamp
+                .map(u64::try_from)
+                .transpose()
+                .unwrap(),
         },
-        deployer: DEFAULT_PUB.bytes.to_vec(),
-        signature: sig,
+        deployer: host.pk.bytes.to_vec(),
+        signature: host.sig.to_vec(),
+        signature_algorithm: DeploySignatureAlgorithm::Secp256k1,
     }
 }
 
@@ -189,6 +217,7 @@ async fn execute_block_changes_state_hash() {
     let Setup {
         mut rt,
         genesis_hash,
+        ..
     } = setup().await;
     let mut adapter = F1r3RspaceRuntime::new(&mut rt);
 
@@ -213,6 +242,7 @@ async fn deploy_appears_in_processed_list() {
     let Setup {
         mut rt,
         genesis_hash,
+        ..
     } = setup().await;
     let mut adapter = F1r3RspaceRuntime::new(&mut rt);
 
@@ -244,6 +274,7 @@ async fn failed_deploy_surfaces_as_is_failed() {
     let Setup {
         mut rt,
         genesis_hash,
+        ..
     } = setup().await;
     let mut adapter = F1r3RspaceRuntime::new(&mut rt);
 
@@ -269,6 +300,7 @@ async fn close_block_system_deploy_executes() {
     let Setup {
         mut rt,
         genesis_hash,
+        genesis_bonds,
     } = setup().await;
     let mut adapter = F1r3RspaceRuntime::new(&mut rt);
 
@@ -293,6 +325,60 @@ async fn close_block_system_deploy_executes() {
         "expected a succeeded CloseBlock in system_deploys; got: {:?}",
         result.system_deploys
     );
+    assert_eq!(
+        result.new_bonds, genesis_bonds,
+        "a close-block transition must report the unchanged logical post-state bonds"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "runs genesis bootstrapping (~10–30 s); run with: just e2e-rholang"]
+async fn slash_updates_post_state_bonds() {
+    let Setup {
+        mut rt,
+        genesis_hash,
+        genesis_bonds,
+    } = setup().await;
+    let target = genesis_bonds
+        .iter()
+        .find(|bond| bond.stake > 0)
+        .expect("genesis must contain a bonded validator")
+        .clone();
+    let mut adapter = F1r3RspaceRuntime::new(&mut rt);
+
+    let req = ExecutionRequest {
+        pre_state_hash: genesis_hash,
+        deploys: vec![],
+        system_deploys: vec![SystemDeployRequest::Slash {
+            validator: target.validator.clone(),
+            invalid_block_hash: vec![0x5a; 32],
+        }],
+        bonds: genesis_bonds,
+        block_number: 1,
+    };
+    let result = tokio::task::block_in_place(|| adapter.execute_block(req))
+        .expect("a valid slash must execute and return post-state bonds");
+
+    assert!(
+        result.system_deploys.iter().any(|deploy| matches!(
+            deploy,
+            ProcessedSystemDeploy::Slash {
+                validator,
+                succeeded: true
+            } if validator == &target.validator
+        )),
+        "expected a successful slash for the target validator: {:?}",
+        result.system_deploys
+    );
+    assert!(
+        result
+            .new_bonds
+            .iter()
+            .find(|bond| bond.validator == target.validator)
+            .is_none_or(|bond| bond.stake == 0),
+        "slashed validator must be absent or have zero effective stake: {:?}",
+        result.new_bonds
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -301,6 +387,7 @@ async fn multiple_deploys_all_appear_in_result() {
     let Setup {
         mut rt,
         genesis_hash,
+        ..
     } = setup().await;
     let mut adapter = F1r3RspaceRuntime::new(&mut rt);
 

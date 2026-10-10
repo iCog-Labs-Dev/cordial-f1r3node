@@ -148,6 +148,26 @@ fn xsort_respects_predecessor_order() {
 }
 
 #[test]
+fn xsort_resolves_unique_unsigned_predecessor_references() {
+    let mut parent = block(9, 1, HashSet::new());
+    parent.identity.signature = vec![0xaa];
+    let mut unsigned_parent = parent.identity.clone();
+    unsigned_parent.signature.clear();
+    let mut child = block(1, 2, HashSet::from([unsigned_parent]));
+    child.identity.signature = vec![0xbb];
+
+    let ordered = xsort(&HashSet::from([child.clone(), parent.clone()])).unwrap();
+
+    assert_eq!(
+        ordered,
+        vec![
+            parent.identity.consensus_identity(),
+            child.identity.consensus_identity(),
+        ]
+    );
+}
+
+#[test]
 fn xsort_breaks_ties_by_block_identity() {
     let earlier = block(1, 1, HashSet::new());
     let later = block(1, 2, HashSet::new());

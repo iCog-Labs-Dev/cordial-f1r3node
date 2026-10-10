@@ -1,9 +1,10 @@
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::execution::{
-    BlockState, Bond, CordialBlockPayload, Deploy, ProcessedDeploy, ProcessedSystemDeploy,
-    RejectReason, RejectedDeploy, SignedDeploy,
+    BlockState, Bond, CordialBlockPayload, Deploy, DeploySignatureAlgorithm, ProcessedDeploy,
+    ProcessedSystemDeploy, RejectReason, RejectedDeploy, SignedDeploy,
 };
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
+use serde::Serialize;
 use std::collections::HashSet;
 
 // Mock Verifier
@@ -47,10 +48,32 @@ fn sample_deploy() -> SignedDeploy {
             phlo_limit: 10000,
             valid_after_block_number: 0,
             shard_id: "root".to_string(),
+            expiration_timestamp: None,
         },
         deployer: vec![0x01; 32],
         signature: vec![0xab; 64],
+        signature_algorithm: DeploySignatureAlgorithm::Secp256k1,
     }
+}
+
+#[derive(Serialize)]
+struct LegacySignedDeploy {
+    deploy: Deploy,
+    deployer: Vec<u8>,
+    signature: Vec<u8>,
+}
+
+#[test]
+fn legacy_signed_deploy_without_algorithm_is_rejected() {
+    let current = sample_deploy();
+    let legacy = LegacySignedDeploy {
+        deploy: current.deploy,
+        deployer: current.deployer,
+        signature: current.signature,
+    };
+    let bytes = bincode::serialize(&legacy).unwrap();
+
+    assert!(bincode::deserialize::<SignedDeploy>(&bytes).is_err());
 }
 
 // ── Serialization roundtrip ──

@@ -13,7 +13,7 @@ use cordial_f1r3node_adapter::block_translation::{block_to_message, message_to_b
 use cordial_miners_core::Block;
 use cordial_miners_core::crypto::hash_content;
 use cordial_miners_core::execution::{
-    BlockState, Bond as CmBond, CordialBlockPayload, Deploy as CmDeploy,
+    BlockState, Bond as CmBond, CordialBlockPayload, Deploy as CmDeploy, DeploySignatureAlgorithm,
     ProcessedDeploy as CmProcessed, ProcessedSystemDeploy as CmSystem,
     SignedDeploy as CmSignedDeploy,
 };
@@ -40,9 +40,11 @@ fn build_test_block(num_deploys: usize) -> Block {
                     phlo_limit: 10_000,
                     valid_after_block_number: 0,
                     shard_id: "root".to_string(),
+                    expiration_timestamp: None,
                 },
                 deployer: vec![0xAA; 32],
                 signature: vec![0xBB; 64],
+                signature_algorithm: DeploySignatureAlgorithm::Ed25519,
             },
             cost: 100,
             is_failed: false,

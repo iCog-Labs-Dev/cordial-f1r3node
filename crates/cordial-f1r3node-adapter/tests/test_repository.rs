@@ -10,7 +10,10 @@
 //!   ✅ AC-2: recovery replays blocks in correct topological order
 //!   ✅ AC-3: corrupt entries are skipped — no panic
 
-use cordial_f1r3space_adapter::{BlocklaceRepository, RSpaceBlocklaceRepository};
+use cordial_f1r3space_adapter::lmdb_store::{
+    BLOCK_HASH_FORMAT_VERSION, BLOCK_HASH_FORMAT_VERSION_KEY,
+};
+use cordial_f1r3space_adapter::{BlocklaceRepository, RSpaceBlocklaceRepository, RepoError};
 use cordial_miners_core::block::Block;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
@@ -230,6 +233,43 @@ fn recovery_replays_blocks_in_topological_order() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
+fn unversioned_nonempty_store_is_rejected_with_resync_error() {
+    use heed::EnvOpenOptions;
+    use heed::types::Bytes;
+
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("blocklace");
+    std::fs::create_dir_all(&db_path).unwrap();
+
+    {
+        let env = unsafe {
+            EnvOpenOptions::new()
+                .map_size(MAP_SIZE)
+                .max_dbs(10)
+                .max_readers(128)
+                .open(&db_path)
+                .unwrap()
+        };
+        let mut wtxn = env.write_txn().unwrap();
+        let db: heed::Database<Bytes, Bytes> = env
+            .create_database(&mut wtxn, Some("cordial-blocks"))
+            .unwrap();
+        let block = make_block(0xAB, vec![make_id(0xAA)]);
+        let key = bincode::serialize(&block.identity).unwrap();
+        let value = bincode::serialize(&block).unwrap();
+        db.put(&mut wtxn, &key, &value).unwrap();
+        wtxn.commit().unwrap();
+    }
+
+    let error = match RSpaceBlocklaceRepository::open(dir.path(), MAP_SIZE) {
+        Ok(_) => panic!("an unversioned non-empty store must not be opened"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, RepoError::IncompatibleStorage(_)));
+    assert!(error.to_string().contains("resynchronize"));
+}
+
+#[test]
 fn corrupt_value_is_skipped_not_panicked() {
     use heed::EnvOpenOptions;
     use heed::types::Bytes;
@@ -254,6 +294,12 @@ fn corrupt_value_is_skipped_not_panicked() {
         let mut wtxn = env.write_txn().unwrap();
         let db: heed::Database<Bytes, Bytes> = env
             .create_database(&mut wtxn, Some("cordial-blocks"))
+            .unwrap();
+        let meta: heed::Database<Bytes, Bytes> = env
+            .create_database(&mut wtxn, Some("cordial-meta"))
+            .unwrap();
+        let version = BLOCK_HASH_FORMAT_VERSION.to_be_bytes();
+        meta.put(&mut wtxn, BLOCK_HASH_FORMAT_VERSION_KEY, version.as_slice())
             .unwrap();
 
         // Valid block
@@ -338,6 +384,12 @@ fn get_block_with_corrupt_value_returns_error() {
         let mut wtxn = env.write_txn().unwrap();
         let db: heed::Database<Bytes, Bytes> = env
             .create_database(&mut wtxn, Some("cordial-blocks"))
+            .unwrap();
+        let meta: heed::Database<Bytes, Bytes> = env
+            .create_database(&mut wtxn, Some("cordial-meta"))
+            .unwrap();
+        let version = BLOCK_HASH_FORMAT_VERSION.to_be_bytes();
+        meta.put(&mut wtxn, BLOCK_HASH_FORMAT_VERSION_KEY, version.as_slice())
             .unwrap();
 
         // Serialize the key exactly as put_block does — so get_block finds it

@@ -6,7 +6,8 @@ use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::crypto::hash_content;
 use cordial_miners_core::execution::{
-    BlockState, Bond as CmBond, CordialBlockPayload, Deploy, ProcessedDeploy, SignedDeploy,
+    BlockState, Bond as CmBond, CordialBlockPayload, Deploy, DeploySignatureAlgorithm,
+    ProcessedDeploy, SignedDeploy,
 };
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
@@ -248,9 +249,12 @@ fn latest_messages_map_excludes_equivocators() {
     let mut bl = Blocklace::new();
     let v1 = node(1);
 
-    // v1 creates TWO incomparable genesis blocks — equivocation
+    // v1 creates TWO incomparable genesis blocks with different content —
+    // equivocation, rather than two signatures for the same block content.
     let g1 = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 1);
-    let g2 = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 2);
+    let mut alternate_payload = simple_payload(0, vec![]);
+    alternate_payload.state.pre_state_hash = vec![0xff; 32];
+    let g2 = make_block(v1.clone(), alternate_payload, HashSet::new(), 2);
     bl.insert(g1, &MockVerifier).unwrap();
     bl.insert(g2, &MockVerifier).unwrap();
 
@@ -477,9 +481,12 @@ fn equivocator_excluded_from_active_validators() {
     let mut bl = Blocklace::new();
     let v1 = node(1);
 
-    // v1 equivocates
+    // v1 creates two incomparable blocks with different content. Merely changing
+    // the signature would be an identity collision, not a second block.
     let g1 = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 1);
-    let g2 = make_block(v1.clone(), simple_payload(0, vec![]), HashSet::new(), 2);
+    let mut alternate_payload = simple_payload(0, vec![]);
+    alternate_payload.state.pre_state_hash = vec![0xff; 32];
+    let g2 = make_block(v1.clone(), alternate_payload, HashSet::new(), 2);
     bl.insert(g1, &MockVerifier).unwrap();
     bl.insert(g2, &MockVerifier).unwrap();
 
@@ -509,9 +516,11 @@ fn deploys_in_scope_collects_from_tip_ancestry() {
             phlo_limit: 100,
             valid_after_block_number: 0,
             shard_id: "root".to_string(),
+            expiration_timestamp: None,
         },
         deployer: vec![0x01; 32],
         signature: deploy_sig.clone(),
+        signature_algorithm: DeploySignatureAlgorithm::Secp256k1,
     };
     let processed = ProcessedDeploy {
         deploy: signed,

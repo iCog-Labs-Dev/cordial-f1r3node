@@ -81,6 +81,35 @@ fn blake_hash_is_independent_of_predecessor_insertion_order() {
 }
 
 #[test]
+fn content_hash_is_independent_of_predecessor_signature_proof() {
+    let first = BlockIdentity {
+        content_hash: [0x01; 32],
+        creator: NodeId(vec![1]),
+        signature: vec![0xaa],
+    };
+    let mut alternate = first.clone();
+    alternate.signature = vec![0xbb];
+
+    let first_content = BlockContent {
+        payload: vec![10],
+        predecessors: HashSet::from([first]),
+    };
+    let alternate_content = BlockContent {
+        payload: vec![10],
+        predecessors: HashSet::from([alternate]),
+    };
+
+    assert_eq!(
+        hash_content(&first_content),
+        hash_content(&alternate_content)
+    );
+    assert_eq!(
+        hash_content_ext(&first_content, &Sha256Hasher),
+        hash_content_ext(&alternate_content, &Sha256Hasher)
+    );
+}
+
+#[test]
 fn blake_hash_output_is_32_bytes() {
     let content = BlockContent {
         payload: vec![0xff; 100],

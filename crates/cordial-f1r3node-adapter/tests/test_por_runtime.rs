@@ -362,7 +362,7 @@ fn startup_computes_finality_after_restoring_durable_weights() {
             .ordered_output_reader()
             .latest()
             .and_then(|output| output.anchor.clone()),
-        Some(leader)
+        Some(leader.consensus_identity())
     );
 }
 

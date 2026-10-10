@@ -169,10 +169,11 @@ fn build_block_candidate_returns_payload_and_selected_predecessors() {
         .expect("sufficient local view should build a candidate");
 
     assert_eq!(candidate.payload, payload);
-    assert_eq!(
-        candidate.predecessors,
-        select_predecessors(&blocklace, &bonds)
-    );
+    let expected: HashSet<_> = select_predecessors(&blocklace, &bonds)
+        .into_iter()
+        .map(|identity| identity.consensus_identity())
+        .collect();
+    assert_eq!(candidate.predecessors, expected);
 }
 
 #[test]
@@ -191,7 +192,11 @@ fn build_block_candidate_uses_next_block_predecessors() {
     let candidate = build_block_candidate(&blocklace, &bonds, vec![3, 1, 4])
         .expect("healthy local view should build a candidate");
 
-    assert_eq!(candidate.predecessors, predecessors);
+    let expected: HashSet<_> = predecessors
+        .into_iter()
+        .map(|identity| identity.consensus_identity())
+        .collect();
+    assert_eq!(candidate.predecessors, expected);
 }
 
 #[test]
@@ -210,7 +215,7 @@ fn build_block_candidate_extends_single_chain_with_latest_tip() {
 
     assert_eq!(
         candidate.predecessors,
-        HashSet::from([block2.identity.clone()])
+        HashSet::from([block2.identity.consensus_identity()])
     );
 }
 
@@ -239,11 +244,31 @@ fn build_block_candidate_includes_missing_equivocation_branches() {
     let candidate = build_block_candidate(&blocklace, &bonds, vec![9, 9])
         .expect("honest tip should allow a candidate");
 
-    assert!(candidate.predecessors.contains(&honest_tip.identity));
-    assert!(candidate.predecessors.contains(&tip3.identity));
-    assert!(candidate.predecessors.contains(&tip4.identity));
-    assert!(candidate.predecessors.contains(&e2.identity));
-    assert!(!candidate.predecessors.contains(&e1.identity));
+    assert!(
+        candidate
+            .predecessors
+            .contains(&honest_tip.identity.consensus_identity())
+    );
+    assert!(
+        candidate
+            .predecessors
+            .contains(&tip3.identity.consensus_identity())
+    );
+    assert!(
+        candidate
+            .predecessors
+            .contains(&tip4.identity.consensus_identity())
+    );
+    assert!(
+        candidate
+            .predecessors
+            .contains(&e2.identity.consensus_identity())
+    );
+    assert!(
+        !candidate
+            .predecessors
+            .contains(&e1.identity.consensus_identity())
+    );
 }
 
 #[test]
@@ -1776,16 +1801,32 @@ fn build_block_candidate_with_mode_strict_excludes_equivocator_branches() {
 
     assert_eq!(candidate.payload, payload);
     assert!(
-        !candidate.predecessors.contains(&e2.identity),
+        !candidate
+            .predecessors
+            .contains(&e2.identity.consensus_identity()),
         "strict candidate must not reference equivocator branch e2"
     );
     assert!(
-        !candidate.predecessors.contains(&e1.identity),
+        !candidate
+            .predecessors
+            .contains(&e1.identity.consensus_identity()),
         "strict candidate must not reference equivocator branch e1"
     );
-    assert!(candidate.predecessors.contains(&tip_v2.identity));
-    assert!(candidate.predecessors.contains(&tip_v3.identity));
-    assert!(candidate.predecessors.contains(&tip_v4.identity));
+    assert!(
+        candidate
+            .predecessors
+            .contains(&tip_v2.identity.consensus_identity())
+    );
+    assert!(
+        candidate
+            .predecessors
+            .contains(&tip_v3.identity.consensus_identity())
+    );
+    assert!(
+        candidate
+            .predecessors
+            .contains(&tip_v4.identity.consensus_identity())
+    );
 }
 
 /// **S4** — Tip-map equivocator exclusion is applied before, and independently of,

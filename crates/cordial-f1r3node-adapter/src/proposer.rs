@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
@@ -24,6 +25,7 @@ pub enum ProposeError {
     Broadcast(String),
     PayloadDecode(String),
     SlashFormat(String),
+    Clock(String),
 }
 
 impl std::fmt::Display for ProposeError {
@@ -35,6 +37,7 @@ impl std::fmt::Display for ProposeError {
             Self::Broadcast(msg) => write!(f, "broadcast failed: {msg}"),
             Self::PayloadDecode(msg) => write!(f, "payload decode failed: {msg}"),
             Self::SlashFormat(msg) => write!(f, "slash deploy formatting failed: {msg}"),
+            Self::Clock(msg) => write!(f, "failed to read proposal time: {msg}"),
         }
     }
 }
@@ -325,6 +328,14 @@ fn bonds_map_to_vec(bonds: &HashMap<NodeId, u64>) -> Vec<Bond> {
     out
 }
 
+fn active_bonds_to_map(bonds: &[Bond]) -> HashMap<NodeId, u64> {
+    bonds
+        .iter()
+        .filter(|bond| bond.stake > 0)
+        .map(|bond| (bond.validator.clone(), bond.stake))
+        .collect()
+}
+
 fn compare_identity(a: &BlockIdentity, b: &BlockIdentity) -> std::cmp::Ordering {
     a.content_hash
         .cmp(&b.content_hash)
@@ -453,6 +464,11 @@ impl<TS, EE, BS, BC, ES, SF> CordialProposer<TS, EE, BS, BC, ES, SF> {
         self.include_close_block = include;
         self
     }
+
+    /// Bond table used for tip selection by the next proposal.
+    pub fn bonds(&self) -> &HashMap<NodeId, u64> {
+        &self.bonds
+    }
 }
 
 impl<TS, EE, BS, BC, ES, SF> CordialProposer<TS, EE, BS, BC, ES, SF>
@@ -468,6 +484,28 @@ where
         &mut self,
         blocklace: &Blocklace,
         deploy_pool: &DeployPool,
+    ) -> Result<Block, ProposeError> {
+        let current_time_millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| ProposeError::Clock(err.to_string()))?
+            .as_millis()
+            .try_into()
+            .map_err(|_| {
+                ProposeError::Clock("Unix time does not fit in u64 milliseconds".into())
+            })?;
+
+        self.propose_at_time(blocklace, deploy_pool, current_time_millis)
+    }
+
+    /// Propose using an explicit Unix timestamp in milliseconds.
+    ///
+    /// Production callers should use [`Self::propose`]. This entry point keeps
+    /// expiration filtering deterministic in tests and replayable runtimes.
+    pub fn propose_at_time(
+        &mut self,
+        blocklace: &Blocklace,
+        deploy_pool: &DeployPool,
+        current_time_millis: u64,
     ) -> Result<Block, ProposeError> {
         let predecessors = self.tip_selector.select_tips(blocklace, &self.bonds);
 
@@ -494,7 +532,8 @@ where
             self.deploy_pool_config.deploy_lifespan,
         );
 
-        let selected = deploy_pool.select_for_block(block_number, 0, &deploys_in_scope);
+        let selected =
+            deploy_pool.select_for_block(block_number, current_time_millis, &deploys_in_scope);
 
         let request = ExecutionRequest {
             pre_state_hash: pre_state_hash.clone(),
@@ -509,6 +548,7 @@ where
             .execute(request)
             .map_err(ProposeError::Execution)?;
 
+        let next_bonds = active_bonds_to_map(&result.new_bonds);
         let payload = CordialBlockPayload {
             state: BlockState {
                 pre_state_hash,
@@ -521,9 +561,17 @@ where
             system_deploys: result.system_deploys,
         };
 
+        // Predecessor signatures authenticate the referenced blocks, but are
+        // not part of their stable consensus names. Embedding the local proof
+        // would make this child unresolvable on a peer that retained a
+        // different valid proof for the same (content_hash, creator) pair.
+        let content_predecessors = predecessors
+            .iter()
+            .map(BlockIdentity::consensus_identity)
+            .collect();
         let content = BlockContent {
             payload: payload.to_bytes(),
-            predecessors: predecessors.clone(),
+            predecessors: content_predecessors,
         };
 
         let identity = self
@@ -536,6 +584,11 @@ where
         self.broadcaster
             .broadcast(&block)
             .map_err(ProposeError::Broadcast)?;
+
+        // Activate the post-state validator set only after the proposal has
+        // completed successfully. Failed execution, signing, or broadcast
+        // must leave the next proposal's consensus view unchanged.
+        self.bonds = next_bonds;
 
         Ok(block)
     }

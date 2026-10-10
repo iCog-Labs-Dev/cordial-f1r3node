@@ -234,6 +234,33 @@ fn extending_own_chain_passes_chain_axiom() {
     assert!(result.is_valid());
 }
 
+#[test]
+fn extending_signed_parent_through_unsigned_reference_passes_chain_axiom() {
+    let mut bl = Blocklace::new();
+    let v1 = node(1);
+    let mut parent = genesis_unsigned(&v1, 1);
+    parent.identity.signature = vec![0xaa];
+    insert(&mut bl, &parent);
+
+    let mut unsigned_parent = parent.identity.clone();
+    unsigned_parent.signature.clear();
+    let child = Block {
+        identity: make_id(&v1, 2),
+        content: BlockContent {
+            payload: vec![2],
+            predecessors: HashSet::from([unsigned_parent]),
+        },
+    };
+
+    let result = validate_block(&child, &bl, &bonds(&[(1, 100)]), &no_crypto_config());
+
+    assert!(
+        result.is_valid(),
+        "validation errors: {:?}",
+        result.errors()
+    );
+}
+
 /// Regression: a block that arrives with a multi-round gap in its history must
 /// report only the missing predecessors, never an equivocation.
 ///

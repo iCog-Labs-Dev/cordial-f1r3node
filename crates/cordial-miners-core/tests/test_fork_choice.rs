@@ -100,7 +100,8 @@ fn fork_choice_single_validator_chain() {
     let v1 = node(1);
     let g = genesis(&v1, 1);
     let b2 = child(&v1, 2, &[&g]);
-    let b3 = child(&v1, 3, &[&b2]);
+    let mut b3 = child(&v1, 3, &[&b2]);
+    b3.content.predecessors = HashSet::from([b2.identity.consensus_identity()]);
     insert(&mut bl, &g);
     insert(&mut bl, &b2);
     insert(&mut bl, &b3);
@@ -141,6 +142,11 @@ fn fork_choice_two_validators_agreeing() {
     assert_eq!(fc.lca, b2.identity);
     assert!(fc.tips.contains(&b3.identity));
     assert!(fc.tips.contains(&b2.identity));
+    assert_eq!(
+        fc.scores.get(&b2.identity),
+        Some(&200),
+        "descendant support through an unsigned edge must accrue to the stored identity"
+    );
 }
 
 #[test]
@@ -313,6 +319,27 @@ fn cordial_block_references_all_tips() {
     // After inserting cordial_block, v1's tip is cordial_block, v2's tip is g2
     // cordial_block should reference g2 (which is v2's tip)
     assert!(is_cordial(&cordial_block, &tips));
+}
+
+#[test]
+fn cordial_block_accepts_unsigned_references_to_signed_tips() {
+    let v1 = node(1);
+    let v2 = node(2);
+    let g1 = genesis(&v1, 1);
+    let g2 = genesis(&v2, 2);
+    let block = Block {
+        identity: make_id(&v1, 3),
+        content: BlockContent {
+            payload: vec![3],
+            predecessors: HashSet::from([
+                g1.identity.consensus_identity(),
+                g2.identity.consensus_identity(),
+            ]),
+        },
+    };
+    let tips = HashMap::from([(v1, g1.identity.clone()), (v2, g2.identity.clone())]);
+
+    assert!(is_cordial(&block, &tips));
 }
 
 #[test]

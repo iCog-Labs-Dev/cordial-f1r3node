@@ -522,7 +522,10 @@ pub fn build_block_candidate_with_mode(
     payload: Vec<u8>,
     mode: PredecessorSelectionMode,
 ) -> Result<BlockContent, ProposalError> {
-    let predecessors = next_block_predecessors_with_mode(blocklace, bonds, mode)?;
+    let predecessors = next_block_predecessors_with_mode(blocklace, bonds, mode)?
+        .into_iter()
+        .map(|identity| identity.consensus_identity())
+        .collect();
 
     Ok(BlockContent {
         payload,

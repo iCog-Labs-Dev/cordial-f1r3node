@@ -238,7 +238,12 @@ pub fn missing_known_tips(
     let mut missing: Vec<BlockIdentity> = known_tips
         .values()
         .filter(|tip_id| {
-            block.identity != **tip_id && !block.content.predecessors.contains(*tip_id)
+            !block.identity.same_consensus_identity(tip_id)
+                && !block
+                    .content
+                    .predecessors
+                    .iter()
+                    .any(|predecessor| predecessor.same_consensus_identity(tip_id))
         })
         .cloned()
         .collect();

@@ -30,6 +30,17 @@ pub(crate) const META_DB: &str = "cordial-meta";
 /// Fixed key under which the finalized cursor is stored in `META_DB`.
 pub(crate) const CURSOR_KEY: &[u8] = b"finalized_cursor";
 
+/// Format marker for hashes stored in `cordial-blocks`.
+///
+/// Version 1/unversioned data included predecessor signature bytes in a
+/// descendant's content hash. Version 2 uses signature-independent
+/// predecessor identities. The formats cannot be mixed because previously
+/// persisted signatures authenticate the version-1 hash.
+pub const BLOCK_HASH_FORMAT_VERSION: u32 = 2;
+
+/// Metadata key containing [`BLOCK_HASH_FORMAT_VERSION`] as big-endian bytes.
+pub const BLOCK_HASH_FORMAT_VERSION_KEY: &[u8] = b"block_hash_format_version";
+
 // ── Shared struct ─────────────────────────────────────────────────────────
 //
 // Defined here so all three submodules can use it via `super::`.

@@ -106,6 +106,12 @@ pub struct ExecutionResult {
 pub enum RuntimeError {
     /// The requested pre-state hash is not known to the runtime.
     UnknownPreState,
+    /// The deploy names a signature algorithm this runtime cannot verify.
+    UnsupportedDeploySignatureAlgorithm(String),
+    /// The deploy's public key or signature does not verify against its data.
+    InvalidDeploySignature,
+    /// The deploy cannot be represented faithfully at the execution boundary.
+    InvalidDeploy(String),
     /// Execution crashed for a reason unrelated to any specific deploy.
     InternalError(String),
 }

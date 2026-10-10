@@ -15,6 +15,9 @@ pub enum RepoError {
 
     #[error("Mutex poisoned: {0}")]
     Lock(String),
+
+    #[error("Incompatible blocklace storage: {0}")]
+    IncompatibleStorage(String),
 }
 
 impl<T> From<std::sync::PoisonError<T>> for RepoError {

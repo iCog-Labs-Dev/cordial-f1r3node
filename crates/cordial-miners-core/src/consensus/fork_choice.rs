@@ -186,7 +186,10 @@ fn walk_to_lca(
     let mut visited = HashSet::new();
     let mut queue = vec![start.clone()];
 
-    while let Some(current) = queue.pop() {
+    while let Some(reference) = queue.pop() {
+        let Some(current) = blocklace.resolve_identity(&reference).cloned() else {
+            continue;
+        };
         if !visited.insert(current.clone()) {
             continue;
         }
@@ -201,8 +204,11 @@ fn walk_to_lca(
         // Walk predecessors
         if let Some(content) = blocklace.content(&current) {
             for pred_id in &content.predecessors {
-                if !visited.contains(pred_id) && blocklace.preceedes_or_equals(target, pred_id) {
-                    queue.push(pred_id.clone());
+                if let Some(resolved) = blocklace.resolve_identity(pred_id)
+                    && !visited.contains(resolved)
+                    && blocklace.preceedes_or_equals(target, resolved)
+                {
+                    queue.push(resolved.clone());
                 }
             }
         }
@@ -238,7 +244,12 @@ pub fn collect_validator_tips(
 /// From the paper: a block is "cordial" if it references all known
 /// validator tips at the time of creation.
 pub fn is_cordial(block: &Block, known_tips: &HashMap<NodeId, BlockIdentity>) -> bool {
-    known_tips
-        .values()
-        .all(|tip_id| block.content.predecessors.contains(tip_id) || block.identity == *tip_id)
+    known_tips.values().all(|tip_id| {
+        block.identity.same_consensus_identity(tip_id)
+            || block
+                .content
+                .predecessors
+                .iter()
+                .any(|predecessor| predecessor.same_consensus_identity(tip_id))
+    })
 }

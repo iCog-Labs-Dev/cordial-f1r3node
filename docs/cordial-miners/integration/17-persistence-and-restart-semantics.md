@@ -32,6 +32,21 @@ itself written to disk. This keeps the write path narrow (two tables, two
 methods) and avoids a second source of truth that could drift from the
 blocklace's own consensus rules.
 
+### Block-hash format compatibility
+
+`cordial-meta` stores `block_hash_format_version = 2`. Version 2 hashes a
+predecessor by its signature-independent `(content_hash, creator)` consensus
+identity. Earlier, unversioned stores included predecessor signature bytes in
+the descendant hash, so their non-genesis signatures authenticate a different
+hash and cannot be replayed safely under version 2.
+
+Opening a non-empty store without the version marker, or with an unsupported
+version, fails with `RepoError::IncompatibleStorage`. The operator must remove
+and resynchronize that adapter-level blocklace store. Recovery deliberately
+fails before replay instead of silently skipping legacy blocks and exposing a
+partial DAG. Empty stores are initialized with the current marker, and current
+versioned stores reopen normally.
+
 ---
 
 ## 2. The Restart Loop

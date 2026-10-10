@@ -6,16 +6,17 @@ use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{CordialEvidencePool, EvidencePool, select_predecessors};
 use cordial_miners_core::crypto::{CryptoVerifier, hash_content};
 use cordial_miners_core::execution::{
-    Bond, CordialBlockPayload, Deploy, DeployPool, DeployPoolConfig, ExecutionRequest,
-    ExecutionResult, MockRuntime, ProcessedSystemDeploy, RuntimeError, RuntimeManager,
-    SignedDeploy, SystemDeployRequest, compute_deploys_in_scope,
+    Bond, CordialBlockPayload, Deploy, DeployPool, DeployPoolConfig, DeploySignatureAlgorithm,
+    ExecutionRequest, ExecutionResult, MockRuntime, ProcessedSystemDeploy, RuntimeError,
+    RuntimeManager, SignedDeploy, SystemDeployRequest, compute_deploys_in_scope,
 };
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 
 use cordial_f1r3node_adapter::crypto_bridge::{F1r3flyCryptoAdapter, SigAlgorithm};
 use cordial_f1r3node_adapter::proposer::{
-    CordialProposer, DisseminationTipSelector, EvidencePoolSource, ExecutionEngine,
-    RecordingBroadcaster, RuntimeExecutionEngine, Secp256k1BlockSigner,
+    BlockBroadcaster, CordialProposer, DisseminationTipSelector, EvidencePoolSource,
+    ExecutionEngine, ProposeError, RecordingBroadcaster, RuntimeExecutionEngine,
+    Secp256k1BlockSigner, TipSelector,
 };
 use cordial_f1r3node_adapter::slashing::F1r3SlashDeployFormatter;
 
@@ -121,9 +122,11 @@ fn make_deploy(sig_byte: u8) -> SignedDeploy {
             phlo_limit: 10_000,
             valid_after_block_number: 0,
             shard_id: "root".to_string(),
+            expiration_timestamp: None,
         },
         deployer: vec![sig_byte; 32],
         signature: vec![sig_byte; 64],
+        signature_algorithm: DeploySignatureAlgorithm::Secp256k1,
     }
 }
 
@@ -185,6 +188,51 @@ impl ExecutionEngine for CapturingExecution {
     }
 }
 
+#[derive(Clone)]
+struct ReplacingBondsExecution {
+    new_bonds: Vec<Bond>,
+}
+
+impl ExecutionEngine for ReplacingBondsExecution {
+    fn execute(&mut self, request: ExecutionRequest) -> Result<ExecutionResult, RuntimeError> {
+        Ok(ExecutionResult {
+            post_state_hash: vec![request.block_number as u8; 32],
+            processed_deploys: vec![],
+            rejected_deploys: vec![],
+            system_deploys: vec![],
+            new_bonds: self.new_bonds.clone(),
+        })
+    }
+}
+
+#[derive(Clone)]
+struct RecordingTipSelector {
+    observed_bonds: Arc<Mutex<Vec<HashMap<NodeId, u64>>>>,
+}
+
+impl TipSelector for RecordingTipSelector {
+    fn select_tips(
+        &self,
+        blocklace: &Blocklace,
+        bonds: &HashMap<NodeId, u64>,
+    ) -> HashSet<BlockIdentity> {
+        self.observed_bonds
+            .lock()
+            .expect("tip-selector lock")
+            .push(bonds.clone());
+        select_predecessors(blocklace, bonds)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct FailingBroadcaster;
+
+impl BlockBroadcaster for FailingBroadcaster {
+    fn broadcast(&self, _block: &Block) -> Result<(), String> {
+        Err("offline".into())
+    }
+}
+
 #[test]
 fn proposer_selects_live_tips_from_blocklace() {
     let bond_map = bonds(&[(1, 100), (2, 100), (3, 100)]);
@@ -213,7 +261,10 @@ fn proposer_selects_live_tips_from_blocklace() {
         .propose(&blocklace, &DeployPool::new(DeployPoolConfig::default()))
         .expect("propose should succeed");
 
-    let expected_tips = select_predecessors(&blocklace, &bond_map);
+    let expected_tips: HashSet<_> = select_predecessors(&blocklace, &bond_map)
+        .into_iter()
+        .map(|identity| identity.consensus_identity())
+        .collect();
     assert_eq!(block.content.predecessors, expected_tips);
     assert_eq!(expected_tips.len(), 3, "one tip per honest validator");
 }
@@ -277,6 +328,127 @@ fn proposer_packages_post_state_hash_from_execution() {
 }
 
 #[test]
+fn proposer_uses_post_state_bonds_for_the_next_proposal() {
+    let sk = test_signing_key(44);
+    let creator = NodeId(test_public_key(&sk));
+    let initial_bonds = HashMap::from([(node(1), 100), (creator.clone(), 100)]);
+    let post_state_bonds = vec![
+        Bond {
+            validator: node(1),
+            stake: 0,
+        },
+        Bond {
+            validator: creator.clone(),
+            stake: 75,
+        },
+    ];
+    let observed_bonds = Arc::new(Mutex::new(Vec::new()));
+    let mut proposer = CordialProposer::new(
+        RecordingTipSelector {
+            observed_bonds: Arc::clone(&observed_bonds),
+        },
+        ReplacingBondsExecution {
+            new_bonds: post_state_bonds,
+        },
+        Secp256k1BlockSigner::new(sk.clone()),
+        RecordingBroadcaster::new(),
+        creator.clone(),
+        initial_bonds.clone(),
+        DeployPoolConfig::default(),
+    )
+    .with_close_block(false);
+
+    let mut blocklace = Blocklace::new();
+    let first = proposer
+        .propose(&blocklace, &DeployPool::new(DeployPoolConfig::default()))
+        .expect("first proposal");
+    insert(&mut blocklace, first);
+
+    let expected_active = HashMap::from([(creator, 75)]);
+    assert_eq!(proposer.bonds(), &expected_active);
+
+    proposer
+        .propose(&blocklace, &DeployPool::new(DeployPoolConfig::default()))
+        .expect("second proposal");
+
+    assert_eq!(
+        *observed_bonds.lock().expect("tip-selector lock"),
+        vec![initial_bonds, expected_active]
+    );
+}
+
+#[test]
+fn failed_broadcast_does_not_activate_post_state_bonds() {
+    let initial_bonds = bonds(&[(1, 100)]);
+    let sk = test_signing_key(47);
+    let mut proposer = CordialProposer::new(
+        DisseminationTipSelector,
+        ReplacingBondsExecution {
+            new_bonds: vec![Bond {
+                validator: node(2),
+                stake: 75,
+            }],
+        },
+        Secp256k1BlockSigner::new(sk.clone()),
+        FailingBroadcaster,
+        NodeId(test_public_key(&sk)),
+        initial_bonds.clone(),
+        DeployPoolConfig::default(),
+    )
+    .with_close_block(false);
+
+    let error = proposer
+        .propose(
+            &Blocklace::new(),
+            &DeployPool::new(DeployPoolConfig::default()),
+        )
+        .expect_err("broadcast should fail");
+
+    assert!(matches!(error, ProposeError::Broadcast(_)));
+    assert_eq!(proposer.bonds(), &initial_bonds);
+}
+
+#[test]
+fn proposer_excludes_deploys_expired_at_proposal_time() {
+    let mut deploy_pool = DeployPool::new(DeployPoolConfig::default());
+    let mut expired = make_deploy(7);
+    expired.deploy.expiration_timestamp = Some(1_500);
+    deploy_pool.add(expired).expect("add expired deploy");
+
+    let mut live = make_deploy(8);
+    live.deploy.expiration_timestamp = Some(2_500);
+    let live_signature = live.signature.clone();
+    deploy_pool.add(live).expect("add live deploy");
+
+    let captured = Arc::new(Mutex::new(None));
+    let sk = test_signing_key(12);
+    let mut proposer = CordialProposer::new(
+        DisseminationTipSelector,
+        CapturingExecution {
+            captured: Arc::clone(&captured),
+        },
+        Secp256k1BlockSigner::new(sk.clone()),
+        RecordingBroadcaster::new(),
+        NodeId(test_public_key(&sk)),
+        bonds(&[(1, 100)]),
+        DeployPoolConfig::default(),
+    )
+    .with_close_block(false);
+
+    proposer
+        .propose_at_time(&Blocklace::new(), &deploy_pool, 2_000)
+        .expect("proposal should execute only the live deploy");
+
+    let request = captured
+        .lock()
+        .expect("capture lock")
+        .clone()
+        .expect("request captured");
+    assert_eq!(request.deploys.len(), 1);
+    assert_eq!(request.deploys[0].signature, live_signature);
+}
+
+#[test]
 fn proposed_block_passes_f1r3fly_crypto_verifier() {
     let bond_map = bonds(&[(1, 100), (2, 100)]);
 
@@ -322,6 +494,45 @@ fn proposed_block_passes_f1r3fly_crypto_verifier() {
     blocklace
         .insert(block.clone(), &adapter)
         .expect("blocklace must accept verified block");
+}
+
+#[test]
+fn proposed_child_resolves_on_peers_with_different_parent_signature_proofs() {
+    let parent = make_block(node(1), simple_payload(0, 0x21), HashSet::new());
+    let mut alternate_parent = parent.clone();
+    alternate_parent.identity.signature = vec![0xCD; 72];
+
+    let mut first_peer = Blocklace::new();
+    let mut second_peer = Blocklace::new();
+    insert(&mut first_peer, parent.clone());
+    insert(&mut second_peer, alternate_parent);
+
+    let sk = test_signing_key(43);
+    let mut proposer = build_proposer(
+        NodeId(test_public_key(&sk)),
+        bonds(&[(1, 100)]),
+        MockRuntime::permissive(),
+        Secp256k1BlockSigner::new(sk),
+        RecordingBroadcaster::new(),
+        false,
+    );
+
+    let child = proposer
+        .propose(&first_peer, &DeployPool::new(DeployPoolConfig::default()))
+        .expect("propose child");
+
+    assert_eq!(
+        child.content.predecessors,
+        HashSet::from([parent.identity.consensus_identity()])
+    );
+    first_peer
+        .insert(child.clone(), &MockVerifier)
+        .expect("proposer peer should admit its child");
+    second_peer
+        .insert(child, &MockVerifier)
+        .expect("peer with alternate parent proof should resolve and admit child");
+    assert!(first_peer.is_closed());
+    assert!(second_peer.is_closed());
 }
 
 #[test]

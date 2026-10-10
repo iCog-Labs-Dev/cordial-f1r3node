@@ -37,7 +37,8 @@ use serde::{Deserialize, Serialize};
 use cordial_miners_core::block::Block;
 use cordial_miners_core::crypto::hash_content;
 use cordial_miners_core::execution::{
-    Bond as CmBond, CordialBlockPayload, Deploy as CmDeploy, ProcessedDeploy as CmProcessedDeploy,
+    Bond as CmBond, CordialBlockPayload, Deploy as CmDeploy,
+    DeploySignatureAlgorithm as CmDeploySignatureAlgorithm, ProcessedDeploy as CmProcessedDeploy,
     ProcessedSystemDeploy as CmSystemDeploy, RejectReason as CmRejectReason,
     RejectedDeploy as CmRejectedDeploy, SignedDeploy as CmSignedDeploy,
 };
@@ -186,6 +187,10 @@ pub enum TranslationError {
 
     /// A predecessor id could not be reconstructed from the wire hash (length mismatch).
     InvalidPredecessorHash { expected_len: usize, got: usize },
+
+    /// A signed deploy term was not valid UTF-8 and cannot be represented by
+    /// f1r3node without changing the signed bytes.
+    InvalidDeployTermUtf8(String),
 }
 
 /// Convert the real f1r3node model into the adapter's translation model.
@@ -537,7 +542,8 @@ fn bond_from_f1r3node(b: &Bond) -> Result<CmBond, TranslationError> {
 
 fn deploy_to_f1r3node(d: CmDeploy) -> Result<DeployData, TranslationError> {
     Ok(DeployData {
-        term: String::from_utf8_lossy(&d.term).into_owned(),
+        term: String::from_utf8(d.term)
+            .map_err(|error| TranslationError::InvalidDeployTermUtf8(error.to_string()))?,
         time_stamp: u64_to_i64(d.timestamp, "deploy.timestamp")?,
         phlo_price: u64_to_i64(d.phlo_price, "deploy.phlo_price")?,
         phlo_limit: u64_to_i64(d.phlo_limit, "deploy.phlo_limit")?,
@@ -546,7 +552,10 @@ fn deploy_to_f1r3node(d: CmDeploy) -> Result<DeployData, TranslationError> {
             "deploy.valid_after_block_number",
         )?,
         shard_id: d.shard_id,
-        expiration_timestamp: None, // blocklace Deploy doesn't carry this yet
+        expiration_timestamp: d
+            .expiration_timestamp
+            .map(|value| u64_to_i64(value, "deploy.expiration_timestamp"))
+            .transpose()?,
     })
 }
 
@@ -561,6 +570,10 @@ fn deploy_from_f1r3node(d: &DeployData) -> Result<CmDeploy, TranslationError> {
             "deploy.valid_after_block_number",
         )?,
         shard_id: d.shard_id.clone(),
+        expiration_timestamp: d
+            .expiration_timestamp
+            .map(|value| i64_to_u64(value, "deploy.expiration_timestamp"))
+            .transpose()?,
     })
 }
 
@@ -569,7 +582,7 @@ fn signed_deploy_to_f1r3node(sd: CmSignedDeploy) -> Result<SignedDeployData, Tra
         data: deploy_to_f1r3node(sd.deploy)?,
         pk: sd.deployer,
         sig: sd.signature,
-        sig_algorithm: "ed25519".to_string(),
+        sig_algorithm: sd.signature_algorithm.as_name().to_owned(),
     })
 }
 
@@ -578,6 +591,7 @@ fn signed_deploy_from_f1r3node(sd: &SignedDeployData) -> Result<CmSignedDeploy, 
         deploy: deploy_from_f1r3node(&sd.data)?,
         deployer: sd.pk.clone(),
         signature: sd.sig.clone(),
+        signature_algorithm: CmDeploySignatureAlgorithm::from_name(&sd.sig_algorithm),
     })
 }
 
@@ -625,9 +639,11 @@ fn rejected_deploy_from_f1r3node(rd: &RejectedDeploy) -> CmRejectedDeploy {
                 phlo_limit: 0,
                 valid_after_block_number: 0,
                 shard_id: String::new(),
+                expiration_timestamp: None,
             },
             deployer: vec![],
             signature: rd.sig.clone(),
+            signature_algorithm: CmDeploySignatureAlgorithm::Unspecified,
         },
         reason: CmRejectReason::InvalidSignature,
     }

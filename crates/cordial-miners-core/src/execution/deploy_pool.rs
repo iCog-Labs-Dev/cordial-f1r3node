@@ -137,14 +137,15 @@ impl DeployPool {
                 d.deploy.valid_after_block_number,
                 current_block_number,
                 lifespan,
-            );
+            ) && d
+                .deploy
+                .expiration_timestamp
+                .is_none_or(|expiration| current_time_millis <= expiration);
             if !keep {
                 removed.push(sig.clone());
             }
             keep
         });
-        // Silence unused warning (time-based expiration not yet tracked in Deploy)
-        let _ = current_time_millis;
         removed
     }
 
@@ -176,11 +177,10 @@ impl DeployPool {
                     lifespan,
                 )
             })
-            .filter(|_d| {
-                // Not time-expired: would check d.deploy.expiration_timestamp here
-                // Our Deploy type doesn't carry that field yet; add later.
-                let _ = current_time_millis;
-                true
+            .filter(|d| {
+                d.deploy
+                    .expiration_timestamp
+                    .is_none_or(|expiration| current_time_millis <= expiration)
             })
             .filter(|d| {
                 // Not duplicated in ancestry

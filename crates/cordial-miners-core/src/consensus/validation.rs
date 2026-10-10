@@ -34,6 +34,10 @@ pub enum InvalidBlock {
     /// One or more predecessor blocks are not in the blocklace (closure violation).
     MissingPredecessors { missing: Vec<BlockIdentity> },
 
+    /// Another signature variant already occupies the same content-hash and
+    /// creator identity domain.
+    IdentityCollision { conflicting: BlockIdentity },
+
     /// Inserting this block would violate the chain axiom for the creator.
     /// The creator already has a block that is not comparable to this one.
     Equivocation { conflicting: BlockIdentity },
@@ -182,6 +186,15 @@ pub fn validate_block(
         });
     }
 
+    // Unsigned transport references resolve by content hash and creator, so
+    // every blocklace must admit at most one signature variant for that pair.
+    // This structural check is mandatory regardless of validation options.
+    if let Some(conflicting) = blocklace.conflicting_identity_variant(&block.identity) {
+        errors.push(InvalidBlock::IdentityCollision {
+            conflicting: conflicting.clone(),
+        });
+    }
+
     // 5. Chain axiom — inserting this block must not create equivocation.
     //
     // Deferred while predecessors are missing: the comparability walk cannot
@@ -288,7 +301,12 @@ pub fn validated_insert(
     let result = validate_block(&block, blocklace, bonds, config);
     if result.is_valid() {
         // Closure is already verified by validation, so commit directly.
-        blocklace.commit_validated(block.identity.clone(), block.content);
+        if let Err(conflicting) = blocklace.commit_validated(block.identity.clone(), block.content)
+        {
+            return ValidationResult::Invalid(vec![InvalidBlock::IdentityCollision {
+                conflicting,
+            }]);
+        }
     }
     result
 }

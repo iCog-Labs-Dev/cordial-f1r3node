@@ -180,6 +180,21 @@ fn cordiality_requires_tips_and_no_hidden_equivocations() {
     assert!(is_cordial_block(&blocklace, &cordial, &known_tips));
 }
 
+#[test]
+fn unsigned_predecessor_acknowledges_the_same_signed_known_tip() {
+    let mut signed_tip = create_mock_block(1, 1, HashSet::new());
+    signed_tip.identity.signature = vec![0xaa];
+
+    let candidate = create_mock_block(
+        2,
+        2,
+        HashSet::from([signed_tip.identity.consensus_identity()]),
+    );
+    let known_tips = HashMap::from([(signed_tip.identity.creator.clone(), signed_tip.identity)]);
+
+    assert!(missing_known_tips(&candidate, &known_tips).is_empty());
+}
+
 // Test that all_equivocations returns the correct creator, round, and blocks for each equivocation. We create multiple equivocations by different creators at different rounds and check that they are all reported correctly by the all_equivocations function.
 #[test]
 fn all_equivocations_reports_creator_and_round() {

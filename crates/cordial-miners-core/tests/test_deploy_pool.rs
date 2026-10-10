@@ -2,8 +2,8 @@ use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::crypto::hash_content;
 use cordial_miners_core::execution::{
-    BlockState, Bond, CordialBlockPayload, Deploy, DeployPool, DeployPoolConfig, PoolError,
-    ProcessedDeploy, SignedDeploy, compute_deploys_in_scope,
+    BlockState, Bond, CordialBlockPayload, Deploy, DeployPool, DeployPoolConfig,
+    DeploySignatureAlgorithm, PoolError, ProcessedDeploy, SignedDeploy, compute_deploys_in_scope,
 };
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
@@ -36,9 +36,11 @@ fn make_deploy(sig_byte: u8, valid_after: u64, timestamp: u64, phlo_price: u64) 
             phlo_limit: 10_000,
             valid_after_block_number: valid_after,
             shard_id: "root".to_string(),
+            expiration_timestamp: None,
         },
         deployer: vec![sig_byte; 32],
         signature: vec![sig_byte; 64],
+        signature_algorithm: DeploySignatureAlgorithm::Secp256k1,
     }
 }
 
@@ -238,6 +240,22 @@ fn prune_does_nothing_if_all_valid() {
     let removed = pool.prune_expired(5, 0);
     assert!(removed.is_empty());
     assert_eq!(pool.len(), 2);
+}
+
+#[test]
+fn time_expired_deploy_is_not_selected_and_is_pruned() {
+    let mut pool = default_pool();
+    let mut expired = make_deploy(1, 0, 1000, 1);
+    expired.deploy.expiration_timestamp = Some(1500);
+    pool.add(expired).unwrap();
+
+    assert!(
+        pool.select_for_block(1, 1501, &HashSet::new())
+            .deploys
+            .is_empty()
+    );
+    assert_eq!(pool.prune_expired(1, 1501).len(), 1);
+    assert!(pool.is_empty());
 }
 
 // ── Ancestor scope computation ──

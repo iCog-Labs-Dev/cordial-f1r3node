@@ -9,36 +9,54 @@
 //! outside this crate (Phase 4 integration harness).
 
 use cordial_miners_core::execution::{
-    Bond, Deploy, ExecutionRequest, ProcessedDeploy, ProcessedSystemDeploy, SignedDeploy,
-    SystemDeployRequest,
+    Bond, Deploy, DeploySignatureAlgorithm, ExecutionRequest, ProcessedDeploy,
+    ProcessedSystemDeploy, RuntimeError, SignedDeploy, SystemDeployRequest,
 };
 use cordial_miners_core::types::NodeId;
 
 use cordial_f1r3space_adapter::{
-    build_block_data, processed_deploy_from_f1r3node, signed_deploy_to_f1r3node,
-    system_deploy_from_f1r3node, system_deploy_to_f1r3node,
+    bonds_from_f1r3node, build_block_data, processed_deploy_from_f1r3node,
+    signed_deploy_to_f1r3node, system_deploy_from_f1r3node, system_deploy_to_f1r3node,
 };
 
 use casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum;
+use crypto::rust::signatures::{secp256k1::Secp256k1, signed::Signed};
 use models::rust::casper::protocol::casper_message::{
-    ProcessedDeploy as F1r3ProcessedDeploy, ProcessedSystemDeploy as F1r3ProcessedSystemDeploy,
-    SystemDeployData,
+    Bond as F1r3Bond, DeployData as F1r3DeployData, ProcessedDeploy as F1r3ProcessedDeploy,
+    ProcessedSystemDeploy as F1r3ProcessedSystemDeploy, SystemDeployData,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 fn sample_signed_deploy(sig_byte: u8) -> SignedDeploy {
+    let host = casper::rust::util::construct_deploy::source_deploy(
+        "@0!(\"hello\")".to_owned(),
+        1_700_000_000_000 + i64::from(sig_byte),
+        Some(10_000),
+        Some(1),
+        None,
+        Some(0),
+        Some("root".to_owned()),
+    )
+    .expect("fixture deploy should sign");
     SignedDeploy {
         deploy: Deploy {
-            term: b"@0!(\"hello\")".to_vec(),
-            timestamp: 1_700_000_000_000,
-            phlo_price: 1,
-            phlo_limit: 10_000,
-            valid_after_block_number: 0,
-            shard_id: "root".to_string(),
+            term: host.data.term.as_bytes().to_vec(),
+            timestamp: u64::try_from(host.data.time_stamp).unwrap(),
+            phlo_price: u64::try_from(host.data.phlo_price).unwrap(),
+            phlo_limit: u64::try_from(host.data.phlo_limit).unwrap(),
+            valid_after_block_number: u64::try_from(host.data.valid_after_block_number).unwrap(),
+            shard_id: host.data.shard_id,
+            expiration_timestamp: host
+                .data
+                .expiration_timestamp
+                .map(u64::try_from)
+                .transpose()
+                .unwrap(),
         },
-        deployer: vec![sig_byte; 33], // 33 bytes for secp256k1 compressed key
-        signature: vec![sig_byte; 64],
+        deployer: host.pk.bytes.to_vec(),
+        signature: host.sig.to_vec(),
+        signature_algorithm: DeploySignatureAlgorithm::Secp256k1,
     }
 }
 
@@ -46,15 +64,62 @@ fn node(b: u8) -> NodeId {
     NodeId(vec![b])
 }
 
+// ── bonds_from_f1r3node ─────────────────────────────────────────────────
+
+#[test]
+fn post_state_bonds_are_checked_and_sorted_deterministically() {
+    let bonds = vec![
+        F1r3Bond {
+            validator: vec![2].into(),
+            stake: 200,
+        },
+        F1r3Bond {
+            validator: vec![1].into(),
+            stake: 100,
+        },
+    ];
+
+    assert_eq!(
+        bonds_from_f1r3node(&bonds).unwrap(),
+        vec![
+            Bond {
+                validator: node(1),
+                stake: 100,
+            },
+            Bond {
+                validator: node(2),
+                stake: 200,
+            },
+        ]
+    );
+}
+
+#[test]
+fn negative_post_state_bond_is_rejected() {
+    let bonds = vec![F1r3Bond {
+        validator: vec![1].into(),
+        stake: -1,
+    }];
+
+    let error = bonds_from_f1r3node(&bonds).unwrap_err();
+    assert!(format!("{error:?}").contains("negative stake"));
+}
+
 // ── signed_deploy_to_f1r3node ────────────────────────────────────────────
 
 #[test]
 fn signed_deploy_translates_preserving_signature() {
     let sd = sample_signed_deploy(0xaa);
+    let expected_signature = sd.signature.clone();
+    let expected_deployer = sd.deployer.clone();
+    let expected_timestamp = sd.deploy.timestamp;
     let f1 = signed_deploy_to_f1r3node(&sd).unwrap();
 
     assert_eq!(f1.data.term, "@0!(\"hello\")");
-    assert_eq!(f1.data.time_stamp, 1_700_000_000_000);
+    assert_eq!(
+        f1.data.time_stamp,
+        i64::try_from(expected_timestamp).unwrap()
+    );
     assert_eq!(f1.data.phlo_price, 1);
     assert_eq!(f1.data.phlo_limit, 10_000);
     assert_eq!(f1.data.valid_after_block_number, 0);
@@ -62,19 +127,100 @@ fn signed_deploy_translates_preserving_signature() {
     assert_eq!(f1.data.expiration_timestamp, None);
 
     // Signature and pubkey preserved verbatim
-    assert_eq!(f1.sig.to_vec(), vec![0xaa; 64]);
-    assert_eq!(f1.pk.bytes.to_vec(), vec![0xaa; 33]);
+    assert_eq!(f1.sig.to_vec(), expected_signature);
+    assert_eq!(f1.pk.bytes.to_vec(), expected_deployer);
     assert_eq!(f1.sig_algorithm.name(), "secp256k1");
 }
 
 #[test]
-fn signed_deploy_with_non_utf8_term_uses_replacement_chars() {
+fn signed_deploy_with_expiration_timestamp_verifies_and_preserves_it() {
+    let expiration_timestamp = 1_800_000_000_000i64;
+    let host = Signed::create(
+        F1r3DeployData {
+            term: "@0!(\"expiring\")".to_owned(),
+            time_stamp: 1_700_000_000_000,
+            phlo_price: 1,
+            phlo_limit: 10_000,
+            valid_after_block_number: 0,
+            shard_id: "root".to_owned(),
+            expiration_timestamp: Some(expiration_timestamp),
+        },
+        Box::new(Secp256k1),
+        casper::rust::util::construct_deploy::DEFAULT_SEC.clone(),
+    )
+    .expect("fixture deploy should sign");
+    let ours = SignedDeploy {
+        deploy: Deploy {
+            term: host.data.term.as_bytes().to_vec(),
+            timestamp: u64::try_from(host.data.time_stamp).unwrap(),
+            phlo_price: u64::try_from(host.data.phlo_price).unwrap(),
+            phlo_limit: u64::try_from(host.data.phlo_limit).unwrap(),
+            valid_after_block_number: u64::try_from(host.data.valid_after_block_number).unwrap(),
+            shard_id: host.data.shard_id.clone(),
+            expiration_timestamp: Some(u64::try_from(expiration_timestamp).unwrap()),
+        },
+        deployer: host.pk.bytes.to_vec(),
+        signature: host.sig.to_vec(),
+        signature_algorithm: DeploySignatureAlgorithm::Secp256k1,
+    };
+
+    let translated =
+        signed_deploy_to_f1r3node(&ours).expect("the original signed data should still verify");
+
+    assert_eq!(
+        translated.data.expiration_timestamp,
+        Some(expiration_timestamp)
+    );
+}
+
+#[test]
+fn signed_deploy_with_non_utf8_term_is_rejected() {
     let mut sd = sample_signed_deploy(1);
-    // Invalid UTF-8 byte sequence
     sd.deploy.term = vec![0xff, 0xfe, 0xfd];
-    let f1 = signed_deploy_to_f1r3node(&sd).unwrap();
-    // from_utf8_lossy replaces invalid sequences with U+FFFD (REPLACEMENT CHARACTER)
-    assert!(f1.data.term.contains('\u{FFFD}'));
+    assert!(matches!(
+        signed_deploy_to_f1r3node(&sd),
+        Err(RuntimeError::InvalidDeploy(_))
+    ));
+}
+
+#[test]
+fn unsupported_deploy_signature_algorithm_is_rejected() {
+    let mut sd = sample_signed_deploy(2);
+    sd.signature_algorithm = DeploySignatureAlgorithm::Ed25519;
+    assert_eq!(
+        signed_deploy_to_f1r3node(&sd).unwrap_err(),
+        RuntimeError::UnsupportedDeploySignatureAlgorithm("ed25519".to_owned())
+    );
+}
+
+#[test]
+fn malformed_deploy_signature_is_rejected_at_the_boundary() {
+    let mut sd = sample_signed_deploy(3);
+    sd.signature[0] ^= 0xff;
+    assert_eq!(
+        signed_deploy_to_f1r3node(&sd).unwrap_err(),
+        RuntimeError::InvalidDeploySignature
+    );
+}
+
+#[test]
+fn malformed_deploy_public_key_is_rejected_at_the_boundary() {
+    let mut sd = sample_signed_deploy(4);
+    sd.deployer = vec![0xff; 17];
+    assert_eq!(
+        signed_deploy_to_f1r3node(&sd).unwrap_err(),
+        RuntimeError::InvalidDeploySignature
+    );
+}
+
+#[test]
+fn signature_over_different_deploy_data_is_rejected_at_the_boundary() {
+    let mut sd = sample_signed_deploy(5);
+    sd.deploy.phlo_limit += 1;
+    assert_eq!(
+        signed_deploy_to_f1r3node(&sd).unwrap_err(),
+        RuntimeError::InvalidDeploySignature
+    );
 }
 
 // ── system_deploy_to_f1r3node ────────────────────────────────────────────
@@ -164,6 +310,8 @@ fn block_data_overflow_is_reported_not_panic() {
 #[test]
 fn processed_deploy_round_trips_through_f1r3node_types() {
     let sd = sample_signed_deploy(0x55);
+    let expected_deployer = sd.deployer.clone();
+    let expected_signature = sd.signature.clone();
     let f1_signed = signed_deploy_to_f1r3node(&sd).unwrap();
 
     // Build a f1r3node ProcessedDeploy wrapping our translated Signed
@@ -181,8 +329,16 @@ fn processed_deploy_round_trips_through_f1r3node_types() {
     assert_eq!(ours.cost, 123);
     assert!(!ours.is_failed);
     assert_eq!(ours.deploy.deploy.term, b"@0!(\"hello\")");
-    assert_eq!(ours.deploy.deployer, vec![0x55; 33]);
-    assert_eq!(ours.deploy.signature, vec![0x55; 64]);
+    assert_eq!(ours.deploy.deployer, expected_deployer);
+    assert_eq!(ours.deploy.signature, expected_signature);
+    assert_eq!(
+        ours.deploy.deploy.expiration_timestamp,
+        sd.deploy.expiration_timestamp
+    );
+    assert_eq!(
+        ours.deploy.signature_algorithm,
+        DeploySignatureAlgorithm::Secp256k1
+    );
 }
 
 #[test]

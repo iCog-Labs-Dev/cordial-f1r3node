@@ -214,17 +214,27 @@ where
         &self.pending
     }
 
-    pub fn ingest(&mut self, block: Block) -> Result<MirrorUpdate, String> {
-        let block = self.canonicalize_block(block);
-
-        if self.blocklace.get(&block.identity).is_some() {
-            return Ok(MirrorUpdate {
-                disposition: MirrorDisposition::Duplicate,
-                released_from_buffer: 0,
-            });
+    fn duplicate_or_identity_conflict(&self, id: &BlockIdentity) -> Result<bool, String> {
+        if self.blocklace.get(id).is_some() || self.pending.contains_key(id) {
+            return Ok(true);
         }
 
-        if self.pending.contains_key(&block.identity) {
+        let conflicting = self.blocklace.conflicting_identity_variant(id).or_else(|| {
+            self.pending
+                .keys()
+                .find(|candidate| candidate.same_consensus_identity(id))
+        });
+        if let Some(conflicting) = conflicting {
+            return Err(format!(
+                "Identity conflict: content hash and creator already belong to {conflicting:?}"
+            ));
+        }
+
+        Ok(false)
+    }
+
+    pub fn ingest(&mut self, block: Block) -> Result<MirrorUpdate, String> {
+        if self.duplicate_or_identity_conflict(&block.identity)? {
             return Ok(MirrorUpdate {
                 disposition: MirrorDisposition::Duplicate,
                 released_from_buffer: 0,
@@ -249,28 +259,15 @@ where
     }
 
     pub fn ingest_with_trusted_boundary(&mut self, block: Block) -> Result<MirrorUpdate, String> {
-        let mut block = self.canonicalize_block(block);
-
-        if self.blocklace.get(&block.identity).is_some() {
+        if self.duplicate_or_identity_conflict(&block.identity)? {
             return Ok(MirrorUpdate {
                 disposition: MirrorDisposition::Duplicate,
                 released_from_buffer: 0,
             });
         }
 
-        if self.pending.contains_key(&block.identity) {
-            return Ok(MirrorUpdate {
-                disposition: MirrorDisposition::Duplicate,
-                released_from_buffer: 0,
-            });
-        }
-
-        block
-            .content
-            .predecessors
-            .retain(|pred_id| self.resolve_known_identity(pred_id).is_some());
-
-        self.blocklace.insert(block, &self.verifier)?;
+        self.blocklace
+            .insert_with_trusted_boundary(block, &self.verifier)?;
         let released_from_buffer = self.release_pending()?;
 
         Ok(MirrorUpdate {
@@ -284,7 +281,7 @@ where
             .content
             .predecessors
             .iter()
-            .all(|pred_id| self.resolve_known_identity(pred_id).is_some())
+            .all(|pred_id| self.blocklace.content(pred_id).is_some())
     }
 
     fn release_pending(&mut self) -> Result<usize, String> {
@@ -307,54 +304,12 @@ where
                     .pending
                     .remove(&id)
                     .expect("ready pending block should still exist");
-                let block = self.canonicalize_block(block);
                 self.blocklace.insert(block, &self.verifier)?;
                 released += 1;
             }
         }
 
         Ok(released)
-    }
-
-    fn canonicalize_block(&self, mut block: Block) -> Block {
-        block.content.predecessors = block
-            .content
-            .predecessors
-            .iter()
-            .map(|pred_id| {
-                self.resolve_known_identity(pred_id)
-                    .unwrap_or_else(|| pred_id.clone())
-            })
-            .collect();
-        block
-    }
-
-    fn resolve_known_identity(&self, pred_id: &BlockIdentity) -> Option<BlockIdentity> {
-        let exact = self
-            .blocklace
-            .dom()
-            .into_iter()
-            .find(|known| {
-                known.content_hash == pred_id.content_hash && known.creator == pred_id.creator
-            })
-            .cloned();
-
-        if exact.is_some() {
-            return exact;
-        }
-
-        let mut same_hash = self
-            .blocklace
-            .dom()
-            .into_iter()
-            .filter(|known| known.content_hash == pred_id.content_hash)
-            .cloned();
-        let first = same_hash.next()?;
-        if same_hash.next().is_none() {
-            Some(first)
-        } else {
-            None
-        }
     }
 }
 
@@ -622,6 +577,10 @@ impl<A> LiveIngress<A> {
                 &next_weights,
                 &mut prospective_cache,
             );
+            let prospective: Vec<_> = prospective
+                .into_iter()
+                .map(|identity| identity.consensus_identity())
+                .collect();
             if !prospective.starts_with(&previous.blocks) {
                 return Err(PorWeightActivationError::WouldRewriteFinalizedOutput);
             }
@@ -689,10 +648,10 @@ impl<A> LiveIngress<A> {
     }
 
     /// Return the latest finalized ordered output through the stable
-    /// `ordered_output` export seam: the finalized-prefix blocks (full
-    /// [`BlockIdentity`] entries, not bare hashes), linearized via weighted
-    /// tau ordering, together with the anchor and consensus metadata needed
-    /// to interpret them.
+    /// `ordered_output` export seam: the finalized-prefix blocks
+    /// (signature-independent [`BlockIdentity`] references, not bare hashes),
+    /// linearized via weighted tau ordering, together with the anchor and
+    /// consensus metadata needed to interpret them.
     ///
     /// `anchor` is `None` and `blocks` is empty when the mirrored state does
     /// not yet have a finalized leader.

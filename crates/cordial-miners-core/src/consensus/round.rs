@@ -54,6 +54,11 @@ fn depth_recursive(
     block_id: &BlockIdentity,
     cache: &mut HashMap<BlockIdentity, u64>,
 ) -> Option<u64> {
+    // Transport-level predecessor references may omit the signature. Always
+    // cache under the canonical stored identity so one block cannot appear in
+    // the round index twice (once signed and once unsigned).
+    let block_id = blocklace.resolve_identity(block_id)?;
+
     if let Some(&d) = cache.get(block_id) {
         return Some(d);
     }

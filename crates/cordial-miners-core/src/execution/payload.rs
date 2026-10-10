@@ -75,6 +75,49 @@ pub struct Deploy {
 
     /// Shard identifier this deploy targets.
     pub shard_id: String,
+
+    /// Optional timestamp after which the deploy is no longer valid.
+    ///
+    /// This is part of the signed host `DeployData` and must survive adapter
+    /// translation unchanged for signature verification to remain valid.
+    pub expiration_timestamp: Option<u64>,
+}
+
+/// Signature scheme attached to a deploy at its trust boundary.
+///
+/// Unknown names are retained instead of being guessed so an adapter can
+/// reject unsupported algorithms with an accurate diagnostic.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum DeploySignatureAlgorithm {
+    Secp256k1,
+    Secp256k1Eth,
+    Ed25519,
+    Other(String),
+    #[default]
+    Unspecified,
+}
+
+impl DeploySignatureAlgorithm {
+    pub fn from_name(name: &str) -> Self {
+        match name.to_ascii_lowercase().as_str() {
+            "secp256k1" => Self::Secp256k1,
+            "secp256k1-eth" | "secp256k1:eth" => Self::Secp256k1Eth,
+            "ed25519" => Self::Ed25519,
+            "" => Self::Unspecified,
+            _ => Self::Other(name.to_owned()),
+        }
+    }
+
+    pub fn as_name(&self) -> &str {
+        match self {
+            Self::Secp256k1 => "secp256k1",
+            // This is the name returned by f1r3node's Secp256k1Eth object.
+            Self::Secp256k1Eth => "secp256k1:eth",
+            Self::Ed25519 => "ed25519",
+            Self::Other(name) => name,
+            Self::Unspecified => "",
+        }
+    }
 }
 
 /// A signed deploy -- deploy data with the deployer's signature.
@@ -90,6 +133,13 @@ pub struct SignedDeploy {
 
     /// Signature over the serialized deploy data.
     pub signature: Vec<u8>,
+
+    /// Algorithm that produced `signature`.
+    ///
+    /// This field intentionally has no Serde default: legacy serialized
+    /// deploys that omitted the algorithm are rejected instead of being
+    /// silently treated as a particular signature scheme.
+    pub signature_algorithm: DeploySignatureAlgorithm,
 }
 
 /// A deploy that has been executed, with its cost and execution log.

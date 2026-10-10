@@ -158,17 +158,23 @@ pub fn hash_content_ext(content: &BlockContent, hasher: &dyn Hasher) -> [u8; 32]
     buf.extend_from_slice(&(content.payload.len() as u64).to_le_bytes());
     buf.extend_from_slice(&content.payload);
 
-    // 2. Predecessors (Sorted for determinism)
+    // 2. Predecessors (sorted by their signature-independent consensus
+    // identity). Signatures authenticate predecessor blocks but are not part
+    // of the stable reference carried by the f1r3node wire format. Excluding
+    // them prevents valid signature variants from changing a descendant's
+    // content hash.
     let mut preds: Vec<_> = content.predecessors.iter().collect();
-    preds.sort_by_key(|p| p.content_hash);
+    preds.sort_by(|left, right| {
+        left.content_hash
+            .cmp(&right.content_hash)
+            .then_with(|| left.creator.cmp(&right.creator))
+    });
 
     buf.extend_from_slice(&(preds.len() as u64).to_le_bytes());
     for pred in &preds {
         buf.extend_from_slice(&pred.content_hash);
         buf.extend_from_slice(&(pred.creator.0.len() as u64).to_le_bytes());
         buf.extend_from_slice(&pred.creator.0);
-        buf.extend_from_slice(&(pred.signature.len() as u64).to_le_bytes());
-        buf.extend_from_slice(&pred.signature);
     }
 
     hasher.hash(&buf)

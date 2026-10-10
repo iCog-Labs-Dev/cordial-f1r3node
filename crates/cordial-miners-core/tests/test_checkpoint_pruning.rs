@@ -168,6 +168,37 @@ fn checkpoint_prune_removes_old_blocks_and_observe_stops_at_boundary() {
 }
 
 #[test]
+fn checkpoint_prune_preserves_ancestor_referenced_unsigned_by_retained_fork() {
+    let mut blocklace = Blocklace::new();
+
+    let ancestor = genesis(&node(1), 1);
+    let checkpoint = child(&node(2), 2, &[&ancestor]);
+    for block in [&ancestor, &checkpoint] {
+        insert(&mut blocklace, block);
+    }
+
+    let mut unsigned_ancestor = ancestor.identity.clone();
+    unsigned_ancestor.signature.clear();
+    let retained_fork = Block {
+        identity: make_id(&node(3), 3),
+        content: BlockContent {
+            payload: vec![3],
+            predecessors: HashSet::from([unsigned_ancestor]),
+        },
+    };
+    insert(&mut blocklace, &retained_fork);
+
+    let report = blocklace
+        .prune_below_checkpoint(&checkpoint.identity)
+        .expect("checkpoint should prune without breaking retained forks");
+
+    assert!(!report.removed.contains(&ancestor.identity));
+    assert!(blocklace.get(&ancestor.identity).is_some());
+    assert!(blocklace.get(&retained_fork.identity).is_some());
+    assert!(blocklace.is_closed());
+}
+
+#[test]
 fn checkpoint_after_finality_prunes_latest_final_leader_history() {
     let mut blocklace = Blocklace::new();
     let wavelength = 3;
@@ -275,7 +306,10 @@ fn weighted_tau_does_not_replay_unweighted_checkpoint_prefix() {
 
     let weighted_after =
         weighted_tau(&blocklace, wavelength, &weights, leader_node1).expect("weighted tau");
-    assert_eq!(weighted_after, vec![graph.w1_leader.identity]);
+    assert_eq!(
+        weighted_after,
+        vec![graph.w1_leader.identity.consensus_identity()]
+    );
     assert_ne!(weighted_after, unweighted_before);
 }
 

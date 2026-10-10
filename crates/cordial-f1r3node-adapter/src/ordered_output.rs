@@ -23,8 +23,8 @@
 //!   Vec<Vec<u8>>` (bare content hashes) as one field among many. That type
 //!   is tied to f1r3node's snapshot shape and is not a stable export seam.
 //! - [`OrderedFinalizedOutput`] is the *adapter-side* export type:
-//!   self-describing, includes full block identities and consensus metadata,
-//!   and is decoupled from f1r3node's snapshot layout.
+//!   self-describing, includes signature-independent block references and
+//!   consensus metadata, and is decoupled from f1r3node's snapshot layout.
 //! - The core `weighted_tau` / `tau` functions in `cordial-miners-core`
 //!   return raw `Vec<BlockIdentity>`. This type wraps that vector with the
 //!   context needed to interpret it.
@@ -51,16 +51,19 @@ use cordial_miners_core::types::BlockIdentity;
 /// ## Ordering invariant
 ///
 /// `blocks` appears in deterministic topological order (tau order):
-/// predecessor-first tie-broken by [`BlockIdentity`]'s natural ordering.
+/// predecessor-first tie-broken by the block's signature-independent
+/// `(content_hash, creator)` consensus identity.
 /// Every block in this list is finalized according to the current bonded
 /// validator set and consensus parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OrderedFinalizedOutput {
     /// The ordered sequence of block identities in the finalized prefix.
     ///
-    /// Each entry carries the full [`BlockIdentity`] (content hash, creator,
-    /// signature) so consumers have everything needed without extra lookups
-    /// into the blocklace.
+    /// Each entry is the signature-independent consensus projection of a
+    /// [`BlockIdentity`]. The signature is always empty because authentication
+    /// proofs can have multiple valid encodings and must not affect finalized
+    /// output. Consumers that need the proof can look up the full block in the
+    /// blocklace using this reference.
     pub blocks: Vec<BlockIdentity>,
 
     /// The latest weighted final leader that anchors this ordering fragment.
@@ -123,8 +126,11 @@ impl OrderedFinalizedOutput {
             .as_nanos();
 
         Self {
-            blocks,
-            anchor,
+            blocks: blocks
+                .into_iter()
+                .map(|identity| identity.consensus_identity())
+                .collect(),
+            anchor: anchor.map(|identity| identity.consensus_identity()),
             wavelength,
             bond_count,
             total_mirrored_blocks,
@@ -254,5 +260,22 @@ mod test {
         let current = output(vec![block(1), block(9), block(3)]);
 
         assert!(!current.preserves_prefix(&previous));
+    }
+
+    #[test]
+    fn signature_variants_produce_identical_consensus_output() {
+        let first = block(1);
+        let mut alternate = first.clone();
+        alternate.signature = vec![0xff; 64];
+
+        let first_output = OrderedFinalizedOutput::new(vec![first.clone()], Some(first), 3, 1, 1)
+            .with_timestamp(0);
+        let alternate_output =
+            OrderedFinalizedOutput::new(vec![alternate.clone()], Some(alternate), 3, 1, 1)
+                .with_timestamp(0);
+
+        assert_eq!(first_output, alternate_output);
+        assert!(first_output.blocks[0].signature.is_empty());
+        assert!(first_output.anchor.unwrap().signature.is_empty());
     }
 }
