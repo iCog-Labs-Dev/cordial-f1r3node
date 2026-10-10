@@ -30,7 +30,7 @@ Cordial Miners integration.
 | `conf/f1r3node-kamon.conf` | Upstream metrics/runtime config expected by the Rust node binary |
 | `genesis/cordial-bonds.txt` | Bonds the four demo validator public keys |
 | `genesis/cordial-wallets.txt` | Empty wallet file for the no-deploy standalone demo |
-| `scripts/generate-four-node-cluster-certs.sh` | Generates local EC TLS certs for bootstrap + validators |
+| `scripts/generate-four-node-cluster-certs.sh` | Copies bootstrap TLS material and creates stable validator TLS keys |
 | `scripts/verify-four-node-order.sh` | Containerized four-node ordered-view verifier for the local-intercept demo |
 | `scripts/verify-four-node-cluster.sh` | Containerized verifier for the real connected four-node cluster |
 
@@ -96,7 +96,10 @@ cluster volumes. To discard the cluster's node data and start from genesis,
 run `just demo-cordial-four-node-cluster-reset` instead. The `-legacy` recipes
 provide the same choices with `docker-compose`.
 
-This path is heavier than the local-intercept demo. It launches:
+This path is heavier than the local-intercept demo. It launches upstream
+f1r3node nodes; host-side Cordial and PoR observers mirror their finalized
+blocks through gRPC. The cluster does not select Cordial consensus inside
+f1r3node or enforce PoR weights. It launches:
 
 - one bootstrap node
 - four bonded validators with distinct validator keys
@@ -112,10 +115,14 @@ cannot prove each node's validator identity from the current HTTP API. The
 four validator identities are configured in `four-node-cluster.yml` and bonded
 in `genesis/cordial-bonds.txt`.
 
-The real-cluster path now depends on local EC TLS certificates for each node.
-They are generated into `docker/certs/` by
-`docker/scripts/generate-four-node-cluster-certs.sh` and are intentionally kept
-out of git.
+The connected cluster uses a fixed upstream bootstrap TLS key and certificate.
+`docker/scripts/generate-four-node-cluster-certs.sh` creates validator TLS keys
+under `docker/certs/` once and preserves them on later runs. f1r3node generates
+each validator's matching certificate from its mounted key at startup. The
+validator certificates live in the containers' temporary directories, so an
+older certificate in a retained data volume cannot conflict with a key.
+`--data-dir=/var/lib/rnode` keeps node data in the named volumes. TLS material
+under `docker/certs/` is kept out of git.
 
 The five cluster nodes rotate their Docker logs at 20 MB per file, retaining
 three files per node. During a run, compare log and node-data growth with:
