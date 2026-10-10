@@ -86,6 +86,12 @@ just demo-cordial-four-node-cluster-blocks
 just demo-cordial-four-node-cluster-down
 ```
 
+`demo-cordial-four-node-cluster-down` stops the cluster and keeps its five
+named node-data volumes for the next run. `demo-cordial-down` also keeps those
+cluster volumes. To discard the cluster's node data and start from genesis,
+run `just demo-cordial-four-node-cluster-reset` instead. The `-legacy` recipes
+provide the same choices with `docker-compose`.
+
 This path is heavier than the local-intercept demo. It launches:
 
 - one bootstrap node
@@ -127,7 +133,7 @@ Some environments provide the legacy `docker-compose` command instead of
 Example cluster shutdown:
 
 ```bash
-docker-compose --env-file docker/.env -f docker/four-node-cluster.yml down -v
+docker-compose --env-file docker/.env -f docker/four-node-cluster.yml down
 ```
 
 The `cp -n` warning that may appear while creating `docker/.env` is harmless.
