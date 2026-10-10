@@ -133,6 +133,20 @@ volumes; `docker ps --size` shows each container's writable layer. Measure
 these while the containers still exist, because removing them discards their
 logs and writable layers.
 
+For a timed comparison while all five nodes are running, use:
+
+```bash
+sudo sh docker/scripts/measure-four-node-disk.sh 300 \
+  /tmp/cordial-cluster-disk-report "$HOME/cordial-por-four-node"
+```
+
+The script measures active and rotated Docker logs, each node's `/var/lib/rnode`
+data, container writable layers, host free space, and optional PoR shadow data
+before and after five minutes. It saves both snapshots and `docker system df -v`
+output in the report directory, then prints byte deltas. `sudo` is normally
+needed to read Docker's host log files. The sampler does not stop containers or
+remove data; run it before teardown so the evidence is still available.
+
 ## Docker CLI Compatibility
 
 Some environments provide the legacy `docker-compose` command instead of
