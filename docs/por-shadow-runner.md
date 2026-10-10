@@ -55,3 +55,38 @@ The bonds file is required and remains the authority for membership. Changing
 the file's validator set while reusing a data directory causes PoR startup to
 fail closed. The runner never adds senders observed in blocks to the membership
 map. Keep the data directory and its activation record across restarts.
+
+## Four-node recovery smoke
+
+Start and verify the connected cluster, then build the runner once and run the
+four-observer harness from the repository root:
+
+```sh
+just demo-cordial-four-node-cluster-up
+just demo-cordial-four-node-cluster-verify
+cargo build -j 1 -p cordial-f1r3node-adapter --bin live_por_shadow
+python3 docker/scripts/verify-four-node-por-shadow.py \
+  --data-root "$HOME/cordial-por-four-node"
+```
+
+The harness starts one observer for each validator gRPC port (51401, 52401,
+53401, and 54401), using a separate persistent directory under `--data-root`
+for each. It waits for at least two finalized hashes by default, then compares
+the active PoR round, weight commitment, full weight map, and common finalized
+hash prefix. It restarts the first observer with the same data directory and
+checks that its old finalized prefix and projection survived. It then runs
+`docker compose restart cordial-validator-1`, waits for a new observer status,
+and checks recovery and four-node agreement again. The harness stops only its
+own observer processes when it exits; node volumes and PoR data remain.
+
+Use a data root outside the repository and reuse it for subsequent recovery
+runs. Logs are written to `<data-root>/<node>/runner.log`; each status is at
+`<data-root>/<node>/por/shadow-status.json`. `--skip-node-restart` runs only the
+observer restart check. `--timeout-seconds` and `--min-finalized-blocks` adjust
+the convergence gate. The cluster must be running before this command; the
+harness does not start or reset it.
+
+All observers currently retain the genesis reputation round because the live
+shadow runner does not yet produce ratings or activate later rounds. Agreement
+here tests deterministic observation and durable recovery, not enforcement of
+PoR weights by f1r3node.
