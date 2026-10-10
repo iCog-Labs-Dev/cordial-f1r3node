@@ -101,6 +101,22 @@ They are generated into `docker/certs/` by
 `docker/scripts/generate-four-node-cluster-certs.sh` and are intentionally kept
 out of git.
 
+The five cluster nodes rotate their Docker logs at 20 MB per file, retaining
+three files per node. During a run, compare log and node-data growth with:
+
+```bash
+docker inspect --format '{{.LogPath}}' cordial.validator1
+sudo du -h "$(docker inspect --format '{{.LogPath}}' cordial.validator1)"
+docker system df -v
+docker ps --size --filter name=cordial
+```
+
+Repeat the log check for `cordial.validator2` through `cordial.validator4`
+and `cordial-boot`. `docker system df -v` lists the five named node-data
+volumes; `docker ps --size` shows each container's writable layer. Measure
+these while the containers still exist, because removing them discards their
+logs and writable layers.
+
 ## Docker CLI Compatibility
 
 Some environments provide the legacy `docker-compose` command instead of
