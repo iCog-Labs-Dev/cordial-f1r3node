@@ -29,6 +29,7 @@ services:
     command:
       - run
       - --config-file=/var/lib/rnode/rnode.conf
+      - --data-dir=/var/lib/rnode
       - --tls-key-path=/var/lib/rnode/node.key.pem
       - --tls-certificate-path=/var/lib/rnode/node.certificate.pem
       - --bonds-file=/var/lib/rnode/genesis/bonds.txt
@@ -68,8 +69,9 @@ services:
     command:
       - run
       - --config-file=/var/lib/rnode/rnode.conf
+      - --data-dir=/var/lib/rnode
       - --tls-key-path=/var/lib/rnode/node.key.pem
-      - --tls-certificate-path=/var/lib/rnode/node.certificate.pem
+      - --tls-certificate-path=/tmp/cordial-node.certificate.pem
       - --bonds-file=/var/lib/rnode/genesis/bonds.txt
       - --wallets-file=/var/lib/rnode/genesis/wallets.txt
       - --host=cordial-validator-1
@@ -104,8 +106,9 @@ services:
     command:
       - run
       - --config-file=/var/lib/rnode/rnode.conf
+      - --data-dir=/var/lib/rnode
       - --tls-key-path=/var/lib/rnode/node.key.pem
-      - --tls-certificate-path=/var/lib/rnode/node.certificate.pem
+      - --tls-certificate-path=/tmp/cordial-node.certificate.pem
       - --bonds-file=/var/lib/rnode/genesis/bonds.txt
       - --wallets-file=/var/lib/rnode/genesis/wallets.txt
       - --host=cordial-validator-2
@@ -140,8 +143,9 @@ services:
     command:
       - run
       - --config-file=/var/lib/rnode/rnode.conf
+      - --data-dir=/var/lib/rnode
       - --tls-key-path=/var/lib/rnode/node.key.pem
-      - --tls-certificate-path=/var/lib/rnode/node.certificate.pem
+      - --tls-certificate-path=/tmp/cordial-node.certificate.pem
       - --bonds-file=/var/lib/rnode/genesis/bonds.txt
       - --wallets-file=/var/lib/rnode/genesis/wallets.txt
       - --host=cordial-validator-3
@@ -176,8 +180,9 @@ services:
     command:
       - run
       - --config-file=/var/lib/rnode/rnode.conf
+      - --data-dir=/var/lib/rnode
       - --tls-key-path=/var/lib/rnode/node.key.pem
-      - --tls-certificate-path=/var/lib/rnode/node.certificate.pem
+      - --tls-certificate-path=/tmp/cordial-node.certificate.pem
       - --bonds-file=/var/lib/rnode/genesis/bonds.txt
       - --wallets-file=/var/lib/rnode/genesis/wallets.txt
       - --host=cordial-validator-4
