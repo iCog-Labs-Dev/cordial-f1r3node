@@ -129,7 +129,7 @@ demo-cordial-four-node-cluster-config: demo-cordial-env
     docker compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} config >/dev/null
     echo "Cordial Miners real four-node cluster compose file is valid."
 
-demo-cordial-four-node-cluster-up: demo-cordial-env demo-cordial-image-check
+demo-cordial-four-node-cluster-up: demo-cordial-env
     docker compose --env-file {{docker_env}} -f {{docker_four_node_cluster}} up -d
 
 demo-cordial-four-node-cluster-up-legacy: demo-cordial-env
