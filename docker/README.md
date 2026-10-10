@@ -75,6 +75,10 @@ production consensus networking layer.
 
 For the connected four-node cluster demo:
 
+The cluster publishes its node APIs on `127.0.0.1` only. Host-side checks and
+the PoR shadow runners use the localhost ports; the containers communicate
+with each other over their Compose network.
+
 ```bash
 ./docker/scripts/generate-four-node-cluster-certs.sh
 just demo-cordial-four-node-cluster-config
