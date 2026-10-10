@@ -102,9 +102,15 @@ This path is heavier than the local-intercept demo. It launches:
 - four bonded validators with distinct validator keys
 - a verifier that checks:
   - all validators joined the expected network
-  - validators are bonded
   - validators are not isolated (`peers` / `nodes` visibility)
-  - finalized ordered views converge
+  - each node reaches the same post-genesis finalized height
+  - each node reports the same finalized block window and anchor at that height
+
+The current f1r3node `/api/status` response does not expose `isValidator`.
+The verifier rejects an explicit `false` if a build supplies that field, but
+cannot prove each node's validator identity from the current HTTP API. The
+four validator identities are configured in `four-node-cluster.yml` and bonded
+in `genesis/cordial-bonds.txt`.
 
 The real-cluster path now depends on local EC TLS certificates for each node.
 They are generated into `docker/certs/` by
