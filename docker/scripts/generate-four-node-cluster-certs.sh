@@ -25,7 +25,14 @@ generate_key_only() {
   name="$1"
   out_dir="$CERTS_DIR/$name"
   mkdir -p "$out_dir"
-  rm -f "$out_dir/node.certificate.pem"
+
+  if [ -f "$out_dir/node.key.pem" ]; then
+    openssl pkey -in "$out_dir/node.key.pem" -noout >/dev/null 2>&1 || {
+      echo "ERROR: invalid TLS key at $out_dir/node.key.pem" >&2
+      exit 1
+    }
+    return
+  fi
 
   openssl genpkey \
     -algorithm EC \
@@ -43,4 +50,4 @@ for name in validator1 validator2 validator3 validator4; do
 done
 
 echo "Prepared four-node cluster TLS material under $CERTS_DIR"
-echo "Bootstrap uses the upstream fixed certificate; validators generate matching certificates from mounted keys on first boot."
+echo "Bootstrap uses the upstream fixed certificate; validators keep their TLS keys and generate matching certificates at startup."
