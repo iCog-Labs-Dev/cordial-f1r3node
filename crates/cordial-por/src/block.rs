@@ -5,8 +5,8 @@ use cordial_miners_core::{
 
 use crate::{
     commitments::{
-        config_commitment, rating_batch_commitment, reputation_block_hash,
-        reputation_list_commitment, validate_reputation_entries,
+        config_commitment, penalty_events_commitment, rating_batch_commitment,
+        reputation_block_hash, reputation_list_commitment, validate_reputation_entries,
     },
     config::PorConfig,
     error::PorError,
@@ -15,13 +15,13 @@ use crate::{
 };
 
 /// Canonical reputation-block format emitted by this crate.
-pub const REPUTATION_BLOCK_VERSION: u16 = 1;
+pub const REPUTATION_BLOCK_VERSION: u16 = 2;
 
 /// Fixed prefix identifying a canonical reputation-block wire envelope.
 pub const POR_REPUTATION_BLOCK_MAGIC: &[u8; 17] = b"cordial-por-block";
 
 /// Canonical reputation-block wire format emitted by this crate.
-pub const POR_REPUTATION_BLOCK_WIRE_VERSION: u16 = 1;
+pub const POR_REPUTATION_BLOCK_WIRE_VERSION: u16 = 2;
 
 /// Maximum accepted encoded reputation-block envelope size (64 MiB).
 pub const MAX_REPUTATION_BLOCK_WIRE_LEN: usize = 64 * 1024 * 1024;
@@ -32,7 +32,7 @@ pub const MAX_REPUTATION_BLOCK_ENTRIES: usize = 1_000_000;
 /// Allocation bound for a reputation-block node identifier.
 pub const MAX_REPUTATION_BLOCK_NODE_ID_LEN: usize = 4 * 1024;
 
-const REPUTATION_BLOCK_CHECKSUM_DOMAIN: &[u8] = b"cordial-por:reputation-block-envelope:v1";
+const REPUTATION_BLOCK_CHECKSUM_DOMAIN: &[u8] = b"cordial-por:reputation-block-envelope:v2";
 const CHECKSUM_LEN: usize = 32;
 const FIXED_ENVELOPE_LEN: usize = POR_REPUTATION_BLOCK_MAGIC.len() + 2 + 8 + CHECKSUM_LEN;
 const MAX_REPUTATION_BLOCK_PAYLOAD_LEN: usize = MAX_REPUTATION_BLOCK_WIRE_LEN - FIXED_ENVELOPE_LEN;
@@ -52,13 +52,27 @@ pub struct ReputationBlockContext<'a> {
 ///
 /// The caller supplies protocol data, never precomputed commitment bytes. This
 /// function derives the previous-block hash, configuration commitment, rating
-/// batch commitment, and reputation-list root using the canonical v1 formats.
+/// batch commitment, and reputation-list root using the canonical formats
+/// (configuration/list/block v2, ratings v1).
 pub fn build_reputation_block(
     context: ReputationBlockContext<'_>,
     ratings: &RatingBatch,
     reputation_list: ReputationList,
     config: &PorConfig,
 ) -> Result<ReputationBlock, PorError> {
+    build_reputation_block_with_penalties(context, ratings, reputation_list, config, None)
+}
+
+/// Build a v2 block committing to both ratings and finalized penalty evidence.
+/// Callers must pass the same penalty set to replay, construction and verification.
+pub fn build_reputation_block_with_penalties(
+    context: ReputationBlockContext<'_>,
+    ratings: &RatingBatch,
+    reputation_list: ReputationList,
+    config: &PorConfig,
+    penalties: Option<&crate::types::ReputationPenaltyEvents>,
+) -> Result<ReputationBlock, PorError> {
+    config.validate()?;
     validate_shard_id(context.shard_id)?;
     let round = rating_round_from_finalized_wave(context.source_finalized_wave)?;
     if ratings.round != round {
@@ -82,6 +96,7 @@ pub fn build_reputation_block(
     };
     let config_hash = config_commitment(config);
     let ratings_hash = rating_batch_commitment(ratings, config)?;
+    let penalties_hash = penalty_events_commitment(round, penalties)?;
     let reputation_root = reputation_list_commitment(&reputation_list)?;
     let block = ReputationBlock {
         header: ReputationBlockHeader {
@@ -92,6 +107,7 @@ pub fn build_reputation_block(
             previous_reputation_hash,
             config_hash,
             ratings_hash,
+            penalties_hash,
             reputation_root,
         },
         reputation_list,
@@ -138,7 +154,7 @@ fn validate_shard_id(shard_id: &[u8]) -> Result<(), PorError> {
     Ok(())
 }
 
-/// Encode a reputation block into the canonical v1 publication envelope.
+/// Encode a reputation block into the canonical v2 publication envelope.
 pub fn encode_reputation_block(block: &ReputationBlock) -> Result<Vec<u8>, PorError> {
     let payload = encode_reputation_block_payload(block)?;
     let payload_len =
@@ -213,6 +229,7 @@ pub(crate) fn encode_reputation_block_payload(
     }
     put_fixed(&mut output, &header.config_hash)?;
     put_fixed(&mut output, &header.ratings_hash)?;
+    put_fixed(&mut output, &header.penalties_hash)?;
     put_fixed(&mut output, &header.reputation_root)?;
     encode_reputation_list(&mut output, &block.reputation_list)?;
     Ok(output)
@@ -241,6 +258,7 @@ pub(crate) fn decode_reputation_block_payload(bytes: &[u8]) -> Result<Reputation
             previous_reputation_hash,
             config_hash: decoder.read_array::<32>()?,
             ratings_hash: decoder.read_array::<32>()?,
+            penalties_hash: decoder.read_array::<32>()?,
             reputation_root: decoder.read_array::<32>()?,
         },
         reputation_list: decode_reputation_list(&mut decoder)?,
@@ -260,6 +278,7 @@ fn encode_reputation_list(output: &mut Vec<u8>, list: &ReputationList) -> Result
         put_node_id(output, &entry.node_id)?;
         put_u64(output, entry.reputation)?;
         put_byte(output, u8::from(entry.is_excluded))?;
+        put_u64(output, entry.retained_reputation)?;
     }
     Ok(())
 }
@@ -275,6 +294,7 @@ fn decode_reputation_list(
             node_id: decoder.read_node_id()?,
             reputation: decoder.read_u64()?,
             is_excluded: decoder.read_discriminant()?,
+            retained_reputation: decoder.read_u64()?,
         });
     }
     validate_reputation_entries(&entries)?;

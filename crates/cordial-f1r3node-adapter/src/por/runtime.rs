@@ -28,6 +28,9 @@ use super::{
 /// Startup or finalized-output failures at the combined PoR runtime boundary.
 #[derive(Debug, Error)]
 pub enum PorRuntimeError {
+    #[error("invalid PoR configuration: {0}")]
+    InvalidConfig(#[source] PorError),
+
     #[error("PoR runtime wavelength {actual} does not match Cordial wavelength {expected}")]
     UnsupportedWavelength { expected: u64, actual: u64 },
 
@@ -89,6 +92,7 @@ impl<A> PorRuntime<A> {
                 actual: wavelength,
             });
         }
+        config.validate().map_err(PorRuntimeError::InvalidConfig)?;
         let shard_id = shard_id.into();
         validate_shard_id(&shard_id)?;
 

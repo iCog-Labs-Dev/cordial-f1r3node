@@ -6,21 +6,21 @@ use cordial_por::{
 };
 
 const SHARD_ID: &[u8] = b"root";
-const CONFIG_COMMITMENT_V1: [u8; 32] = [
-    224, 122, 115, 222, 167, 17, 235, 116, 112, 65, 106, 207, 115, 129, 219, 14, 15, 244, 20, 3,
-    187, 176, 229, 78, 206, 253, 87, 138, 57, 245, 205, 222,
+const CONFIG_COMMITMENT_V2: [u8; 32] = [
+    215, 114, 12, 110, 6, 248, 14, 172, 138, 85, 23, 233, 230, 91, 205, 243, 115, 161, 172, 220,
+    92, 241, 223, 203, 53, 114, 214, 24, 232, 92, 43, 176,
 ];
 const RATING_BATCH_COMMITMENT_V1: [u8; 32] = [
     232, 164, 6, 130, 63, 164, 232, 78, 78, 171, 192, 221, 14, 49, 252, 205, 233, 0, 62, 152, 3,
     226, 213, 35, 88, 151, 210, 50, 138, 221, 88, 149,
 ];
-const REPUTATION_LIST_COMMITMENT_V1: [u8; 32] = [
-    64, 226, 122, 114, 81, 63, 78, 61, 60, 226, 229, 17, 115, 133, 207, 56, 78, 143, 227, 21, 185,
-    46, 90, 98, 102, 68, 116, 12, 182, 211, 28, 219,
+const REPUTATION_LIST_COMMITMENT_V2: [u8; 32] = [
+    122, 243, 61, 252, 112, 160, 205, 116, 184, 213, 90, 130, 129, 87, 185, 137, 77, 107, 130, 66,
+    170, 233, 162, 75, 171, 154, 124, 253, 227, 110, 28, 247,
 ];
-const REPUTATION_BLOCK_HASH_V1: [u8; 32] = [
-    104, 96, 94, 216, 223, 236, 231, 172, 101, 160, 26, 188, 186, 160, 28, 130, 129, 165, 168, 153,
-    190, 44, 14, 202, 10, 153, 178, 43, 214, 160, 118, 77,
+const REPUTATION_BLOCK_HASH_WITH_CONFIG_V2: [u8; 32] = [
+    233, 142, 240, 128, 29, 148, 240, 184, 226, 12, 23, 151, 43, 83, 19, 255, 180, 93, 139, 124,
+    244, 184, 56, 12, 1, 61, 124, 111, 154, 152, 107, 221,
 ];
 
 fn config() -> PorConfig {
@@ -31,6 +31,7 @@ fn config() -> PorConfig {
         minimum_rating: 10,
         maximum_rating: 100,
         missing_entry_policy: MissingEntryPolicy::CarryForward,
+        ..PorConfig::new(100, 20)
     }
 }
 
@@ -65,7 +66,7 @@ fn reputation_list() -> ReputationList {
 }
 
 #[test]
-fn v1_commitments_match_golden_vectors() {
+fn commitments_with_config_v2_match_golden_vectors() {
     let config = config();
     let ratings = ratings();
     let list = reputation_list();
@@ -81,18 +82,18 @@ fn v1_commitments_match_golden_vectors() {
     )
     .unwrap();
 
-    assert_eq!(config_commitment(&config), CONFIG_COMMITMENT_V1);
+    assert_eq!(config_commitment(&config), CONFIG_COMMITMENT_V2);
     assert_eq!(
         rating_batch_commitment(&ratings, &config).unwrap(),
         RATING_BATCH_COMMITMENT_V1
     );
     assert_eq!(
         reputation_list_commitment(&list).unwrap(),
-        REPUTATION_LIST_COMMITMENT_V1
+        REPUTATION_LIST_COMMITMENT_V2
     );
     assert_eq!(
         reputation_block_hash(&block).unwrap(),
-        REPUTATION_BLOCK_HASH_V1
+        REPUTATION_BLOCK_HASH_WITH_CONFIG_V2
     );
 }
 
@@ -135,4 +136,18 @@ fn commitments_cover_signatures_configuration_and_exclusion() {
         reputation_list_commitment(&original_list).unwrap(),
         reputation_list_commitment(&changed_list).unwrap()
     );
+}
+
+#[test]
+fn commitment_covers_every_penalty_parameter() {
+    let original = config();
+    for field in 0..3 {
+        let mut changed = original.clone();
+        match field {
+            0 => changed.correlation_threshold += 1,
+            1 => changed.base_slash_penalty += 1,
+            _ => changed.inactivity_decay_gamma += 1,
+        }
+        assert_ne!(config_commitment(&original), config_commitment(&changed));
+    }
 }

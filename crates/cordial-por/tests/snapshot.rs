@@ -3,10 +3,11 @@ use cordial_miners_core::{
     crypto::{Blake2b256Hasher, Hasher},
 };
 use cordial_por::{
-    MAX_REPUTATION_STATE_NODE_ID_LEN, MissingEntryPolicy, POR_STATE_SNAPSHOT_MAGIC, PorConfig,
-    PorError, RatingRecord, ReputationBlockContext, ReputationEntry, ReputationState,
-    ReputationVector, build_rating_batch, build_reputation_block, decode_reputation_state_snapshot,
-    encode_reputation_state_snapshot, replay_reputation_transition,
+    MAX_REPUTATION_STATE_NODE_ID_LEN, MissingEntryPolicy, POR_STATE_SNAPSHOT_MAGIC,
+    POR_STATE_SNAPSHOT_VERSION, PorConfig, PorError, RatingRecord, ReputationBlockContext,
+    ReputationEntry, ReputationState, ReputationVector, build_rating_batch, build_reputation_block,
+    decode_reputation_state_snapshot, encode_reputation_state_snapshot,
+    replay_reputation_transition,
 };
 
 const ROUND: u64 = 1;
@@ -24,6 +25,7 @@ fn config() -> PorConfig {
         minimum_rating: 0,
         maximum_rating: 100,
         missing_entry_policy: MissingEntryPolicy::CarryForward,
+        ..PorConfig::new(100, 0)
     }
 }
 
@@ -70,7 +72,7 @@ fn audited_state() -> ReputationState {
 }
 
 #[test]
-fn v1_snapshot_round_trips_the_complete_finalized_state() {
+fn v2_snapshot_round_trips_the_complete_finalized_state() {
     let state = audited_state();
     let encoded = encode_reputation_state_snapshot(&state).unwrap();
     let restored = decode_reputation_state_snapshot(&encoded).unwrap();
@@ -81,17 +83,18 @@ fn v1_snapshot_round_trips_the_complete_finalized_state() {
 }
 
 #[test]
-fn v1_snapshot_encoding_is_deterministic() {
+fn v2_snapshot_with_config_v2_encoding_is_deterministic() {
     let state = audited_state();
     let first = encode_reputation_state_snapshot(&state).unwrap();
     let second = encode_reputation_state_snapshot(&state).unwrap();
 
     assert_eq!(first, second);
+    // V2 binds penalty events and retained balances in the embedded block.
     assert_eq!(
         Blake2b256Hasher.hash(&first),
         [
-            68, 196, 208, 65, 40, 25, 73, 53, 178, 96, 174, 79, 73, 233, 160, 190, 99, 250, 31,
-            184, 60, 75, 141, 242, 120, 247, 252, 22, 17, 135, 8, 18,
+            237, 184, 234, 158, 215, 113, 128, 14, 194, 204, 60, 81, 254, 20, 35, 247, 27, 34, 206,
+            238, 248, 231, 129, 197, 218, 148, 218, 224, 41, 96, 16, 118
         ]
     );
 }
@@ -117,12 +120,23 @@ fn rejects_checksum_corruption_and_trailing_bytes() {
 #[test]
 fn rejects_unsupported_or_truncated_snapshots() {
     let encoded = encode_reputation_state_snapshot(&audited_state()).unwrap();
+    let mut legacy = encoded.clone();
+    let offset = POR_STATE_SNAPSHOT_MAGIC.len();
+    legacy[offset..offset + 2].copy_from_slice(&1u16.to_be_bytes());
+    assert_eq!(
+        decode_reputation_state_snapshot(&legacy),
+        Err(PorError::UnsupportedReputationStateSnapshotVersion(1))
+    );
+
     let mut unsupported = encoded.clone();
     let version_offset = POR_STATE_SNAPSHOT_MAGIC.len();
-    unsupported[version_offset..version_offset + 2].copy_from_slice(&2_u16.to_be_bytes());
+    unsupported[version_offset..version_offset + 2]
+        .copy_from_slice(&(POR_STATE_SNAPSHOT_VERSION + 1).to_be_bytes());
     assert_eq!(
         decode_reputation_state_snapshot(&unsupported),
-        Err(PorError::UnsupportedReputationStateSnapshotVersion(2))
+        Err(PorError::UnsupportedReputationStateSnapshotVersion(
+            POR_STATE_SNAPSHOT_VERSION + 1
+        ))
     );
 
     let truncated = &encoded[..encoded.len() - 1];

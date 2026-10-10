@@ -18,11 +18,13 @@ fn block(round: u64, previous: Option<&ReputationBlock>, shard_id: &[u8]) -> Rep
                 node_id: NodeId(vec![1]),
                 reputation: 40 + round,
                 is_excluded: false,
+                retained_reputation: 0,
             },
             ReputationEntry {
                 node_id: NodeId(vec![2]),
                 reputation: 60 + round,
                 is_excluded: false,
+                retained_reputation: 0,
             },
         ],
     };
@@ -35,6 +37,8 @@ fn block(round: u64, previous: Option<&ReputationBlock>, shard_id: &[u8]) -> Rep
             previous_reputation_hash: previous.map(|block| reputation_block_hash(block).unwrap()),
             config_hash: [0x11; 32],
             ratings_hash: [u8::try_from(round).unwrap(); 32],
+            penalties_hash: cordial_por::penalty_events_commitment(reputation_list.round, None)
+                .unwrap(),
             reputation_root: reputation_list_commitment(&reputation_list).unwrap(),
         },
         reputation_list,

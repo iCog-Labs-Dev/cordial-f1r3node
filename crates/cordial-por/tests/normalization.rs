@@ -12,6 +12,9 @@ fn cfg(scale: u64) -> PorConfig {
         minimum_rating: 0,
         maximum_rating: scale,
         missing_entry_policy: MissingEntryPolicy::default(),
+        correlation_threshold: PorConfig::new(scale, 0).correlation_threshold,
+        base_slash_penalty: PorConfig::new(scale, 0).base_slash_penalty,
+        inactivity_decay_gamma: PorConfig::new(scale, 0).inactivity_decay_gamma,
     }
 }
 

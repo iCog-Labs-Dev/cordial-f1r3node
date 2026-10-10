@@ -55,6 +55,7 @@ pub enum PorError {
     ReputationBlockPreviousHashMismatch,
     ReputationBlockConfigHashMismatch,
     ReputationBlockRatingsHashMismatch,
+    ReputationBlockPenaltiesHashMismatch,
     ReputationBlockRootMismatch,
     ReputationExclusionMismatch,
     CommitmentLengthOverflow,
@@ -79,6 +80,13 @@ pub enum PorError {
     // Key-ejection errors
     /// The requested node is not present in the current `ReputationState`.
     UnknownNode,
+    /// Penalty events are inconsistent with the transition or prior state.
+    InvalidPenaltyEvents(String),
+    // Penalty calculation errors
+    /// Fixed-point arithmetic overflowed during slash penalty application.
+    SlashOverflow,
+    /// Fixed-point arithmetic overflowed during inactivity decay application.
+    InactivityDecayOverflow,
 }
 
 impl fmt::Display for PorError {
@@ -243,6 +251,9 @@ impl fmt::Display for PorError {
                     "reputation block configuration commitment does not match"
                 )
             }
+            Self::ReputationBlockPenaltiesHashMismatch => {
+                write!(f, "reputation block penalty events commitment mismatch")
+            }
             Self::ReputationBlockRatingsHashMismatch => {
                 write!(f, "reputation block rating-batch commitment does not match")
             }
@@ -318,6 +329,15 @@ impl fmt::Display for PorError {
                 write!(f, "Cordial authorized validator weight total overflowed")
             }
             Self::UnknownNode => write!(f, "node is not present in the current reputation state"),
+            Self::InvalidPenaltyEvents(message) => write!(f, "invalid penalty events: {message}"),
+            Self::SlashOverflow => write!(
+                f,
+                "fixed-point arithmetic overflowed during slash penalty application"
+            ),
+            Self::InactivityDecayOverflow => write!(
+                f,
+                "fixed-point arithmetic overflowed during inactivity decay application"
+            ),
         }
     }
 }

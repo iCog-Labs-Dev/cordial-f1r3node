@@ -43,6 +43,7 @@ fn config() -> PorConfig {
         minimum_rating: 0,
         maximum_rating: SCALE,
         missing_entry_policy: MissingEntryPolicy::CarryForward,
+        ..PorConfig::new(SCALE, SCALE)
     }
 }
 

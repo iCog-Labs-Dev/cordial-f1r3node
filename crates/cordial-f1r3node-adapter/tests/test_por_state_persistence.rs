@@ -21,6 +21,7 @@ fn config() -> PorConfig {
         minimum_rating: 0,
         maximum_rating: 100,
         missing_entry_policy: MissingEntryPolicy::CarryForward,
+        ..PorConfig::new(100, 0)
     }
 }
 

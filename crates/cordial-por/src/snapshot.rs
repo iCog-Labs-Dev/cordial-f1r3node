@@ -1,6 +1,6 @@
 //! Versioned durable encoding for finalized Proof-of-Reputation state.
 //!
-//! This module owns bytes and validation, not filesystem I/O. The v1 snapshot
+//! This module owns bytes and validation, not filesystem I/O. The v2 snapshot
 //! stores the current reputation list, permanent ejection registry, and latest
 //! audited block in one checksummed envelope. Pending ratings are deliberately
 //! rejected because they have not crossed the finalized-state boundary.
@@ -27,7 +27,7 @@ use crate::{
 pub const POR_STATE_SNAPSHOT_MAGIC: &[u8; 17] = b"cordial-por-state";
 
 /// Durable PoR state format emitted by this crate.
-pub const POR_STATE_SNAPSHOT_VERSION: u16 = 1;
+pub const POR_STATE_SNAPSHOT_VERSION: u16 = 2;
 
 /// Maximum accepted encoded snapshot size (64 MiB).
 pub const MAX_REPUTATION_STATE_SNAPSHOT_LEN: usize = 64 * 1024 * 1024;
@@ -38,11 +38,11 @@ pub const MAX_REPUTATION_STATE_ENTRIES: usize = MAX_REPUTATION_BLOCK_ENTRIES;
 /// Allocation bound for a persisted node identifier.
 pub const MAX_REPUTATION_STATE_NODE_ID_LEN: usize = MAX_REPUTATION_BLOCK_NODE_ID_LEN;
 
-const SNAPSHOT_CHECKSUM_DOMAIN: &[u8] = b"cordial-por:state-snapshot:v1";
+const SNAPSHOT_CHECKSUM_DOMAIN: &[u8] = b"cordial-por:state-snapshot:v2";
 const CHECKSUM_LEN: usize = 32;
 const FIXED_ENVELOPE_LEN: usize = POR_STATE_SNAPSHOT_MAGIC.len() + 2 + 8 + CHECKSUM_LEN;
 
-/// Encode a finalized reputation state into the canonical v1 snapshot format.
+/// Encode a finalized reputation state into the canonical v2 snapshot format.
 pub fn encode_reputation_state_snapshot(state: &ReputationState) -> Result<Vec<u8>, PorError> {
     state.validate_snapshot_invariants()?;
 
@@ -91,7 +91,7 @@ pub fn encode_reputation_state_snapshot(state: &ReputationState) -> Result<Vec<u
     Ok(encoded)
 }
 
-/// Decode and fully validate a canonical v1 reputation state snapshot.
+/// Decode and fully validate a canonical v2 reputation state snapshot.
 pub fn decode_reputation_state_snapshot(bytes: &[u8]) -> Result<ReputationState, PorError> {
     if bytes.len() > MAX_REPUTATION_STATE_SNAPSHOT_LEN {
         return Err(PorError::ReputationStateSnapshotTooLarge);
@@ -186,6 +186,7 @@ fn encode_reputation_list(output: &mut Vec<u8>, list: &ReputationList) -> Result
         put_node_id(output, &entry.node_id)?;
         put_u64(output, entry.reputation);
         output.push(u8::from(entry.is_excluded));
+        put_u64(output, entry.retained_reputation);
     }
     Ok(())
 }
@@ -199,6 +200,7 @@ fn decode_reputation_list(decoder: &mut Decoder<'_>) -> Result<ReputationList, P
             node_id: decoder.read_node_id()?,
             reputation: decoder.read_u64()?,
             is_excluded: decoder.read_discriminant()?,
+            retained_reputation: decoder.read_u64()?,
         });
     }
     validate_reputation_entries(&entries)?;

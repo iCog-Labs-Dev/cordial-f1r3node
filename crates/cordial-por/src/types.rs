@@ -87,6 +87,9 @@ pub struct RatingBatch {
 pub struct ReputationEntry {
     pub node_id: NodeId,
     pub reputation: ReputationWeight,
+    /// Surviving post-slash balance for an excluded key. Never consensus weight.
+    /// Fresh-key transfers require a separate authenticated host operation.
+    pub retained_reputation: ReputationWeight,
     /// Permanent key ejection flag.
     ///
     /// Once `true`, this can never be reset to `false` for the same key.
@@ -100,6 +103,7 @@ impl ReputationEntry {
         Self {
             node_id,
             reputation,
+            retained_reputation: 0,
             is_excluded: false,
         }
     }
@@ -109,6 +113,7 @@ impl ReputationEntry {
         Self {
             node_id,
             reputation: 0,
+            retained_reputation: 0,
             is_excluded: true,
         }
     }
@@ -136,25 +141,36 @@ pub struct ReputationVector {
 }
 
 // ============================================================
-// Penalty placeholders
+// Finalized penalty inputs
 // ============================================================
 
-/// Placeholder for equivocation evidence.
-///
-/// No slashing logic exists.
+/// One externally authenticated equivocation event. The pure calculation
+/// layer requires a nonempty evidence reference but does not verify proofs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EquivocationPenalty {
     pub offender: NodeId,
     pub evidence: Vec<u8>,
 }
 
-/// Placeholder for inactivity penalties.
-///
-/// No punishment logic exists.
+/// One externally established missed participation round. Consecutive replay
+/// accepts `missed_rounds == 1`; cumulative counters must not be reapplied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InactivityPenalty {
     pub offender: NodeId,
     pub missed_rounds: u64,
+}
+
+/// Finalized penalty events for exactly one reputation transition.
+///
+/// Callers must agree on and authenticate these inputs through the host's
+/// finalized evidence path; a peer's claim or an absent rating alone is not
+/// proof of misconduct/inactivity. Event order does not affect calculation.
+/// Duplicate offenders and overlapping slash/inactivity events are rejected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReputationPenaltyEvents {
+    pub round: ReputationRound,
+    pub equivocations: Vec<EquivocationPenalty>,
+    pub inactivity: Vec<InactivityPenalty>,
 }
 
 // ============================================================
@@ -184,7 +200,10 @@ pub struct ReputationBlockHeader {
     /// Commitment to the canonical signed rating batch.
     pub ratings_hash: ReputationCommitment,
 
-    /// Commitment to the canonical reputation list.
+    /// Commitment to canonical round-bound penalty events, including evidence.
+    pub penalties_hash: ReputationCommitment,
+
+    /// Commitment to the canonical reputation list (including retained capital).
     pub reputation_root: ReputationCommitment,
 }
 

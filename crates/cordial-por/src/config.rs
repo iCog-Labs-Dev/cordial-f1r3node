@@ -52,6 +52,30 @@ pub struct PorConfig {
     /// Fallback applied when the contribution and previous reputation vectors
     /// cover different node sets.
     pub missing_entry_policy: MissingEntryPolicy,
+
+    /// Fraction of total active reputation weight (in fixed-point units out of
+    /// `scale`) above which a correlated equivocation event escalates from the
+    /// base penalty to a full 100% slash.
+    ///
+    /// Default: `300_000_000` (30% of `DEFAULT_SCALE = 1_000_000_000`).
+    pub correlation_threshold: ReputationWeight,
+
+    /// Fixed-point penalty ratio applied to an equivocating validator when the
+    /// correlated equivocation ratio is at or below `correlation_threshold`.
+    ///
+    /// Expressed in the same fixed-point units as `scale`.
+    ///
+    /// Default: `250_000_000` (25% of `DEFAULT_SCALE`).
+    pub base_slash_penalty: ReputationWeight,
+
+    /// Fixed-point decay factor applied to an inactive node's reputation each
+    /// round it misses. The node's reputation is multiplied by
+    /// `(scale - inactivity_decay_gamma) / scale`.
+    ///
+    /// A value of `0` disables inactivity decay.
+    ///
+    /// Default: `10_000_000` (1% of `DEFAULT_SCALE`).
+    pub inactivity_decay_gamma: ReputationWeight,
 }
 
 /// Numerator of the default liquid-rank alpha ratio (3/5 = 60 %).
@@ -65,13 +89,51 @@ impl PorConfig {
 
     pub const DEFAULT_INITIAL_REPUTATION: ReputationWeight = 200_000_000;
 
+    /// Default: 30% of `DEFAULT_SCALE`.
+    pub const DEFAULT_CORRELATION_THRESHOLD: ReputationWeight = 300_000_000;
+
+    /// Default: 25% of `DEFAULT_SCALE`.
+    pub const DEFAULT_BASE_SLASH_PENALTY: ReputationWeight = 250_000_000;
+
+    /// Default: 1% of `DEFAULT_SCALE` decay per missed round.
+    pub const DEFAULT_INACTIVITY_DECAY_GAMMA: ReputationWeight = 10_000_000;
+
+    /// Validate every protocol parameter before calculating or committing a round.
+    pub fn validate(&self) -> Result<(), crate::PorError> {
+        if self.scale == 0 {
+            return Err(crate::PorError::InvalidConfiguration(
+                "scale must be positive".into(),
+            ));
+        }
+        if self.liquid_rank_alpha > self.scale || self.initial_reputation > self.scale {
+            return Err(crate::PorError::InvalidConfiguration(
+                "alpha and initial reputation must not exceed scale".into(),
+            ));
+        }
+        if self.minimum_rating > self.maximum_rating {
+            return Err(crate::PorError::InvalidConfiguration(
+                "minimum rating must not exceed maximum rating".into(),
+            ));
+        }
+        if self.correlation_threshold > self.scale
+            || self.base_slash_penalty > self.scale
+            || self.inactivity_decay_gamma > self.scale
+        {
+            return Err(crate::PorError::InvalidConfiguration(
+                "penalty fractions must not exceed scale".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn new(scale: ReputationWeight, initial_reputation: ReputationWeight) -> Self {
         // Default alpha = 60 % of scale (3/5). This keeps liquid_rank_alpha <= scale
         // for every valid scale value, avoiding InvalidLiquidRankAlpha on first use.
         // When scale = DEFAULT_SCALE (1_000_000_000) the result is 600_000_000,
         // preserving existing behaviour exactly.
-        let liquid_rank_alpha = scale.saturating_mul(DEFAULT_LIQUID_RANK_ALPHA_NUMERATOR)
-            / DEFAULT_LIQUID_RANK_ALPHA_DENOMINATOR;
+        let liquid_rank_alpha =
+            ((u128::from(scale) * u128::from(DEFAULT_LIQUID_RANK_ALPHA_NUMERATOR))
+                / u128::from(DEFAULT_LIQUID_RANK_ALPHA_DENOMINATOR)) as u64;
 
         Self {
             scale,
@@ -84,6 +146,15 @@ impl PorConfig {
             maximum_rating: scale,
 
             missing_entry_policy: MissingEntryPolicy::default(),
+
+            correlation_threshold: ((u128::from(scale)
+                * u128::from(Self::DEFAULT_CORRELATION_THRESHOLD))
+                / u128::from(Self::DEFAULT_SCALE)) as u64,
+            base_slash_penalty: ((u128::from(scale) * u128::from(Self::DEFAULT_BASE_SLASH_PENALTY))
+                / u128::from(Self::DEFAULT_SCALE)) as u64,
+            inactivity_decay_gamma: ((u128::from(scale)
+                * u128::from(Self::DEFAULT_INACTIVITY_DECAY_GAMMA))
+                / u128::from(Self::DEFAULT_SCALE)) as u64,
         }
     }
 }

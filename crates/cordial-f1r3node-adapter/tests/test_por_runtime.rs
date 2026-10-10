@@ -617,3 +617,31 @@ fn committed_round_with_pending_activation_can_be_retried() {
     );
     assert!(!runtime.state().has_unactivated_committed_round().unwrap());
 }
+
+#[test]
+fn invalid_penalty_config_fails_before_opening_durable_state() {
+    let directory = tempdir().unwrap();
+    let (_, _, state) = genesis_state();
+    let ingress = LiveIngress::with_consensus_view(
+        (),
+        HashMap::from([(NodeId(vec![1]), 100)]),
+        CasperShardConf::default(),
+        "root",
+    );
+    let mut config = PorConfig::default();
+    config.base_slash_penalty = config.scale + 1;
+    assert!(matches!(
+        PorRuntime::open(
+            directory.path(),
+            state,
+            ingress,
+            config,
+            SHARD_ID,
+            WAVELENGTH
+        ),
+        Err(PorRuntimeError::InvalidConfig(
+            cordial_por::PorError::InvalidConfiguration(_)
+        ))
+    ));
+    assert!(!directory.path().join("por").exists());
+}

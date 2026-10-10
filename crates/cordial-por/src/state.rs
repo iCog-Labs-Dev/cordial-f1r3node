@@ -3,14 +3,14 @@ use std::collections::BTreeSet;
 use cordial_miners_core::NodeId;
 
 use crate::{
-    audit::verify_reputation_transition,
+    audit::verify_reputation_transition_with_penalties,
     block::{ReputationBlockContext, validate_reputation_block},
     commitments::{validate_reputation_entries, validate_reputation_vector},
     config::PorConfig,
     error::PorError,
     types::{
-        RatingRecord, ReputationBlock, ReputationEntry, ReputationList, ReputationRound,
-        ReputationVector, ReputationWeight,
+        RatingRecord, ReputationBlock, ReputationEntry, ReputationList, ReputationPenaltyEvents,
+        ReputationRound, ReputationVector, ReputationWeight,
     },
 };
 
@@ -196,6 +196,16 @@ impl ReputationState {
                 if excluded.contains(&entry.node_id) {
                     entry.is_excluded = true;
                     entry.reputation = 0;
+                    // Preserve the already committed retained balance even if a
+                    // direct vector tries to replace it or resurrect this key.
+                    entry.retained_reputation = self
+                        .reputation_list
+                        .entries
+                        .binary_search_by(|old| old.node_id.cmp(&entry.node_id))
+                        .ok()
+                        .map_or(0, |index| {
+                            self.reputation_list.entries[index].retained_reputation
+                        });
                 }
                 entry
             })
@@ -212,7 +222,16 @@ impl ReputationState {
             if !already_present {
                 // Insert in sorted position to preserve canonical ordering.
                 let insert_pos = new_entries.partition_point(|e| e.node_id < *ejected_id);
-                new_entries.insert(insert_pos, ReputationEntry::ejected(ejected_id.clone()));
+                let mut tombstone = ReputationEntry::ejected(ejected_id.clone());
+                if let Ok(index) = self
+                    .reputation_list
+                    .entries
+                    .binary_search_by(|entry| entry.node_id.cmp(ejected_id))
+                {
+                    tombstone.retained_reputation =
+                        self.reputation_list.entries[index].retained_reputation;
+                }
+                new_entries.insert(insert_pos, tombstone);
             }
         }
 
@@ -239,11 +258,34 @@ impl ReputationState {
         block: ReputationBlock,
         config: &PorConfig,
     ) -> Result<(), PorError> {
+        self.apply_reputation_block_with_penalties(
+            shard_id,
+            source_finalized_wave,
+            ratings,
+            block,
+            config,
+            None,
+        )
+    }
+
+    /// Audit a penalty-inclusive block before atomically replacing the snapshot.
+    /// The caller supplies finalized penalty events; this method does not
+    /// authenticate evidence or transfer capital. Audited equivocations atomically
+    /// eject their keys and retain the post-slash balance outside voting weight.
+    pub fn apply_reputation_block_with_penalties(
+        &mut self,
+        shard_id: &[u8],
+        source_finalized_wave: u64,
+        ratings: &[RatingRecord],
+        block: ReputationBlock,
+        config: &PorConfig,
+        penalties: Option<&ReputationPenaltyEvents>,
+    ) -> Result<(), PorError> {
         let previous = ReputationVector {
             round: self.current_round,
             values: self.reputation_list.entries.clone(),
         };
-        verify_reputation_transition(
+        verify_reputation_transition_with_penalties(
             &previous,
             ratings,
             &block,
@@ -253,6 +295,7 @@ impl ReputationState {
                 previous_block: self.latest_block.as_ref(),
             },
             config,
+            penalties,
         )?;
 
         let vector = ReputationVector {
@@ -261,6 +304,13 @@ impl ReputationState {
         };
         let mut staged = self.clone();
         staged.apply_reputation_vector(vector)?;
+        // Only an audited block can introduce new permanent exclusions. Commit
+        // the registry, zero active weights, retained balances and block together.
+        for entry in &staged.reputation_list.entries {
+            if entry.is_excluded {
+                staged.excluded_keys.insert(entry.node_id.clone());
+            }
+        }
         staged.latest_block = Some(block);
 
         *self = staged;
@@ -278,7 +328,10 @@ impl ReputationState {
 
         for entry in &self.reputation_list.entries {
             let is_registered = self.excluded_keys.contains(&entry.node_id);
-            if entry.is_excluded != is_registered || (is_registered && entry.reputation != 0) {
+            if entry.is_excluded != is_registered
+                || (is_registered && entry.reputation != 0)
+                || (!is_registered && entry.retained_reputation != 0)
+            {
                 return Err(PorError::ReputationStateSnapshotExclusionMismatch);
             }
         }

@@ -32,11 +32,13 @@ fn block() -> ReputationBlock {
             node_id: node(2),
             reputation: 40,
             is_excluded: false,
+            retained_reputation: 0,
         },
         ReputationEntry {
             node_id: node(3),
             reputation: 60,
             is_excluded: false,
+            retained_reputation: 0,
         },
     ];
     entries.sort_by(|left, right| left.node_id.cmp(&right.node_id));
@@ -51,6 +53,8 @@ fn block() -> ReputationBlock {
             previous_reputation_hash: None,
             config_hash: [0x11; 32],
             ratings_hash: [0x22; 32],
+            penalties_hash: cordial_por::penalty_events_commitment(reputation_list.round, None)
+                .unwrap(),
             reputation_root: reputation_list_commitment(&reputation_list).unwrap(),
         },
         reputation_list,

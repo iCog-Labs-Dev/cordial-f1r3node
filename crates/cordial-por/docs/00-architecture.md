@@ -181,7 +181,7 @@ Future:
 | `transition` | Blend contribution with previous reputation using checked fixed-point arithmetic and consecutive rounds, resolving sparse node sets through the configured policy | contribution `ReputationVector`, previous `ReputationVector`, `PorConfig` | next-round `ReputationVector` | `config`, `types`, `error` | `blend_reputation_transition` |
 | `clamp` | Apply deterministic fixed-point sigmoid clamp to reputation values; the pipeline clamp restores CarryForward entries from previous reputation so an already-finalized value is not decayed and a hand-built blend cannot preserve an arbitrary unclamped value | `ReputationVector`, previous and contribution vectors, `PorConfig` | clamped `ReputationVector` | `config`, `types`, `error` | `clamp_reputation_value`, `clamp_reputation_vector`, `clamp_reputation_transition` |
 | `state` | In-memory reputation snapshot keyed by `NodeId`; consumes finalized vectors or audited blocks atomically | round, validator → weight, finalized `ReputationVector` or ratings + `ReputationBlock` | `ReputationState` | `audit`, `config`, `types`, `error` | `new`, `round`, `reputation_list`, `pending_ratings`, `latest_block`, `add_rating`, `set_reputation`, `eject_validator`, `is_ejected`, `excluded_keys`, `apply_reputation_vector`, `apply_reputation_block` |
-| `commitments` | Define the canonical, domain-separated v1 commitments for configuration, signed ratings, reputation lists, and reputation blocks | protocol data | Blake2b-256 commitments | `config`, `ratings`, `types`, `error` | `config_commitment`, `rating_batch_commitment`, `reputation_list_commitment`, `reputation_block_hash` |
+| `commitments` | Define the canonical, domain-separated commitments for configuration, signed ratings, penalty events, reputation lists, and reputation blocks | protocol data | Blake2b-256 commitments | `config`, `ratings`, `types`, `error` | `config_commitment`, `rating_batch_commitment`, `reputation_list_commitment`, `reputation_block_hash` |
 | `block` | Derive, validate, and canonically encode a versioned, shard-bound, finalized-wave-bound reputation block | `ReputationBlockContext`, `RatingBatch`, `ReputationList`, `PorConfig` / wire bytes | `ReputationBlock` / bounded wire envelope | `commitments`, `ratings`, `types`, `error` | `build_reputation_block`, `validate_reputation_block`, `encode_reputation_block`, `decode_reputation_block` |
 | `audit` | Replay the deterministic transition and verify it, its commitments, and its chain context against a proposed reputation block | previous `ReputationVector`, `&[RatingRecord]`, `ReputationBlock`, `ReputationBlockContext`, `PorConfig` | expected `ReputationList` / verification result | `commitments`, `ratings`, `matrix`, `normalization`, `liquid_rank`, `transition`, `clamp`, `block`, `types`, `error` | `replay_reputation_transition`, `verify_reputation_transition` |
 | `snapshot` | Encode and validate the complete finalized state in a bounded, versioned, checksummed durable format | `ReputationState` / snapshot bytes | snapshot bytes / restored `ReputationState` | `state`, `block`, `commitments`, `types`, `error` | `encode_reputation_state_snapshot`, `decode_reputation_state_snapshot` |
@@ -199,10 +199,10 @@ Future:
 6. The next vector is computed with `blend_reputation_transition`, which requires consecutive rounds and covers the union of both node sets, resolving nodes missing from either side through `PorConfig::missing_entry_policy`; this is a pure calculation and does not mutate state.
 7. The next vector is clamped with `clamp_reputation_transition`, which applies the sigmoid to rated and newly seeded nodes and restores CarryForward entries from previous reputation. The previous value is copied rather than taken from the blend, so a hand-built blended vector cannot preserve an arbitrary unclamped value. The sigmoid is not idempotent, so clamping those entries would decay them every sparse round. This is a pure calculation and does not mutate state.
 8. A finalized vector can be applied directly with `ReputationState::apply_reputation_vector`, or a proposed block can be replay-audited and applied atomically with `ReputationState::apply_reputation_block`. Successful block application also records `latest_block`; failure leaves the prior state unchanged.
-9. A `ReputationBlock` is assembled with `build_reputation_block`. The builder accepts finalized protocol inputs rather than caller-supplied hashes and derives the canonical configuration, signed-rating, reputation-list, and previous-block commitments. The v1 header binds the result to a shard and to the finalized wave that opens its reputation round.
+9. A `ReputationBlock` is assembled with `build_reputation_block`. The builder accepts finalized protocol inputs rather than caller-supplied hashes and derives the canonical configuration, signed-rating, reputation-list, and previous-block commitments. The v2 header binds the result to a shard and to the finalized wave that opens its reputation round.
 10. Any validator can replay steps 2-7 with `replay_reputation_transition` and check a proposed block with `verify_reputation_transition`. Verification checks the header version, shard, source wave, previous-block link, all derived commitments, exclusion flags, and the replayed reputation list. Both operations are read-only.
 11. The f1r3node adapter consumes a deterministically closed rating round, constructs and audits its reputation block against a cloned state, exports `reputation_weights`, and produces a staged next state without changing the live state.
-12. A committed `ReputationBlock` can be encoded into or decoded from the canonical bounded v1 block envelope. The durable snapshot embeds the same block payload.
+12. A committed `ReputationBlock` can be encoded into or decoded from the canonical bounded v2 block envelope. The durable snapshot embeds the same block payload.
 13. `DurablePorState` commits the complete staged snapshot, appends the same block envelope to immutable round history, and only then exposes the state in memory. Startup validates the retained chain and completes a missing tip from the snapshot after an interrupted append.
 14. The adapter wraps a canonical block envelope with a version, publisher public key, and secp256k1 signature, then exposes broadcaster/receiver traits and a bounded Tokio handoff.
 15. Optional checkpoint publications are matched against Cordial-supplied authorized attesters, replay-audited against the local completed rating round, deduplicated, and summarized by a strict configurable attestation threshold. This threshold is not Cordial finality.
@@ -231,7 +231,7 @@ The transition is atomic with respect to `ReputationState`: all work is staged o
 
 ## Adapter Persistence Boundary
 
-`cordial-por::snapshot` owns the v1 durable encoding, size bounds, checksum, and restored-state invariants. It performs no filesystem I/O. The adapter's `por::persistence::PorStateStore` owns the node data-directory layout:
+`cordial-por::snapshot` owns the v2 durable encoding, size bounds, checksum, and restored-state invariants. It performs no filesystem I/O. The adapter's `por::persistence::PorStateStore` owns the node data-directory layout:
 
 ```text
 <data_dir>/por/
@@ -417,7 +417,7 @@ construct pre-hydrated LiveIngress
 - Rating validation, deterministic matrix construction, paper-guided rating normalization, Liquid-Rank contribution calculation, pure alpha-blend transition calculation with a configured no-rating fallback, deterministic sigmoid clamping (restoring CarryForward entries from previous reputation so finalized reputation is not decayed on a sparse round), explicit finalized-vector application, canonical reputation commitments, atomic audited-block application to `ReputationState`, reputation-block construction and validation, and deterministic audit replay of a proposed reputation block.
 - Versioned durable-state bytes and validation for `ReputationState`, its permanent ejection registry, and latest audited block.
 - Raw reputation export and fail-closed projection onto Cordial-supplied validator identities.
-- Future deterministic penalty calculations, without assuming consensus ownership.
+- Deterministic, committed penalty events and atomic permanent key ejection.
 
 ### cordial-por does NOT own
 
@@ -492,7 +492,20 @@ reference material, not an implementation target in this integration.
 
 Logical extension points that do not yet exist:
 
-- Penalty / slashing application that mutates `ReputationState`.
+- Authenticated retained-capital transfer and fresh-key registration.
 - Concrete reputation-checkpoint peer transport and a persisted attestation evidence trail.
 
 These remain optional extensions around the weight engine; none transfers consensus authority to PoR.
+
+## Penalty replay and format v2
+
+Penalty-aware replay, block construction and verification use the same finalized
+`ReputationPenaltyEvents`. The v2 header binds their canonical commitment.
+Audited application atomically excludes equivocation offenders, zeros active
+weight and records post-slash `retained_reputation`; snapshots preserve both the
+balance and permanent registry. All replay entry points validate `PorConfig`,
+including rounds without events. The host authenticates and retains evidence;
+existing rating-only adapter flows continue to commit to an empty penalty set.
+
+Block and snapshot v1 bytes are rejected. A coordinated upgrade with an explicitly
+prepared v2 checkpoint is required; there is no automatic legacy migration.

@@ -21,6 +21,9 @@ fn cfg_with(
         minimum_rating: 0,
         maximum_rating: scale,
         missing_entry_policy,
+        correlation_threshold: PorConfig::new(scale, 0).correlation_threshold,
+        base_slash_penalty: PorConfig::new(scale, 0).base_slash_penalty,
+        inactivity_decay_gamma: PorConfig::new(scale, 0).inactivity_decay_gamma,
     }
 }
 
@@ -297,4 +300,23 @@ fn new_with_small_scale_does_not_return_invalid_liquid_rank_alpha() {
         blend_reputation_transition(&contribution, &previous, &config).is_ok(),
         "PorConfig::new with scale < 600_000_000 must not produce InvalidLiquidRankAlpha"
     );
+}
+
+#[test]
+fn tiered_penalty_and_decay_transition_api() {
+    use cordial_por::transition::{
+        apply_slash_to_reputation, compute_inactivity_decay, compute_slash_penalty,
+    };
+    let config = PorConfig::new(1000, 200);
+    for (equivocating, total, expected_penalty, remaining) in
+        [(1, 4, 250, 750), (3, 10, 250, 750), (4, 10, 1000, 0)]
+    {
+        let penalty = compute_slash_penalty(equivocating, total, &config).unwrap();
+        assert_eq!(penalty, expected_penalty);
+        assert_eq!(
+            apply_slash_to_reputation(1000, penalty, &config).unwrap(),
+            remaining
+        );
+    }
+    assert_eq!(compute_inactivity_decay(1000, 10, &config).unwrap(), 990);
 }

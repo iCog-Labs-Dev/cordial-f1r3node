@@ -11,17 +11,20 @@
 use crate::{
     block::{ReputationBlockContext, validate_reputation_block},
     clamp::clamp_reputation_transition,
-    commitments::{config_commitment, rating_batch_commitment, reputation_block_hash},
+    commitments::{
+        config_commitment, penalty_events_commitment, rating_batch_commitment,
+        reputation_block_hash,
+    },
     config::PorConfig,
     error::PorError,
     liquid_rank::compute_liquid_rank_contribution,
     matrix::build_rating_matrix,
     normalization::normalize_rating_matrix,
     ratings::build_rating_batch,
-    transition::blend_reputation_transition,
+    transition::{apply_reputation_penalties, blend_reputation_transition},
     types::{
-        RatingBatch, RatingRecord, ReputationBlock, ReputationList, ReputationRound,
-        ReputationVector,
+        RatingBatch, RatingRecord, ReputationBlock, ReputationList, ReputationPenaltyEvents,
+        ReputationRound, ReputationVector,
     },
 };
 
@@ -39,6 +42,22 @@ pub fn replay_reputation_transition(
     round: ReputationRound,
     config: &PorConfig,
 ) -> Result<ReputationList, PorError> {
+    replay_reputation_transition_with_penalties(previous_reputation, ratings, round, config, None)
+}
+
+/// Replay with optional, externally authenticated penalty events for this round.
+/// Penalties are applied after clamp, using previous-round weights. Missing
+/// ratings alone do not trigger decay. `None` preserves the no-penalty path.
+pub fn replay_reputation_transition_with_penalties(
+    previous_reputation: &ReputationVector,
+    ratings: &[RatingRecord],
+    round: ReputationRound,
+    config: &PorConfig,
+    penalties: Option<&ReputationPenaltyEvents>,
+) -> Result<ReputationList, PorError> {
+    config.validate()?;
+    crate::commitments::validate_reputation_vector(previous_reputation)?;
+    penalty_events_commitment(round, penalties)?;
     let batch = build_rating_batch(round, ratings.to_vec(), config)?;
     let matrix = build_rating_matrix(&batch)?;
     let normalized = normalize_rating_matrix(&matrix, config)?;
@@ -56,13 +75,18 @@ pub fn replay_reputation_transition(
         {
             entry.reputation = 0;
             entry.is_excluded = true;
+            entry.retained_reputation = previous_reputation.values[index].retained_reputation;
         }
     }
 
-    Ok(ReputationList {
+    let mut next = ReputationList {
         round: clamped.round,
         entries,
-    })
+    };
+    if let Some(events) = penalties {
+        apply_reputation_penalties(&mut next, previous_reputation, ratings, events, config)?;
+    }
+    Ok(next)
 }
 
 /// Verify that a proposed reputation block matches a deterministic replay.
@@ -80,6 +104,29 @@ pub fn verify_reputation_transition(
     context: ReputationBlockContext<'_>,
     config: &PorConfig,
 ) -> Result<(), PorError> {
+    verify_reputation_transition_with_penalties(
+        previous_reputation,
+        ratings,
+        proposed_block,
+        context,
+        config,
+        None,
+    )
+}
+
+/// Verify a penalty-inclusive block against the same finalized events used by
+/// its producer. Events must be authenticated out of band, just like ratings;
+/// the exact event set is bound by the block's penalties hash. Substitution or
+/// omission fails even when the resulting reputation values are identical.
+pub fn verify_reputation_transition_with_penalties(
+    previous_reputation: &ReputationVector,
+    ratings: &[RatingRecord],
+    proposed_block: &ReputationBlock,
+    context: ReputationBlockContext<'_>,
+    config: &PorConfig,
+    penalties: Option<&ReputationPenaltyEvents>,
+) -> Result<(), PorError> {
+    config.validate()?;
     validate_reputation_block(proposed_block)?;
 
     let header = &proposed_block.header;
@@ -117,9 +164,17 @@ pub fn verify_reputation_transition(
         return Err(PorError::ReputationBlockRatingsHashMismatch);
     }
 
+    if header.penalties_hash != penalty_events_commitment(header.round, penalties)? {
+        return Err(PorError::ReputationBlockPenaltiesHashMismatch);
+    }
     let proposed = &proposed_block.reputation_list;
-    let expected =
-        replay_reputation_transition(previous_reputation, ratings, proposed.round, config)?;
+    let expected = replay_reputation_transition_with_penalties(
+        previous_reputation,
+        ratings,
+        proposed.round,
+        config,
+        penalties,
+    )?;
 
     compare_reputation_lists(&expected, proposed)
 }
@@ -137,11 +192,14 @@ fn compare_reputation_lists(
                 match expected_entry.node_id.cmp(&proposed_entry.node_id) {
                     std::cmp::Ordering::Less => return Err(PorError::MissingReputationBlockEntry),
                     std::cmp::Ordering::Equal => {
-                        if expected_entry.reputation != proposed_entry.reputation {
-                            return Err(PorError::ReputationValueMismatch);
-                        }
                         if expected_entry.is_excluded != proposed_entry.is_excluded {
                             return Err(PorError::ReputationExclusionMismatch);
+                        }
+                        if expected_entry.reputation != proposed_entry.reputation
+                            || expected_entry.retained_reputation
+                                != proposed_entry.retained_reputation
+                        {
+                            return Err(PorError::ReputationValueMismatch);
                         }
 
                         expected_entries.next();

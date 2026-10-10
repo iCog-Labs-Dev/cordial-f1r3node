@@ -302,7 +302,7 @@ fn canonical_wire_block() -> ReputationBlock {
 }
 
 #[test]
-fn v1_wire_round_trips_genesis_and_chained_blocks() {
+fn v2_wire_round_trips_genesis_and_chained_blocks() {
     let previous = canonical_wire_block();
     let next = build_reputation_block(
         context(SOURCE_WAVE + 1, Some(&previous)),
@@ -320,7 +320,7 @@ fn v1_wire_round_trips_genesis_and_chained_blocks() {
 }
 
 #[test]
-fn v1_wire_encoding_is_deterministic_and_matches_golden_hash() {
+fn v2_wire_encoding_is_deterministic_and_matches_golden_hash() {
     let block = canonical_wire_block();
     let first = encode_reputation_block(&block).unwrap();
     let second = encode_reputation_block(&block).unwrap();
@@ -329,8 +329,8 @@ fn v1_wire_encoding_is_deterministic_and_matches_golden_hash() {
     assert_eq!(
         Blake2b256Hasher.hash(&first),
         [
-            36, 31, 240, 195, 171, 18, 220, 162, 249, 166, 24, 40, 238, 159, 234, 10, 146, 82, 174,
-            106, 120, 235, 123, 251, 152, 216, 216, 129, 6, 14, 90, 171,
+            81, 98, 132, 175, 95, 95, 181, 205, 110, 218, 181, 48, 47, 81, 19, 48, 187, 153, 137,
+            58, 186, 107, 133, 207, 89, 217, 29, 22, 145, 158, 170, 179
         ]
     );
 }
@@ -364,6 +364,14 @@ fn wire_rejects_bad_magic_version_length_and_truncation() {
     assert_eq!(
         decode_reputation_block(&bad_magic),
         Err(PorError::MalformedReputationBlockWire)
+    );
+
+    let mut legacy = encoded.clone();
+    let offset = POR_REPUTATION_BLOCK_MAGIC.len();
+    legacy[offset..offset + 2].copy_from_slice(&1u16.to_be_bytes());
+    assert_eq!(
+        decode_reputation_block(&legacy),
+        Err(PorError::UnsupportedReputationBlockWireVersion(1))
     );
 
     let mut unsupported = encoded.clone();

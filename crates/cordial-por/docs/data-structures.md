@@ -14,6 +14,7 @@ rating transactions
   -> liquid-rank contribution vector
   -> alpha-blended next reputation vector
   -> clamped reputation vector
+  -> finalized penalty events (optional) and permanent ejection
   -> committed reputation block
   -> audited reputation state snapshot
 ```
@@ -40,7 +41,7 @@ the snapshot without cloning.
 Rating matrix construction and normalization are still data preparation only.
 The liquid-rank, transition, and clamp stages are pure calculation stages. They
 do not mutate reputation state or materialize a dense matrix. State application
-is explicit and happens only through `ReputationState::apply_reputation_vector`.
+is explicit through vector application or replay-audited block application.
 
 ## Paper Reference
 
@@ -73,6 +74,7 @@ rating transactions
   -> liquid-rank reputation contribution P
   -> alpha-blended next reputation vector
   -> clamped reputation vector
+  -> finalized penalty events (optional) and permanent ejection
   -> reputation list
   -> reputation state snapshot
   -> reputation block
@@ -266,7 +268,7 @@ configuration, signed rating batch, and reputation list, and links the block to
 the canonical hash of the immediately preceding block when one exists. A
 previous block must belong to the same shard and immediately preceding round.
 
-`validate_reputation_block` checks the v1 format version, non-empty bounded
+`validate_reputation_block` checks the v2 format version, non-empty bounded
 shard identifier, finalized-wave-to-round relation, header/list round match,
 canonical `NodeId` ordering, and the recomputed reputation-list commitment.
 Structural validation cannot prove external facts such as which shard or wave
@@ -276,20 +278,24 @@ publishes a block.
 
 ## Canonical Reputation Commitments
 
-All v1 commitments use Blake2b-256. Integers are unsigned big-endian, collection
+All commitments use Blake2b-256. Configuration, reputation-list and block
+commitments are v2; rating and penalty-event commitments are v1. Integers are unsigned big-endian, collection
 counts and byte lengths are `u64`, optional values use a one-byte `0`/`1`
 discriminant, and Boolean values use `0`/`1`. Domain separators are included
 verbatim as the first bytes of their preimages.
 
 ```text
 config_commitment = H(
-    "cordial-por:config-commitment:v1"
+    "cordial-por:config-commitment:v2"
     || scale_u64
     || initial_reputation_u64
     || liquid_rank_alpha_u64
     || minimum_rating_u64
     || maximum_rating_u64
     || missing_entry_policy_u8
+    || correlation_threshold_u64
+    || base_slash_penalty_u64
+    || inactivity_decay_gamma_u64
 )
 
 rating_batch_commitment = H(
@@ -305,14 +311,14 @@ rating_batch_commitment = H(
 )
 
 reputation_list_commitment = H(
-    "cordial-por:reputation-list-commitment:v1"
+    "cordial-por:reputation-list-commitment:v2"
     || round_u64
     || entry_count_u64
-    || each(node_id_len_u64 || node_id || reputation_u64 || is_excluded_u8)
+    || each(node_id_len_u64 || node_id || reputation_u64 || is_excluded_u8 || retained_reputation_u64)
 )
 
 reputation_block_hash = H(
-    "cordial-por:reputation-block-commitment:v1"
+    "cordial-por:reputation-block-commitment:v2"
     || version_u16
     || shard_id_len_u64 || shard_id
     || source_finalized_wave_u64
@@ -320,6 +326,7 @@ reputation_block_hash = H(
     || previous_hash_presence_u8 || [previous_hash_32]
     || config_hash_32
     || ratings_hash_32
+    || penalties_hash_32
     || reputation_root_32
 )
 ```
@@ -328,8 +335,29 @@ Ratings are first validated and sorted by `(recipient, rater)`, so the batch
 commitment is independent of arrival order. It commits the exact signatures as
 well as the canonical signed payloads. Reputation entries must already be in
 strict `NodeId` order; the list commitment includes `is_excluded`, making
-exclusion part of the auditable state. Golden vectors in
-`tests/commitments.rs` lock the v1 formats against accidental changes.
+exclusion and retained balances part of the auditable state. Active entries must
+have zero retained balance; excluded entries must have zero active reputation.
+Golden vectors in `tests/commitments.rs` lock these formats against accidental changes.
+
+## Penalty Event Commitment
+
+`penalty_events_commitment(round, events)` encodes:
+
+```text
+"cordial-por:penalty-events-commitment:v1"
+|| round_u64
+|| equivocation_count_u64
+|| each(offender_len_u64 || offender || evidence_len_u64 || evidence)
+|| inactivity_count_u64
+|| each(offender_len_u64 || offender || missed_rounds_u64)
+```
+
+Each category is sorted by offender. Duplicate and overlapping offenders are
+rejected. Evidence is nonempty and at most 64 KiB; node IDs are at most 4 KiB,
+total events at most one million, and the encoded input at most 64 MiB.
+`None` and an explicit empty event set have identical commitments. The block
+header binds this hash even for rounds with no penalty or no numeric decay.
+Evidence authentication and retention remain host responsibilities.
 
 ## Canonical Reputation Block Wire Envelope
 
@@ -338,11 +366,11 @@ exclusion part of the auditable state. Golden vectors in
 The wire envelope version is separate from the reputation-block header version,
 so framing can evolve without changing the committed block semantics.
 
-The outer v1 envelope is:
+The outer v2 block envelope is:
 
 ```text
 "cordial-por-block"             17 bytes
-wire_version                     u16 big-endian (= 1)
+wire_version                     u16 big-endian (= 2)
 payload_length                   u64 big-endian
 payload                          payload_length bytes
 checksum                         Blake2b-256
@@ -351,7 +379,7 @@ checksum                         Blake2b-256
 The checksum preimage is:
 
 ```text
-"cordial-por:reputation-block-envelope:v1"
+"cordial-por:reputation-block-envelope:v2"
 || "cordial-por-block"
 || wire_version_u16
 || payload_length_u64
@@ -368,6 +396,7 @@ round_u64
 previous_hash_presence_u8 || [previous_hash_32]
 config_hash_32
 ratings_hash_32
+penalties_hash_32
 reputation_root_32
 reputation_list
 ```
@@ -385,8 +414,9 @@ audit or peer authentication. `verify_reputation_transition` remains the
 acceptance boundary for a received proposal. The durable state snapshot embeds
 this exact canonical block payload without its outer wire envelope, preserving
 one block encoding across persistence and publication. `tests/block.rs` locks
-the v1 envelope with a golden hash, while `tests/snapshot.rs` confirms that
-sharing the payload leaves the existing state-snapshot golden format unchanged.
+the v2 envelope with a golden hash; `tests/snapshot.rs` locks the corresponding
+v2 state snapshot. V1 block and snapshot bytes are rejected; upgrades require
+an explicitly prepared v2 checkpoint.
 
 ## Signed Reputation Block Publication Envelope
 
@@ -562,11 +592,11 @@ registry, and the latest audited reputation block. Pending ratings are not
 finalized state; encoding rejects a state containing them instead of silently
 dropping them.
 
-The outer v1 envelope is:
+The outer v2 snapshot envelope is:
 
 ```text
 "cordial-por-state"             17 bytes
-version                          u16 big-endian (= 1)
+version                          u16 big-endian (= 2)
 payload_length                   u64 big-endian
 payload                          payload_length bytes
 checksum                         Blake2b-256
@@ -575,7 +605,7 @@ checksum                         Blake2b-256
 The checksum preimage is:
 
 ```text
-"cordial-por:state-snapshot:v1"
+"cordial-por:state-snapshot:v2"
 || "cordial-por-state"
 || version_u16
 || payload_length_u64
@@ -593,7 +623,7 @@ latest_block_presence || [latest_reputation_block]
 ```
 
 A reputation list contains its round, entry count, and each node identifier,
-reputation value, and exclusion flag. A stored block contains the complete v1
+active reputation, exclusion flag, and retained reputation. A stored block contains the complete v2
 header and its reputation list, not merely its hash.
 
 Decode is bounded to 64 MiB, one million entries, 4 KiB per node identifier,
@@ -601,7 +631,7 @@ and the existing 256-byte shard identifier limit. Restore checks the checksum,
 rejects trailing or truncated data, validates canonical ordering and the latest
 block, requires state/list/latest-block rounds to agree, and verifies that every
 exclusion flag exactly matches a zero-weight key in the permanent registry.
-`tests/snapshot.rs` locks the v1 format with a golden hash.
+`tests/snapshot.rs` locks the v2 format with a golden hash.
 
 The adapter writes these bytes to
 `<data_dir>/por/reputation-state.bin`. `PorStateStore` syncs a temporary
