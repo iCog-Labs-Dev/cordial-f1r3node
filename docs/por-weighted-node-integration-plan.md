@@ -98,8 +98,12 @@ identity in shadow status across restarts. It does not sign or exchange ratings.
 The next transport increment adds a durable local rating outbox under
 `<data-dir>/por/rating-outbox`. It atomically stages the existing signed wire
 envelopes by finalized wave and rater, rejects conflicting retries, and checks
-stored signatures on recovery. The live runner does not yet feed or drain this
-outbox; peer delivery and a complete per-wave replay path remain necessary.
+stored signatures on recovery. With `--stage-local-ratings` and an authorized
+key, the live runner now feeds this outbox through the existing coordinator
+only when the latest finalized wave matches the next durable reputation round.
+A skipped wave fails closed. The runner does not drain the outbox or commit a
+rating round; peer delivery and a complete per-wave replay path remain
+necessary.
 Before the slice 1 exit gate, add authenticated per-validator rating delivery
 and a durable per-wave lifecycle cursor that processes every finalized wave,
 including after restart. The observers must use distinct authorized validator
