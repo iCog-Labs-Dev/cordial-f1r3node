@@ -12,6 +12,7 @@ pub mod history;
 pub mod interactions;
 pub mod lifecycle;
 pub mod persistence;
+pub mod rating_key;
 pub mod ratings;
 pub mod runtime;
 pub mod shadow;
