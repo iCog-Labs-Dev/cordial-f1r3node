@@ -31,6 +31,29 @@ pub enum PorFinalityError {
     RatingRound(PorError),
 }
 
+/// Derive the wave of the latest Cordial final leader without opening a PoR round.
+///
+/// Observers can use this for reporting even when they do not have the signed
+/// rating exchange required to advance reputation state.
+pub fn finalized_wave_from_output(
+    blocklace: &Blocklace,
+    output: &OrderedFinalizedOutput,
+) -> Result<Option<u64>, PorFinalityError> {
+    let Some(final_leader) = output.anchor.as_ref() else {
+        return Ok(None);
+    };
+
+    if output.wavelength == 0 {
+        return Err(PorFinalityError::InvalidWavelength);
+    }
+
+    let leader_round =
+        depth(blocklace, final_leader).ok_or(PorFinalityError::UnknownFinalLeader)?;
+    wave_of_round(leader_round, output.wavelength)
+        .map(Some)
+        .ok_or(PorFinalityError::InvalidWavelength)
+}
+
 impl fmt::Display for PorFinalityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -81,18 +104,10 @@ impl PorFinalityTracker {
         blocklace: &Blocklace,
         output: &OrderedFinalizedOutput,
     ) -> Result<Option<FinalizedRatingRound>, PorFinalityError> {
-        let Some(final_leader) = output.anchor.as_ref() else {
+        let Some(finalized_wave) = finalized_wave_from_output(blocklace, output)? else {
             return Ok(None);
         };
-
-        if output.wavelength == 0 {
-            return Err(PorFinalityError::InvalidWavelength);
-        }
-
-        let leader_round =
-            depth(blocklace, final_leader).ok_or(PorFinalityError::UnknownFinalLeader)?;
-        let finalized_wave = wave_of_round(leader_round, output.wavelength)
-            .ok_or(PorFinalityError::InvalidWavelength)?;
+        let final_leader = output.anchor.as_ref().expect("wave requires an anchor");
 
         if let Some(last_opened_wave) = self.last_opened_wave {
             if finalized_wave < last_opened_wave {
