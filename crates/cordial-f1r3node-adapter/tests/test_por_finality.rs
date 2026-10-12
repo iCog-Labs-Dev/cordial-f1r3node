@@ -2,7 +2,9 @@ use std::collections::HashSet;
 
 use cordial_f1r3node_adapter::{
     ordered_output::OrderedFinalizedOutput,
-    por_finality::{FinalizedRatingRound, PorFinalityError, PorFinalityTracker},
+    por_finality::{
+        FinalizedRatingRound, PorFinalityError, PorFinalityTracker, finalized_wave_from_output,
+    },
 };
 use cordial_miners_core::{
     Block, BlockContent, BlockIdentity, Blocklace, NodeId, crypto::CryptoVerifier,
@@ -74,6 +76,24 @@ fn finalized_leader_opens_the_following_rating_round() {
         })
     );
     assert_eq!(tracker.last_opened_wave(), Some(0));
+}
+
+#[test]
+fn finalized_wave_can_be_reported_without_opening_a_rating_round() {
+    let mut blocklace = Blocklace::new();
+    let leader = block(1, None);
+    insert(&mut blocklace, &leader);
+    let finalized = output(Some(leader.identity), WAVELENGTH);
+
+    assert_eq!(
+        finalized_wave_from_output(&blocklace, &finalized),
+        Ok(Some(0))
+    );
+    assert_eq!(
+        finalized_wave_from_output(&blocklace, &output(None, WAVELENGTH)),
+        Ok(None)
+    );
+    assert_eq!(PorFinalityTracker::new().last_opened_wave(), None);
 }
 
 #[test]
