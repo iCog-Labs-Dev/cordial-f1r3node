@@ -92,12 +92,14 @@ is complete; sustained operation cannot be claimed until slice 5 passes.
 The first slice 1 increment reports the latest finalized wave and rejects wave
 regression after shadow replay. It does not open or close a rating round, and
 the latest output alone may skip intermediate waves. The current rating channel
-is process-local and the shadow runner has no validator signing key. Before
-the slice 1 exit gate, add authenticated per-validator rating delivery and a
-durable per-wave lifecycle cursor that processes every finalized wave, including
-after restart. The observers must use distinct authorized validator keys;
-fabricating signatures for all validators in one observer would not prove the
-distributed path.
+is process-local. The next increment optionally loads one validator key file,
+checks that its derived identity is authorized by the bonds, and pins that
+identity in shadow status across restarts. It does not sign or exchange ratings.
+Before the slice 1 exit gate, add authenticated per-validator rating delivery
+and a durable per-wave lifecycle cursor that processes every finalized wave,
+including after restart. The observers must use distinct authorized validator
+keys; fabricating signatures for all validators in one observer would not prove
+the distributed path.
 
 ## Safety and proof requirements
 
