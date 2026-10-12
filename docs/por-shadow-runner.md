@@ -8,9 +8,11 @@ with `PorConfig::default().initial_reputation`. `PorRuntime` persists and
 activates the genesis projection; on restart it restores the exact activated
 weights before computing finality.
 
-The runner observes and reports PoR weights. It does not change the running
-f1r3node validator, produce ratings, or advance reputation rounds. Finalized
-wave rating lifecycle and peer transport are later slices.
+The runner observes and reports PoR weights and the latest finalized Cordial
+wave. It does not change the running f1r3node validator, produce ratings, or
+advance reputation rounds. Finalized-wave reporting does not imply that the
+intermediate waves were processed as PoR rating rounds. Signed rating exchange
+and round closure are later slices.
 
 ## Live smoke procedure
 
@@ -39,13 +41,17 @@ repository. The runner polls every two seconds by default. It emits a JSON
 status line after each successful poll and atomically writes the same document
 to `<data-dir>/por/shadow-status.json`. The document contains
 `active_por_round`, `weight_commitment`, the exact hex-keyed `weights` map,
-`finalized_anchor`, and `finalized_hashes`. The full finalized hash sequence
-is retained so startup can reject a replay that changes or loses the previously
-published prefix.
+`finalized_anchor`, `observed_finalized_wave`, and `finalized_hashes`.
+`observed_finalized_wave` is null until Cordial exports a final leader; it is
+the wave of that leader, not the active PoR reputation round. The full
+finalized hash sequence is retained so startup can reject a replay that
+changes or loses the previously published prefix. A recovered observed wave
+must not regress, and a leader change within the same wave is rejected.
 
 For a restart check, save the status file, stop the runner, and start it again
 with the same arguments. Compare the old and new `active_por_round`,
-`weight_commitment`, and `weights`. The new `finalized_hashes` must begin
+`weight_commitment`, `weights`, and `observed_finalized_wave`. The new
+`finalized_hashes` must begin
 with the old sequence. The runner checks these conditions before publishing its
 first recovered status. It replays blocks from height zero because the mirror
 itself is process-local. A node that cannot supply its complete history cannot
