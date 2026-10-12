@@ -9,8 +9,9 @@ The weight activation point must be deterministic and recoverable after a
 restart.
 
 Today, `live_por_shadow` connects to an upstream f1r3node over gRPC, mirrors
-blocks, and reports a durable genesis PoR projection. It does not produce live
-ratings or advance beyond round 0. The four-node cluster uses upstream
+blocks, and reports a durable genesis PoR projection and the latest observed
+finalized Cordial wave. It does not produce live ratings or advance beyond
+round 0. The four-node cluster uses upstream
 f1r3node consensus; host-side Cordial and PoR observers can check convergence,
 but they cannot make that node use PoR weights. See
 [`por-shadow-runner.md`](por-shadow-runner.md) for the current smoke test and
@@ -87,6 +88,16 @@ Slices 1 and 2 can progress while slice 0 is investigated. Slice 3 depends on
 the result of slice 0 and on a safe activation boundary from slice 2. A fresh
 four-node functional test can proceed before the long-history performance work
 is complete; sustained operation cannot be claimed until slice 5 passes.
+
+The first slice 1 increment reports the latest finalized wave and rejects wave
+regression after shadow replay. It does not open or close a rating round, and
+the latest output alone may skip intermediate waves. The current rating channel
+is process-local and the shadow runner has no validator signing key. Before
+the slice 1 exit gate, add authenticated per-validator rating delivery and a
+durable per-wave lifecycle cursor that processes every finalized wave, including
+after restart. The observers must use distinct authorized validator keys;
+fabricating signatures for all validators in one observer would not prove the
+distributed path.
 
 ## Safety and proof requirements
 
