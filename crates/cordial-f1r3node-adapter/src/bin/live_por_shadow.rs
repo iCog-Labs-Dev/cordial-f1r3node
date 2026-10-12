@@ -14,6 +14,8 @@ struct Args {
     #[arg(long)]
     bonds_file: PathBuf,
     #[arg(long)]
+    validator_rating_key_file: Option<PathBuf>,
+    #[arg(long)]
     data_dir: PathBuf,
     #[arg(long, default_value = "root")]
     shard_id: String,
@@ -32,6 +34,7 @@ async fn main() -> Result<()> {
     run_shadow(ShadowConfig {
         grpc_url: args.grpc_url,
         bonds_file: args.bonds_file,
+        validator_rating_key_file: args.validator_rating_key_file,
         data_dir: args.data_dir,
         shard_id: args.shard_id,
         height_batch_size: args.height_batch_size,
