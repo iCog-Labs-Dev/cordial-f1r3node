@@ -1,4 +1,5 @@
-//! Read-only live PoR host. Cordial remains the source of membership and finality.
+//! Live PoR shadow host. Cordial remains the source of membership and finality.
+//! Optional local rating staging writes only to the observer's outbox.
 //!
 //! The entire blocklace is replayed on startup because ingress is process-local.
 //! A retained finalized prefix is checked before a recovered view is published.
@@ -27,7 +28,8 @@ use crate::{
 };
 
 use super::{
-    finality::finalized_wave_from_output, rating_key::load_bonded_rating_key, runtime::PorRuntime,
+    finality::finalized_wave_from_output, local_ratings::stage_local_rating_batch,
+    rating_key::load_bonded_rating_key, runtime::PorRuntime, transport::outbox::RatingOutbox,
 };
 
 const STATUS_FILE: &str = "shadow-status.json";
@@ -46,6 +48,7 @@ pub struct ShadowConfig {
     pub grpc_url: String,
     pub bonds_file: PathBuf,
     pub validator_rating_key_file: Option<PathBuf>,
+    pub stage_local_ratings: bool,
     pub data_dir: PathBuf,
     pub shard_id: String,
     pub height_batch_size: i64,
@@ -220,6 +223,10 @@ fn validate_config(config: &ShadowConfig) -> Result<()> {
         !config.poll_interval.is_zero(),
         "poll interval must be positive"
     );
+    ensure!(
+        !config.stage_local_ratings || config.validator_rating_key_file.is_some(),
+        "staging local PoR ratings requires a validator rating key file"
+    );
     Ok(())
 }
 
@@ -231,6 +238,10 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
         .validator_rating_key_file
         .as_ref()
         .map(|path| load_bonded_rating_key(path, &bonds))
+        .transpose()?;
+    let rating_outbox = config
+        .stage_local_ratings
+        .then(|| RatingOutbox::open(&config.data_dir))
         .transpose()?;
     let configured_rating_rater = rating_key
         .as_ref()
@@ -265,6 +276,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
     }
     let mut scanned_height: Option<i64> = None;
     let mut client: Option<LiveGrpcBlockClient> = None;
+    let mut last_logged_rating_wave: Option<u64> = None;
 
     loop {
         if client.is_none() {
@@ -345,6 +357,26 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
         // Also prevent regression within this process, including late forks.
         if let Some(published) = read_status(&path)? {
             published.validate_recovered(&status)?;
+        }
+        if let (Some(key), Some(outbox)) = (&rating_key, &rating_outbox) {
+            if let Some(staged) = stage_local_rating_batch(
+                runtime.ingress().blocklace(),
+                &output,
+                runtime.state().state()?,
+                runtime.config(),
+                key,
+                outbox,
+            )? {
+                if last_logged_rating_wave != Some(staged.finalized_wave) {
+                    tracing::info!(
+                        finalized_wave = staged.finalized_wave,
+                        rating_round = staged.rating_round,
+                        rating_count = staged.rating_count,
+                        "staged local PoR ratings"
+                    );
+                    last_logged_rating_wave = Some(staged.finalized_wave);
+                }
+            }
         }
         write_status(&path, &status)?;
         println!("{}", serde_json::to_string(&status)?);
@@ -482,12 +514,16 @@ mod tests {
             grpc_url: "http://127.0.0.1:40401".into(),
             bonds_file: "bonds.txt".into(),
             validator_rating_key_file: None,
+            stage_local_ratings: false,
             data_dir: "data".into(),
             shard_id: "root".into(),
             height_batch_size: 64,
             poll_interval: Duration::from_secs(1),
         };
         config.height_batch_size = 0;
+        assert!(validate_config(&config).is_err());
+        config.height_batch_size = 64;
+        config.stage_local_ratings = true;
         assert!(validate_config(&config).is_err());
     }
 }
