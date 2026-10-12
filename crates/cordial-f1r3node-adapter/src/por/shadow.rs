@@ -26,7 +26,7 @@ use crate::{
     snapshot::CORDIAL_WAVELENGTH,
 };
 
-use super::runtime::PorRuntime;
+use super::{finality::finalized_wave_from_output, runtime::PorRuntime};
 
 const STATUS_FILE: &str = "shadow-status.json";
 
@@ -59,6 +59,9 @@ pub struct ShadowStatus {
     pub weight_commitment: String,
     pub weights: BTreeMap<String, u64>,
     pub finalized_anchor: Option<String>,
+    /// Latest Cordial wave observed as finalized; this is not a committed PoR round.
+    #[serde(default)]
+    pub observed_finalized_wave: Option<u64>,
     pub finalized_hashes: Vec<String>,
     pub mirrored_blocks: usize,
     pub source_height: i64,
@@ -86,6 +89,10 @@ impl ShadowStatus {
             weight_commitment: hex::encode(record.weights_commitment()),
             weights,
             finalized_anchor: output.anchor_hash().map(hex::encode),
+            observed_finalized_wave: finalized_wave_from_output(
+                runtime.ingress().blocklace(),
+                output,
+            )?,
             finalized_hashes: output.block_hashes().into_iter().map(hex::encode).collect(),
             mirrored_blocks: output.total_mirrored_blocks,
             source_height,
@@ -103,6 +110,21 @@ impl ShadowStatus {
                 .starts_with(&self.finalized_hashes),
             "replayed Cordial finalized output changed or lost its durable prefix"
         );
+        if let Some(previous_wave) = self.observed_finalized_wave {
+            let recovered_wave = recovered
+                .observed_finalized_wave
+                .context("replayed Cordial final leader disappeared")?;
+            ensure!(
+                recovered_wave >= previous_wave,
+                "replayed Cordial finalized wave regressed"
+            );
+            if recovered_wave == previous_wave {
+                ensure!(
+                    recovered.finalized_anchor == self.finalized_anchor,
+                    "replayed Cordial final leader changed within the same wave"
+                );
+            }
+        }
         ensure!(
             recovered.active_por_round >= self.active_por_round,
             "recovered PoR activation regressed"
@@ -307,6 +329,7 @@ mod tests {
             weight_commitment: "abc".into(),
             weights: BTreeMap::from([("key".into(), 1)]),
             finalized_anchor: hashes.last().map(|hash| hash.to_string()),
+            observed_finalized_wave: None,
             finalized_hashes: hashes.iter().map(|hash| hash.to_string()).collect(),
             mirrored_blocks: hashes.len(),
             source_height: 10,
@@ -322,6 +345,36 @@ mod tests {
         let mut drifted = status(&["a", "b"]);
         drifted.weights.insert("key".into(), 2);
         assert!(old.validate_recovered(&drifted).is_err());
+    }
+
+    #[test]
+    fn recovered_finalized_wave_cannot_regress_or_change_leader() {
+        let mut old = status(&["a", "b"]);
+        old.observed_finalized_wave = Some(2);
+        let mut recovered = status(&["a", "b", "c"]);
+        recovered.observed_finalized_wave = Some(3);
+        old.validate_recovered(&recovered).unwrap();
+
+        recovered.observed_finalized_wave = Some(1);
+        assert!(old.validate_recovered(&recovered).is_err());
+        recovered.observed_finalized_wave = None;
+        assert!(old.validate_recovered(&recovered).is_err());
+        recovered.observed_finalized_wave = Some(2);
+        assert!(old.validate_recovered(&recovered).is_err());
+    }
+
+    #[test]
+    fn old_status_without_observed_wave_remains_readable() {
+        let mut value = serde_json::to_value(status(&["a"])).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("observed_finalized_wave");
+        let previous: ShadowStatus = serde_json::from_value(value).unwrap();
+        assert_eq!(previous.observed_finalized_wave, None);
+        let mut recovered = status(&["a", "b"]);
+        recovered.observed_finalized_wave = Some(1);
+        previous.validate_recovered(&recovered).unwrap();
     }
 
     #[test]
