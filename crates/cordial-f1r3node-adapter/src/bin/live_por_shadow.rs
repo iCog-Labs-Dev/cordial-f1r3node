@@ -1,4 +1,4 @@
-//! One-node read-only PoR observer. Emits JSON status and writes data_dir/por/shadow-status.json.
+//! One-node PoR observer. Emits JSON status and can stage local signed ratings.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -15,6 +15,8 @@ struct Args {
     bonds_file: PathBuf,
     #[arg(long)]
     validator_rating_key_file: Option<PathBuf>,
+    #[arg(long)]
+    stage_local_ratings: bool,
     #[arg(long)]
     data_dir: PathBuf,
     #[arg(long, default_value = "root")]
@@ -35,6 +37,7 @@ async fn main() -> Result<()> {
         grpc_url: args.grpc_url,
         bonds_file: args.bonds_file,
         validator_rating_key_file: args.validator_rating_key_file,
+        stage_local_ratings: args.stage_local_ratings,
         data_dir: args.data_dir,
         shard_id: args.shard_id,
         height_batch_size: args.height_batch_size,
