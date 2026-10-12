@@ -14,6 +14,17 @@ advance reputation rounds. Finalized-wave reporting does not imply that the
 intermediate waves were processed as PoR rating rounds. Signed rating exchange
 and round closure are later slices.
 
+For a validator observer, `--validator-rating-key-file /path/to/validator.key`
+optionally loads its own secp256k1 private key at startup. The file contains
+exactly 64 hexadecimal characters, with optional surrounding whitespace.
+The runner derives the public key and requires it to match exactly one active
+entry in the bonds file. Status then reports its public identity as
+`configured_rating_rater`; the private key is never written to status or logs.
+Keep one key file per observer and restrict access to its owner. This option
+only validates the key for the existing rating-signing path; it does not yet
+produce or send ratings. Reusing a data directory with a different key is
+rejected.
+
 ## Live smoke procedure
 
 Start the four-node cluster using `docker/four-node-cluster.yml`, then run
