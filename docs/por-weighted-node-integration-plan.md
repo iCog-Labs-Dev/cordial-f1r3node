@@ -29,7 +29,8 @@ weights in another process through the existing block-query API.
 Casper, its runtime manager, block store, and authorized bonds. Establish
 whether an integration binary in this repository can construct the real node
 with our adapter using public upstream crates and trait interfaces. Record the
-exact call sites, missing methods, and a minimal compile or startup proof.
+exact call sites and missing methods. Require a minimal compile or startup
+proof before adopting any claimed source-free host path.
 
 - If that host is viable, implement it here and leave upstream source alone.
 - If no suitable construction seam exists, describe the smallest upstream
@@ -39,6 +40,37 @@ exact call sites, missing methods, and a minimal compile or startup proof.
 
 This gate decides the implementation location before work on node enforcement.
 It does not block the earlier PoR lifecycle and adapter tests.
+
+### Slice 0 audit of the current sibling checkout
+
+The read-only audit used sibling `f1r3node` commit `dca4619b`. It found a
+usable **engine** seam but no corresponding **node startup** injection seam:
+
+| Boundary | Current implementation | Consequence |
+| --- | --- | --- |
+| Running engine | `casper/src/rust/engine/engine.rs::transition_to_running` and `running.rs::Running::new` accept `Arc<dyn MultiParentCasper + Send + Sync>`. | The engine can consume another implementation of the real trait. |
+| Node startup | `node/src/rust/runtime/node_runtime.rs::NodeRuntime::main` calls `setup_node_program`; its `node_program` method is private. `setup.rs::setup_node_program` constructs `CasperLaunchImpl` directly. | A separate binary cannot replace the launch component through `NodeRuntime::new` or `start`. Reusing the current node requires changing this construction path or copying substantial node orchestration. |
+| Casper creation | `casper_launch.rs` calls `hash_set_casper` when reconnecting. `initializing.rs` and `genesis_ceremony_master.rs` also call `hash_set_casper` on their startup paths. | Replacing only the normal reconnect path would leave genesis and fresh-join paths on upstream Casper. |
+| Our adapter | `crates/cordial-f1r3node-adapter/src/casper_adapter.rs` implements local mirror traits and types. Its local `CordialMultiParentCasper` omits the real trait's block store, runtime manager, DAG, history exporter, and related methods. | The adapter cannot yet be passed to the running engine as a real `MultiParentCasper`. An RSpace-backed wrapper and real-type translation are required. |
+
+**Decision for the current code:** an unmodified upstream node binary cannot
+enforce PoR weights. Although a new binary could theoretically reproduce
+f1r3node's private startup orchestration, that would duplicate a large,
+change-sensitive node lifecycle. The recommended path is a narrow,
+feature-gated Casper-construction hook in upstream node/Casper startup. Its
+default must keep the existing `hash_set_casper` behavior; the integrated build
+would supply a real-trait Cordial wrapper backed by the existing RSpace and
+storage dependencies. The hook must cover reconnect, initialization, and
+genesis-ceremony paths. This changes startup wiring, not Cordial consensus
+rules or PoR membership authority.
+
+If upstream source must remain untouched, continue slices 1 and 2 as
+observer/adapter work and defer slice 3. Do not report the resulting cluster
+as enforcing PoR weights. Before implementing the hook, make a small
+compile-time integration proof that an RSpace-backed wrapper satisfies the
+real `MultiParentCasper` trait and can be passed to `transition_to_running`.
+No such proof exists in this audit; this table records the source-level seam
+and the missing interface precisely.
 
 ## Delivery slices
 
