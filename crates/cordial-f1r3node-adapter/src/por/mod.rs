@@ -11,6 +11,7 @@ pub mod finality;
 pub mod history;
 pub mod interactions;
 pub mod lifecycle;
+pub mod local_ratings;
 pub mod persistence;
 pub mod rating_key;
 pub mod ratings;
