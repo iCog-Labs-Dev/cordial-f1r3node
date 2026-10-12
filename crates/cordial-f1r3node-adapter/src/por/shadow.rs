@@ -26,7 +26,9 @@ use crate::{
     snapshot::CORDIAL_WAVELENGTH,
 };
 
-use super::{finality::finalized_wave_from_output, runtime::PorRuntime};
+use super::{
+    finality::finalized_wave_from_output, rating_key::load_bonded_rating_key, runtime::PorRuntime,
+};
 
 const STATUS_FILE: &str = "shadow-status.json";
 
@@ -43,6 +45,7 @@ impl BlocklaceAdapter<BlockIdentity> for PassthroughAdapter {
 pub struct ShadowConfig {
     pub grpc_url: String,
     pub bonds_file: PathBuf,
+    pub validator_rating_key_file: Option<PathBuf>,
     pub data_dir: PathBuf,
     pub shard_id: String,
     pub height_batch_size: i64,
@@ -55,6 +58,9 @@ pub struct ShadowConfig {
 pub struct ShadowStatus {
     pub schema_version: u16,
     pub shadow_mode: bool,
+    /// Bonded validator identity validated for future local rating production.
+    #[serde(default)]
+    pub configured_rating_rater: Option<String>,
     pub active_por_round: u64,
     pub weight_commitment: String,
     pub weights: BTreeMap<String, u64>,
@@ -71,6 +77,7 @@ impl ShadowStatus {
     fn from_runtime(
         runtime: &PorRuntime<PassthroughAdapter>,
         output: &OrderedFinalizedOutput,
+        rating_rater: Option<&str>,
         source_height: i64,
     ) -> Result<Self> {
         let record = runtime
@@ -85,6 +92,7 @@ impl ShadowStatus {
         Ok(Self {
             schema_version: 1,
             shadow_mode: true,
+            configured_rating_rater: rating_rater.map(str::to_owned),
             active_por_round: record.reputation_round(),
             weight_commitment: hex::encode(record.weights_commitment()),
             weights,
@@ -104,6 +112,7 @@ impl ShadowStatus {
             self.schema_version == 1 && self.shadow_mode,
             "unsupported shadow status"
         );
+        self.validate_configured_rater(recovered.configured_rating_rater.as_deref())?;
         ensure!(
             recovered
                 .finalized_hashes
@@ -134,6 +143,16 @@ impl ShadowStatus {
                 recovered.weight_commitment == self.weight_commitment
                     && recovered.weights == self.weights,
                 "recovered PoR projection differs from the previous publication"
+            );
+        }
+        Ok(())
+    }
+
+    fn validate_configured_rater(&self, rater: Option<&str>) -> Result<()> {
+        if let Some(previous_rater) = &self.configured_rating_rater {
+            ensure!(
+                rater == Some(previous_rater.as_str()),
+                "configured PoR rating rater changed for this data directory"
             );
         }
         Ok(())
@@ -208,6 +227,14 @@ fn validate_config(config: &ShadowConfig) -> Result<()> {
 pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
     validate_config(&config)?;
     let bonds = load_bonds(&config.bonds_file)?;
+    let rating_key = config
+        .validator_rating_key_file
+        .as_ref()
+        .map(|path| load_bonded_rating_key(path, &bonds))
+        .transpose()?;
+    let configured_rating_rater = rating_key
+        .as_ref()
+        .map(|signer| hex::encode(&signer.rater().0));
     let por_config = PorConfig::default();
     let ingress = LiveIngress::with_consensus_view(
         PassthroughAdapter,
@@ -233,6 +260,9 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
     )?;
     let path = status_path(&config.data_dir);
     let previous = read_status(&path)?;
+    if let Some(previous) = &previous {
+        previous.validate_configured_rater(configured_rating_rater.as_deref())?;
+    }
     let mut scanned_height: Option<i64> = None;
     let mut client: Option<LiveGrpcBlockClient> = None;
 
@@ -303,7 +333,12 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
             continue;
         }
         let output = runtime.publish_finalized_output()?;
-        let status = ShadowStatus::from_runtime(&runtime, &output, head)?;
+        let status = ShadowStatus::from_runtime(
+            &runtime,
+            &output,
+            configured_rating_rater.as_deref(),
+            head,
+        )?;
         if let Some(previous) = &previous {
             previous.validate_recovered(&status)?;
         }
@@ -325,6 +360,7 @@ mod tests {
         ShadowStatus {
             schema_version: 1,
             shadow_mode: true,
+            configured_rating_rater: None,
             active_por_round: 0,
             weight_commitment: "abc".into(),
             weights: BTreeMap::from([("key".into(), 1)]),
@@ -370,11 +406,30 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("observed_finalized_wave");
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("configured_rating_rater");
         let previous: ShadowStatus = serde_json::from_value(value).unwrap();
         assert_eq!(previous.observed_finalized_wave, None);
+        assert_eq!(previous.configured_rating_rater, None);
         let mut recovered = status(&["a", "b"]);
         recovered.observed_finalized_wave = Some(1);
         previous.validate_recovered(&recovered).unwrap();
+    }
+
+    #[test]
+    fn recovered_rating_identity_must_match_when_configured() {
+        let mut old = status(&["a"]);
+        old.configured_rating_rater = Some("validator-1".into());
+        let mut recovered = status(&["a", "b"]);
+        recovered.configured_rating_rater = Some("validator-1".into());
+        old.validate_recovered(&recovered).unwrap();
+
+        recovered.configured_rating_rater = Some("validator-2".into());
+        assert!(old.validate_recovered(&recovered).is_err());
+        recovered.configured_rating_rater = None;
+        assert!(old.validate_recovered(&recovered).is_err());
     }
 
     #[test]
@@ -401,7 +456,8 @@ mod tests {
         };
         let first = open();
         let first_status =
-            ShadowStatus::from_runtime(&first, &OrderedFinalizedOutput::default(), 0).unwrap();
+            ShadowStatus::from_runtime(&first, &OrderedFinalizedOutput::default(), None, 0)
+                .unwrap();
         assert_eq!(first_status.active_por_round, 0);
         assert_eq!(first_status.weights.len(), 2);
         let path = status_path(directory.path());
@@ -410,7 +466,8 @@ mod tests {
 
         let restored = open();
         let restored_status =
-            ShadowStatus::from_runtime(&restored, &OrderedFinalizedOutput::default(), 0).unwrap();
+            ShadowStatus::from_runtime(&restored, &OrderedFinalizedOutput::default(), None, 0)
+                .unwrap();
         assert_eq!(restored_status, first_status);
         read_status(&path)
             .unwrap()
@@ -424,6 +481,7 @@ mod tests {
         let mut config = ShadowConfig {
             grpc_url: "http://127.0.0.1:40401".into(),
             bonds_file: "bonds.txt".into(),
+            validator_rating_key_file: None,
             data_dir: "data".into(),
             shard_id: "root".into(),
             height_batch_size: 64,
