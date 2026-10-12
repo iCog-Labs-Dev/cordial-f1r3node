@@ -9,10 +9,10 @@ activates the genesis projection; on restart it restores the exact activated
 weights before computing finality.
 
 The runner observes and reports PoR weights and the latest finalized Cordial
-wave. It does not change the running f1r3node validator, produce ratings, or
-advance reputation rounds. Finalized-wave reporting does not imply that the
-intermediate waves were processed as PoR rating rounds. Signed rating exchange
-and round closure are later slices.
+wave. It does not change the running f1r3node validator or advance reputation
+rounds. Finalized-wave reporting does not imply that the intermediate waves
+were processed as PoR rating rounds. Signed peer exchange and round closure
+are later slices.
 
 For a validator observer, `--validator-rating-key-file /path/to/validator.key`
 optionally loads its own secp256k1 private key at startup. The file contains
@@ -21,9 +21,19 @@ The runner derives the public key and requires it to match exactly one active
 entry in the bonds file. Status then reports its public identity as
 `configured_rating_rater`; the private key is never written to status or logs.
 Keep one key file per observer and restrict access to its owner. This option
-only validates the key for the existing rating-signing path; it does not yet
-produce or send ratings. Reusing a data directory with a different key is
-rejected.
+only validates the key for the existing rating-signing path. Reusing a data
+directory with a different key is rejected.
+
+To stage a local signed rating batch, add `--stage-local-ratings` alongside
+`--validator-rating-key-file`. The runner uses PoR's existing round coordinator
+and writes its signed envelopes under `<data-dir>/por/rating-outbox` before
+publishing a new shadow status. It stages only the next round expected by the
+durable PoR state. If the latest finalized leader is in a later wave, the
+runner stops with an explicit gap error; it cannot reconstruct skipped waves
+yet. Start this opt-in check with a fresh chain before the first finalized
+wave. Repeated polls and restarts accept the same batch and reject conflicting
+ratings for that wave. Nothing is sent to peers, and `active_por_round` remains
+unchanged until a separate complete-round commit path is connected.
 
 ## Live smoke procedure
 
