@@ -524,6 +524,30 @@ where
         return Ok(Vec::new());
     };
 
+    weighted_tau_at_leader(
+        blocklace,
+        &latest_leader,
+        wavelength,
+        bonds,
+        leader_selection,
+    )
+}
+
+/// Return the weighted ordered prefix anchored by a specified final leader.
+///
+/// The caller must establish that `leader` is a final leader under `bonds`.
+/// This uses the same recursion as [`weighted_tau`], allowing a consumer to
+/// replay an earlier finalized prefix after a newer leader has appeared.
+pub fn weighted_tau_at_leader<F>(
+    blocklace: &Blocklace,
+    leader: &BlockIdentity,
+    wavelength: u64,
+    bonds: &HashMap<NodeId, u64>,
+    leader_selection: F,
+) -> Result<Vec<BlockIdentity>, OrderingError>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
     let config = WeightedTauConfig {
         wavelength,
         bonds,
@@ -534,7 +558,7 @@ where
         emitted: BTreeSet::new(),
         ordered: Vec::new(),
     };
-    weighted_tau_from_leader(blocklace, &latest_leader, &config, &mut state)?;
+    weighted_tau_from_leader(blocklace, leader, &config, &mut state)?;
     Ok(state.ordered)
 }
 
