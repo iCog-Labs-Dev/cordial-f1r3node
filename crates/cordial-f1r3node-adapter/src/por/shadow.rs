@@ -58,6 +58,7 @@ pub struct ShadowConfig {
     pub validator_rating_key_file: Option<PathBuf>,
     pub stage_local_ratings: bool,
     pub rating_exchange_dir: Option<PathBuf>,
+    pub commit_complete_ratings: bool,
     pub data_dir: PathBuf,
     pub shard_id: String,
     pub height_batch_size: i64,
@@ -240,6 +241,10 @@ fn validate_config(config: &ShadowConfig) -> Result<()> {
         config.rating_exchange_dir.is_none() || config.stage_local_ratings,
         "PoR rating exchange requires local rating staging"
     );
+    ensure!(
+        !config.commit_complete_ratings || config.rating_exchange_dir.is_some(),
+        "committing complete PoR ratings requires a rating exchange directory"
+    );
     Ok(())
 }
 
@@ -298,6 +303,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
     let mut last_logged_rating_wave: Option<u64> = None;
     let mut last_logged_exchange_progress: Option<RatingExchangeProgress> = None;
     let mut last_logged_candidate_checkpoint: Option<[u8; 32]> = None;
+    let mut last_logged_deferred_wave: Option<u64> = None;
 
     loop {
         if client.is_none() {
@@ -365,8 +371,16 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
             tokio::time::sleep(config.poll_interval).await;
             continue;
         }
-        let output = runtime.publish_finalized_output()?;
-        let status = ShadowStatus::from_runtime(
+        let mut output = runtime.publish_finalized_output()?;
+        if runtime.state().has_unactivated_committed_round()? {
+            let activation = runtime.retry_weight_activation()?;
+            tracing::info!(
+                ?activation,
+                "restored pending PoR weight activation after replay"
+            );
+            output = runtime.publish_finalized_output()?;
+        }
+        let mut status = ShadowStatus::from_runtime(
             &runtime,
             &output,
             configured_rating_rater.as_deref(),
@@ -382,34 +396,58 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
         if let (Some(key), Some(outbox)) = (&rating_key, &rating_outbox) {
             let state = runtime.state().state()?;
             let expected_wave = state.round();
-            // Historical ordering can be replayed under the genesis projection.
-            // Later projections need a durable per-wave weight history first.
-            if expected_wave == 0 || status.observed_finalized_wave == Some(expected_wave) {
-                if let Some(rating_output) = finalized_output_for_wave(
+            // This wave is replayed under the currently active weights. After
+            // activation, only future waves may be committed by this host.
+            if let Some(rating_output) = finalized_output_for_wave(
+                runtime.ingress().blocklace(),
+                &output,
+                runtime.ingress().bonds(),
+                expected_wave,
+            )? {
+                if let Some(staged) = stage_local_rating_batch(
                     runtime.ingress().blocklace(),
-                    &output,
-                    runtime.ingress().bonds(),
-                    expected_wave,
+                    &rating_output,
+                    state,
+                    runtime.config(),
+                    key,
+                    outbox,
                 )? {
-                    if let Some(staged) = stage_local_rating_batch(
-                        runtime.ingress().blocklace(),
-                        &rating_output,
-                        state,
-                        runtime.config(),
-                        key,
-                        outbox,
-                    )? {
-                        if last_logged_rating_wave != Some(staged.finalized_wave) {
+                    if last_logged_rating_wave != Some(staged.finalized_wave) {
+                        tracing::info!(
+                            finalized_wave = staged.finalized_wave,
+                            rating_round = staged.rating_round,
+                            rating_count = staged.rating_count,
+                            "staged local PoR ratings"
+                        );
+                        last_logged_rating_wave = Some(staged.finalized_wave);
+                    }
+                    if let Some(exchange) = &rating_exchange {
+                        let progress = observe_rating_exchange(
+                            runtime.ingress().blocklace(),
+                            &rating_output,
+                            state,
+                            runtime.config(),
+                            key,
+                            &authorized_raters,
+                            outbox,
+                            exchange,
+                        )?;
+                        if last_logged_exchange_progress != Some(progress) {
                             tracing::info!(
-                                finalized_wave = staged.finalized_wave,
-                                rating_round = staged.rating_round,
-                                rating_count = staged.rating_count,
-                                "staged local PoR ratings"
+                                finalized_wave = progress.finalized_wave,
+                                rating_round = progress.rating_round,
+                                local_envelopes = progress.local_envelopes,
+                                peer_envelopes = progress.peer_envelopes,
+                                completed_raters = progress.completed_raters,
+                                eligible_raters = progress.eligible_raters,
+                                quorum_reached = progress.quorum_reached,
+                                all_raters_complete = progress.all_raters_complete,
+                                "observed PoR rating exchange"
                             );
-                            last_logged_rating_wave = Some(staged.finalized_wave);
+                            last_logged_exchange_progress = Some(progress);
                         }
-                        if let Some(exchange) = &rating_exchange {
-                            let progress = observe_rating_exchange(
+                        if progress.all_raters_complete {
+                            if let Some(completed) = close_rating_exchange_if_complete(
                                 runtime.ingress().blocklace(),
                                 &rating_output,
                                 state,
@@ -418,77 +456,75 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
                                 &authorized_raters,
                                 outbox,
                                 exchange,
-                            )?;
-                            if last_logged_exchange_progress != Some(progress) {
-                                tracing::info!(
-                                    finalized_wave = progress.finalized_wave,
-                                    rating_round = progress.rating_round,
-                                    local_envelopes = progress.local_envelopes,
-                                    peer_envelopes = progress.peer_envelopes,
-                                    completed_raters = progress.completed_raters,
-                                    eligible_raters = progress.eligible_raters,
-                                    quorum_reached = progress.quorum_reached,
-                                    all_raters_complete = progress.all_raters_complete,
-                                    "observed PoR rating exchange"
-                                );
-                                last_logged_exchange_progress = Some(progress);
-                            }
-                            if progress.all_raters_complete {
-                                if let Some(completed) = close_rating_exchange_if_complete(
-                                    runtime.ingress().blocklace(),
-                                    &rating_output,
-                                    state,
+                            )? {
+                                let mut candidate_state = state.clone();
+                                apply_completed_reputation_round(
+                                    &completed,
+                                    &mut candidate_state,
                                     runtime.config(),
-                                    key,
-                                    &authorized_raters,
-                                    outbox,
-                                    exchange,
-                                )? {
-                                    let mut candidate_state = state.clone();
-                                    apply_completed_reputation_round(
-                                        &completed,
-                                        &mut candidate_state,
-                                        runtime.config(),
-                                        runtime.shard_id(),
-                                    )?;
-                                    let mut validators: Vec<_> =
-                                        runtime.ingress().bonds().keys().cloned().collect();
-                                    validators.sort();
-                                    let weights = authorized_validator_weights(
-                                        &candidate_state,
-                                        &validators,
-                                    )?;
-                                    let candidate =
-                                        PorWeightActivationRecord::from_state_and_weights(
-                                            &candidate_state,
-                                            &weights,
+                                    runtime.shard_id(),
+                                )?;
+                                let mut validators: Vec<_> =
+                                    runtime.ingress().bonds().keys().cloned().collect();
+                                validators.sort();
+                                let weights =
+                                    authorized_validator_weights(&candidate_state, &validators)?;
+                                let candidate = PorWeightActivationRecord::from_state_and_weights(
+                                    &candidate_state,
+                                    &weights,
+                                )?;
+                                let commitment = candidate.weights_commitment();
+                                let checkpoint = candidate
+                                    .checkpoint_hash()
+                                    .context("complete PoR candidate has no checkpoint")?;
+                                if last_logged_candidate_checkpoint != Some(checkpoint) {
+                                    tracing::info!(
+                                        source_finalized_wave = completed.opened().finalized_wave,
+                                        candidate_por_round = candidate.reputation_round(),
+                                        candidate_checkpoint = %hex::encode(checkpoint),
+                                        candidate_weight_commitment = %hex::encode(commitment),
+                                        "derived complete PoR round candidate"
+                                    );
+                                    last_logged_candidate_checkpoint = Some(checkpoint);
+                                }
+                                if config.commit_complete_ratings {
+                                    if status.observed_finalized_wave == Some(expected_wave) {
+                                        runtime.ingress().validate_por_weights(&candidate_state)?;
+                                        let before_commit = status.clone();
+                                        let committed =
+                                            runtime.commit_completed_round(&completed)?;
+                                        match committed.activation {
+                                            Ok(activation) => tracing::info!(
+                                                committed_por_round = candidate.reputation_round(),
+                                                ?activation,
+                                                "committed and activated complete PoR round"
+                                            ),
+                                            Err(error) => anyhow::bail!(
+                                                "PoR round {} committed but activation is pending: {error}",
+                                                candidate.reputation_round()
+                                            ),
+                                        }
+                                        output = runtime.publish_finalized_output()?;
+                                        status = ShadowStatus::from_runtime(
+                                            &runtime,
+                                            &output,
+                                            configured_rating_rater.as_deref(),
+                                            head,
                                         )?;
-                                    let commitment = candidate.weights_commitment();
-                                    let checkpoint = candidate
-                                        .checkpoint_hash()
-                                        .context("complete PoR candidate has no checkpoint")?;
-                                    if last_logged_candidate_checkpoint != Some(checkpoint) {
-                                        tracing::info!(
-                                            source_finalized_wave = completed.opened().finalized_wave,
-                                            candidate_por_round = candidate.reputation_round(),
-                                            candidate_checkpoint = %hex::encode(checkpoint),
-                                            candidate_weight_commitment = %hex::encode(commitment),
-                                            "derived complete PoR round candidate"
+                                        before_commit.validate_recovered(&status)?;
+                                    } else if last_logged_deferred_wave != Some(expected_wave) {
+                                        tracing::warn!(
+                                            source_finalized_wave = expected_wave,
+                                            observed_finalized_wave = ?status.observed_finalized_wave,
+                                            "PoR commit waits for the source wave to be the current finalized wave"
                                         );
-                                        last_logged_candidate_checkpoint = Some(checkpoint);
+                                        last_logged_deferred_wave = Some(expected_wave);
                                     }
                                 }
                             }
                         }
                     }
                 }
-            } else if status
-                .observed_finalized_wave
-                .is_some_and(|wave| wave > expected_wave)
-            {
-                anyhow::bail!(
-                    "cannot replay PoR wave {expected_wave} after weight activation without a durable per-wave weight history"
-                );
             }
         }
         write_status(&path, &status)?;
@@ -629,6 +665,7 @@ mod tests {
             validator_rating_key_file: None,
             stage_local_ratings: false,
             rating_exchange_dir: None,
+            commit_complete_ratings: false,
             data_dir: "data".into(),
             shard_id: "root".into(),
             height_batch_size: 64,
@@ -641,6 +678,11 @@ mod tests {
         assert!(validate_config(&config).is_err());
         config.stage_local_ratings = false;
         config.rating_exchange_dir = Some("exchange".into());
+        assert!(validate_config(&config).is_err());
+        config.stage_local_ratings = true;
+        config.validator_rating_key_file = Some("validator.key".into());
+        config.rating_exchange_dir = None;
+        config.commit_complete_ratings = true;
         assert!(validate_config(&config).is_err());
     }
 }
