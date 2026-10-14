@@ -13,10 +13,11 @@ blocks, and reports a durable genesis PoR projection and the latest observed
 finalized Cordial wave. With an authorized validator key it can stage signed
 local ratings and exchange evidence-checked envelopes through a shared host
 directory. It can close an all-raters-complete round in memory and report its
-projected checkpoint and weight commitment, but does not advance durable state
-beyond round 0. The four-node cluster uses upstream f1r3node consensus;
-host-side Cordial and PoR observers can check convergence,
-but they cannot make that node use PoR weights. See
+projected checkpoint and weight commitment. With
+`--commit-complete-ratings`, it can also durably advance and locally activate
+that round while its source wave is the latest finalized wave. The four-node
+cluster uses upstream f1r3node consensus; host-side Cordial and PoR observers
+can check convergence, but they cannot make that node use PoR weights. See
 [`por-shadow-runner.md`](por-shadow-runner.md) for the current smoke test and
 its long-history memory limit.
 
@@ -103,11 +104,12 @@ The next transport increment adds a durable local rating outbox under
 envelopes by finalized wave and rater, rejects conflicting retries, and checks
 stored signatures on recovery. With `--stage-local-ratings` and an authorized
 key, the live runner now feeds this outbox through the existing coordinator.
-It can reconstruct the expected historical wave under the genesis projection
+It can reconstruct the expected historical wave under the active projection
 and checks its ordered output against the latest finalized prefix. Missing
-leaders and changed prefixes fail closed. A changed weight projection still
-needs durable per-wave weight history before historical replay can continue.
-The runner does not drain the outbox or commit a rating round.
+leaders and changed prefixes fail closed. The durable reputation round selects
+the next source wave. Activation is gated to the latest finalized wave so
+later waves have not already finalized under the previous weights.
+
 The adapter now has a shard-scoped shared-directory exchange in
 `por/transport/file_exchange.rs` for colocated observers. It publishes each
 signed envelope immutably by wave, rater, and recipient, accepts identical
@@ -118,17 +120,22 @@ of them through the finalized-evidence collector. It reports complete-rater
 and quorum progress in logs. Once all eligible raters are complete, it
 rechecks the durable local batch, closes a candidate through the lifecycle
 coordinator, replays the reputation transition, and logs the candidate
-checkpoint and weight commitment. It does not commit or activate the candidate:
-the runner still needs a durable per-wave weight cursor and a safe activation
-boundary before changing its live finality projection. A directory shared by
-four host-side observers is a functional test transport,
-not an f1r3node peer protocol. Shard isolation is directory-based; the v1
-rating signature does not itself bind a shard ID.
-Before the slice 1 exit gate, connect authenticated per-validator rating
-delivery and a durable per-wave lifecycle cursor that processes every finalized
-wave, including after restart and weight changes. The observers must use
-distinct authorized validator keys; fabricating signatures for all validators
-in one observer would not prove the distributed path.
+checkpoint and weight commitment. The opt-in commit path preflights the
+candidate against the current final leader and ordered prefix, then commits
+and activates it only at that source-wave boundary. On restart, a committed
+but pending activation replays blocks under the prior active weights before
+retrying. A directory shared by four host-side observers is a functional test
+transport, not an f1r3node peer protocol. Shard isolation is directory-based;
+the v1 rating signature does not itself bind a shard ID.
+
+Before the slice 1 exit gate, run four keyed observers against a fresh cluster
+and verify that they commit the same non-genesis round, weight map, and
+checkpoint through restart. The durable reputation round selects the next
+wave, and the exact-wave activation gate leaves later-wave candidates pending
+if exchange completes too late. Measure that window in the live smoke before
+claiming continuous progression. The observers must use distinct authorized
+validator keys; fabricating signatures for all validators in one observer
+would not prove the distributed path.
 
 ## Safety and proof requirements
 
