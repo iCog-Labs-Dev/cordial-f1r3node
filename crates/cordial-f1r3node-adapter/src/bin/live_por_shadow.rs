@@ -18,6 +18,8 @@ struct Args {
     #[arg(long)]
     stage_local_ratings: bool,
     #[arg(long)]
+    rating_exchange_dir: Option<PathBuf>,
+    #[arg(long)]
     data_dir: PathBuf,
     #[arg(long, default_value = "root")]
     shard_id: String,
@@ -38,6 +40,7 @@ async fn main() -> Result<()> {
         bonds_file: args.bonds_file,
         validator_rating_key_file: args.validator_rating_key_file,
         stage_local_ratings: args.stage_local_ratings,
+        rating_exchange_dir: args.rating_exchange_dir,
         data_dir: args.data_dir,
         shard_id: args.shard_id,
         height_batch_size: args.height_batch_size,
