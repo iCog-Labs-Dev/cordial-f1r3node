@@ -14,9 +14,14 @@ use crate::ordered_output::OrderedFinalizedOutput;
 use super::{
     collector::BlockProductionRatingCollector,
     finality::{FinalizedRatingRound, finalized_wave_from_output},
-    lifecycle::{PorRatingRoundCoordinator, quorum::PorRatingRoundClosurePolicy},
+    lifecycle::{
+        CompletedPorRatingRound, PorRatingRoundCoordinator, quorum::PorRatingRoundClosurePolicy,
+    },
     rating_key::BondedRatingKey,
-    transport::{file_exchange::FileRatingExchange, outbox::RatingOutbox, receive_rating_envelope},
+    transport::{
+        encode_rating_batch, file_exchange::FileRatingExchange, outbox::RatingOutbox,
+        receive_rating_envelope,
+    },
 };
 
 /// The local batch staged for future peer delivery. No PoR round is committed.
@@ -134,4 +139,58 @@ pub fn observe_rating_exchange(
         quorum_reached: progress.is_reached(),
         all_raters_complete: progress.completed_raters.len() == progress.eligible_raters,
     })
+}
+
+/// Close an evidence-backed candidate only after every eligible rater is complete.
+///
+/// A weighted quorum alone can leave observers with different complete-rater
+/// subsets. This gate requires the full deterministic batch and checks that
+/// the coordinator's local signing result matches the durable outbox exactly.
+/// The returned round is in memory; the caller has not committed PoR state.
+pub fn close_rating_exchange_if_complete(
+    blocklace: &Blocklace,
+    output: &OrderedFinalizedOutput,
+    state: &ReputationState,
+    config: &PorConfig,
+    key: &BondedRatingKey,
+    authorized: &HashSet<NodeId>,
+    outbox: &RatingOutbox,
+    exchange: &FileRatingExchange,
+) -> Result<Option<CompletedPorRatingRound>> {
+    let finalized_wave = finalized_wave_from_output(blocklace, output)?
+        .context("cannot close ratings without a finalized leader")?;
+    ensure!(
+        finalized_wave == state.round(),
+        "PoR rating closure wave does not match the durable reputation round"
+    );
+    ensure!(
+        authorized.contains(key.rater()),
+        "local PoR rating rater is not authorized"
+    );
+    let opened = FinalizedRatingRound {
+        finalized_wave,
+        rating_round: rating_round_from_finalized_wave(finalized_wave)?,
+    };
+    let mut coordinator = PorRatingRoundCoordinator::new(blocklace, output, opened, state, config)?;
+    let local_batch = coordinator.produce_local_batch(key.rater(), key.private_key_bytes())?;
+    let signed_envelopes = encode_rating_batch(finalized_wave, local_batch)?;
+    let staged = outbox
+        .load(finalized_wave, key.rater())?
+        .context("staged local PoR rating batch is missing")?;
+    ensure!(
+        staged == signed_envelopes,
+        "staged local PoR ratings differ from the finalized evidence"
+    );
+
+    coordinator.broadcast_pending(&exchange.broadcaster(finalized_wave, key.rater().clone()))?;
+    for envelope in exchange.read_peer_envelopes(finalized_wave, key.rater(), authorized)? {
+        coordinator.receive_envelope(&envelope)?;
+    }
+    let policy = PorRatingRoundClosurePolicy::default();
+    let progress = coordinator.quorum_progress(&policy)?;
+    if progress.completed_raters.len() != progress.eligible_raters {
+        return Ok(None);
+    }
+    coordinator.close_if_quorum(&policy)?;
+    Ok(Some(coordinator.into_completed()?))
 }
