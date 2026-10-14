@@ -463,6 +463,84 @@ fn startup_finishes_a_committed_but_unactivated_round() {
 }
 
 #[test]
+fn startup_defers_pending_activation_until_source_blocks_are_replayed() {
+    let directory = tempdir().unwrap();
+    let fixture = round_fixture();
+    let completed = completed_round(&fixture);
+    let validator = node(1);
+    let mut durable =
+        cordial_f1r3node_adapter::por::DurablePorState::open(directory.path(), fixture.state)
+            .unwrap();
+    let mut first_ingress = LiveIngress::with_consensus_view(
+        AcceptingAdapter,
+        HashMap::from([(validator.clone(), 100)]),
+        CasperShardConf::default(),
+        "root",
+    );
+    durable.activate_weights(&mut first_ingress).unwrap();
+    durable
+        .apply_completed_round(&completed, &fixture.config, SHARD_ID)
+        .unwrap();
+    drop(durable);
+
+    let empty_ingress = LiveIngress::with_consensus_view(
+        AcceptingAdapter,
+        HashMap::from([(validator, 7)]),
+        CasperShardConf::default(),
+        "root",
+    );
+    let mut restarted = PorRuntime::open(
+        directory.path(),
+        ReputationState::new(99),
+        empty_ingress,
+        fixture.config,
+        SHARD_ID,
+        WAVELENGTH,
+    )
+    .unwrap();
+    assert_eq!(
+        restarted.startup_activation(),
+        PorWeightActivationOutcome::Restored
+    );
+    assert_eq!(restarted.state().state().unwrap().round(), 1);
+    assert!(restarted.state().has_unactivated_committed_round().unwrap());
+    assert_eq!(
+        restarted
+            .state()
+            .activated_weight_record()
+            .unwrap()
+            .unwrap()
+            .reputation_round(),
+        0
+    );
+
+    for block in fixture.blocks {
+        restarted.ingress_mut().ingest_trusted_block(block).unwrap();
+    }
+    assert!(
+        restarted
+            .publish_finalized_output()
+            .unwrap()
+            .anchor
+            .is_some()
+    );
+    assert_eq!(
+        restarted.retry_weight_activation().unwrap(),
+        PorWeightActivationOutcome::Activated
+    );
+    assert!(!restarted.state().has_unactivated_committed_round().unwrap());
+    assert_eq!(
+        restarted
+            .state()
+            .activated_weight_record()
+            .unwrap()
+            .unwrap()
+            .reputation_round(),
+        1
+    );
+}
+
+#[test]
 fn invalid_runtime_parameters_fail_before_state_initialization() {
     let directory = tempdir().unwrap();
     let (_, _, state) = genesis_state();
