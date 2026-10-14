@@ -34,9 +34,38 @@ genesis weights, then checks that prefix against the latest published output.
 Missing leaders or a prefix mismatch stop the runner. Start this opt-in check
 with a fresh chain or a source whose full block history is available. Repeated
 polls and restarts accept the same batch and reject conflicting ratings for
-that wave. Nothing is sent to peers, and `active_por_round` remains unchanged
-until a separate complete-round commit path is connected. Historical replay
+that wave. Without an exchange directory, nothing is sent to peers.
+`active_por_round` remains unchanged until a separate complete-round commit
+path is connected. Historical replay
 after a weight change still requires durable per-wave weight history.
+
+For host-side exchange between keyed observers, also pass the same
+`--rating-exchange-dir` to each runner. Every observer needs its own data
+directory and its own validator key file. The key file contains the 64-character
+private key configured for that validator in the cluster's Compose environment;
+the TLS `node.key.pem` is a different key. For example, run validator 1 with:
+
+```sh
+cargo run -j 1 -p cordial-f1r3node-adapter --bin live_por_shadow -- \
+  --grpc-url http://127.0.0.1:51401 \
+  --bonds-file docker/genesis/cordial-bonds.txt \
+  --validator-rating-key-file "$HOME/por-keys/validator-1.key" \
+  --stage-local-ratings \
+  --rating-exchange-dir "$HOME/cordial-por-rating-exchange" \
+  --data-dir "$HOME/cordial-por-four-node/validator-1"
+```
+
+Run validators 2, 3, and 4 with gRPC ports `52401`, `53401`, and `54401`,
+their matching key files, separate data directories, and the **same** exchange
+directory. Reuse that directory for observer restarts and choose a new one for
+a fresh chain. The demo private keys and bonded public keys are in
+`docker/.env.example` and `docker/genesis/cordial-bonds.txt`; use the actual
+Compose-configured keys if they differ. Keep key files owner-readable only.
+The runner republishes its immutable outbox envelopes after restart, verifies
+peer signatures and finalized interaction evidence, and logs envelope counts,
+complete raters, and quorum progress. These observations do not close or
+commit a PoR round, so `active_por_round` stays at its last committed value.
+An exchange conflict or invalid peer rating stops the runner for inspection.
 
 ## Live smoke procedure
 
@@ -87,6 +116,9 @@ fail closed. The runner never adds senders observed in blocks to the membership
 map. Keep the data directory and its activation record across restarts.
 
 ## Four-node recovery smoke
+
+This harness exercises the default observer mode. It does not pass validator
+keys or start the shared rating exchange described above.
 
 Start and verify a recently started connected cluster, then build the runner
 once and run the four-observer harness from the repository root:
