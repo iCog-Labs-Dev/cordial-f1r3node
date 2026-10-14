@@ -99,14 +99,15 @@ The next transport increment adds a durable local rating outbox under
 `<data-dir>/por/rating-outbox`. It atomically stages the existing signed wire
 envelopes by finalized wave and rater, rejects conflicting retries, and checks
 stored signatures on recovery. With `--stage-local-ratings` and an authorized
-key, the live runner now feeds this outbox through the existing coordinator
-only when the latest finalized wave matches the next durable reputation round.
-A skipped wave fails closed. The runner does not drain the outbox or commit a
-rating round; peer delivery and a complete per-wave replay path remain
-necessary.
+key, the live runner now feeds this outbox through the existing coordinator.
+It can reconstruct the expected historical wave under the genesis projection
+and checks its ordered output against the latest finalized prefix. Missing
+leaders and changed prefixes fail closed. A changed weight projection still
+needs durable per-wave weight history before historical replay can continue.
+The runner does not drain the outbox or commit a rating round.
 Before the slice 1 exit gate, add authenticated per-validator rating delivery
 and a durable per-wave lifecycle cursor that processes every finalized wave,
-including after restart. The observers must use distinct authorized validator
+including after restart and weight changes. The observers must use distinct authorized validator
 keys; fabricating signatures for all validators in one observer would not prove
 the distributed path.
 
