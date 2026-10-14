@@ -28,8 +28,11 @@ use crate::{
 };
 
 use super::{
-    finality::finalized_wave_from_output, local_ratings::stage_local_rating_batch,
-    rating_key::load_bonded_rating_key, runtime::PorRuntime, transport::outbox::RatingOutbox,
+    finality::{finalized_output_for_wave, finalized_wave_from_output},
+    local_ratings::stage_local_rating_batch,
+    rating_key::load_bonded_rating_key,
+    runtime::PorRuntime,
+    transport::outbox::RatingOutbox,
 };
 
 const STATUS_FILE: &str = "shadow-status.json";
@@ -359,23 +362,43 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
             published.validate_recovered(&status)?;
         }
         if let (Some(key), Some(outbox)) = (&rating_key, &rating_outbox) {
-            if let Some(staged) = stage_local_rating_batch(
-                runtime.ingress().blocklace(),
-                &output,
-                runtime.state().state()?,
-                runtime.config(),
-                key,
-                outbox,
-            )? {
-                if last_logged_rating_wave != Some(staged.finalized_wave) {
-                    tracing::info!(
-                        finalized_wave = staged.finalized_wave,
-                        rating_round = staged.rating_round,
-                        rating_count = staged.rating_count,
-                        "staged local PoR ratings"
-                    );
-                    last_logged_rating_wave = Some(staged.finalized_wave);
+            let state = runtime.state().state()?;
+            let expected_wave = state.round();
+            // Historical ordering can be replayed under the genesis projection.
+            // Later projections need a durable per-wave weight history first.
+            if expected_wave == 0 || status.observed_finalized_wave == Some(expected_wave) {
+                if let Some(rating_output) = finalized_output_for_wave(
+                    runtime.ingress().blocklace(),
+                    &output,
+                    runtime.ingress().bonds(),
+                    expected_wave,
+                )? {
+                    if let Some(staged) = stage_local_rating_batch(
+                        runtime.ingress().blocklace(),
+                        &rating_output,
+                        state,
+                        runtime.config(),
+                        key,
+                        outbox,
+                    )? {
+                        if last_logged_rating_wave != Some(staged.finalized_wave) {
+                            tracing::info!(
+                                finalized_wave = staged.finalized_wave,
+                                rating_round = staged.rating_round,
+                                rating_count = staged.rating_count,
+                                "staged local PoR ratings"
+                            );
+                            last_logged_rating_wave = Some(staged.finalized_wave);
+                        }
+                    }
                 }
+            } else if status
+                .observed_finalized_wave
+                .is_some_and(|wave| wave > expected_wave)
+            {
+                anyhow::bail!(
+                    "cannot replay PoR wave {expected_wave} after weight activation without a durable per-wave weight history"
+                );
             }
         }
         write_status(&path, &status)?;
