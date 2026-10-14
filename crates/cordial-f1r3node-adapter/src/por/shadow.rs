@@ -15,7 +15,7 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use casper::rust::util::bonds_parser::BondsParser;
 use cordial_miners_core::{Block, NodeId, types::BlockIdentity};
-use cordial_por::{PorConfig, ReputationState};
+use cordial_por::{PorConfig, ReputationState, authorized_validator_weights};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -28,10 +28,15 @@ use crate::{
 };
 
 use super::{
+    activation::PorWeightActivationRecord,
     finality::{finalized_output_for_wave, finalized_wave_from_output},
-    local_ratings::{RatingExchangeProgress, observe_rating_exchange, stage_local_rating_batch},
+    local_ratings::{
+        RatingExchangeProgress, close_rating_exchange_if_complete, observe_rating_exchange,
+        stage_local_rating_batch,
+    },
     rating_key::load_bonded_rating_key,
     runtime::PorRuntime,
+    transition::apply_completed_reputation_round,
     transport::{file_exchange::FileRatingExchange, outbox::RatingOutbox},
 };
 
@@ -292,6 +297,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
     let mut client: Option<LiveGrpcBlockClient> = None;
     let mut last_logged_rating_wave: Option<u64> = None;
     let mut last_logged_exchange_progress: Option<RatingExchangeProgress> = None;
+    let mut last_logged_candidate_checkpoint: Option<[u8; 32]> = None;
 
     loop {
         if client.is_none() {
@@ -426,6 +432,52 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
                                     "observed PoR rating exchange"
                                 );
                                 last_logged_exchange_progress = Some(progress);
+                            }
+                            if progress.all_raters_complete {
+                                if let Some(completed) = close_rating_exchange_if_complete(
+                                    runtime.ingress().blocklace(),
+                                    &rating_output,
+                                    state,
+                                    runtime.config(),
+                                    key,
+                                    &authorized_raters,
+                                    outbox,
+                                    exchange,
+                                )? {
+                                    let mut candidate_state = state.clone();
+                                    apply_completed_reputation_round(
+                                        &completed,
+                                        &mut candidate_state,
+                                        runtime.config(),
+                                        runtime.shard_id(),
+                                    )?;
+                                    let mut validators: Vec<_> =
+                                        runtime.ingress().bonds().keys().cloned().collect();
+                                    validators.sort();
+                                    let weights = authorized_validator_weights(
+                                        &candidate_state,
+                                        &validators,
+                                    )?;
+                                    let candidate =
+                                        PorWeightActivationRecord::from_state_and_weights(
+                                            &candidate_state,
+                                            &weights,
+                                        )?;
+                                    let commitment = candidate.weights_commitment();
+                                    let checkpoint = candidate
+                                        .checkpoint_hash()
+                                        .context("complete PoR candidate has no checkpoint")?;
+                                    if last_logged_candidate_checkpoint != Some(checkpoint) {
+                                        tracing::info!(
+                                            source_finalized_wave = completed.opened().finalized_wave,
+                                            candidate_por_round = candidate.reputation_round(),
+                                            candidate_checkpoint = %hex::encode(checkpoint),
+                                            candidate_weight_commitment = %hex::encode(commitment),
+                                            "derived complete PoR round candidate"
+                                        );
+                                        last_logged_candidate_checkpoint = Some(checkpoint);
+                                    }
+                                }
                             }
                         }
                     }
