@@ -1,11 +1,11 @@
 //! Live PoR shadow host. Cordial remains the source of membership and finality.
-//! Optional local rating staging writes only to the observer's outbox.
+//! Optional local rating exchange writes signed envelopes to a shared directory.
 //!
 //! The entire blocklace is replayed on startup because ingress is process-local.
 //! A retained finalized prefix is checked before a recovered view is published.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fs::{self, File},
     io::Write,
     path::{Path, PathBuf},
@@ -29,10 +29,10 @@ use crate::{
 
 use super::{
     finality::{finalized_output_for_wave, finalized_wave_from_output},
-    local_ratings::stage_local_rating_batch,
+    local_ratings::{RatingExchangeProgress, observe_rating_exchange, stage_local_rating_batch},
     rating_key::load_bonded_rating_key,
     runtime::PorRuntime,
-    transport::outbox::RatingOutbox,
+    transport::{file_exchange::FileRatingExchange, outbox::RatingOutbox},
 };
 
 const STATUS_FILE: &str = "shadow-status.json";
@@ -52,6 +52,7 @@ pub struct ShadowConfig {
     pub bonds_file: PathBuf,
     pub validator_rating_key_file: Option<PathBuf>,
     pub stage_local_ratings: bool,
+    pub rating_exchange_dir: Option<PathBuf>,
     pub data_dir: PathBuf,
     pub shard_id: String,
     pub height_batch_size: i64,
@@ -230,6 +231,10 @@ fn validate_config(config: &ShadowConfig) -> Result<()> {
         !config.stage_local_ratings || config.validator_rating_key_file.is_some(),
         "staging local PoR ratings requires a validator rating key file"
     );
+    ensure!(
+        config.rating_exchange_dir.is_none() || config.stage_local_ratings,
+        "PoR rating exchange requires local rating staging"
+    );
     Ok(())
 }
 
@@ -246,6 +251,12 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
         .stage_local_ratings
         .then(|| RatingOutbox::open(&config.data_dir))
         .transpose()?;
+    let rating_exchange = config
+        .rating_exchange_dir
+        .as_ref()
+        .map(|root| FileRatingExchange::open(root, config.shard_id.as_bytes()))
+        .transpose()?;
+    let authorized_raters: HashSet<NodeId> = bonds.keys().cloned().collect();
     let configured_rating_rater = rating_key
         .as_ref()
         .map(|signer| hex::encode(&signer.rater().0));
@@ -280,6 +291,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
     let mut scanned_height: Option<i64> = None;
     let mut client: Option<LiveGrpcBlockClient> = None;
     let mut last_logged_rating_wave: Option<u64> = None;
+    let mut last_logged_exchange_progress: Option<RatingExchangeProgress> = None;
 
     loop {
         if client.is_none() {
@@ -389,6 +401,32 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
                                 "staged local PoR ratings"
                             );
                             last_logged_rating_wave = Some(staged.finalized_wave);
+                        }
+                        if let Some(exchange) = &rating_exchange {
+                            let progress = observe_rating_exchange(
+                                runtime.ingress().blocklace(),
+                                &rating_output,
+                                state,
+                                runtime.config(),
+                                key,
+                                &authorized_raters,
+                                outbox,
+                                exchange,
+                            )?;
+                            if last_logged_exchange_progress != Some(progress) {
+                                tracing::info!(
+                                    finalized_wave = progress.finalized_wave,
+                                    rating_round = progress.rating_round,
+                                    local_envelopes = progress.local_envelopes,
+                                    peer_envelopes = progress.peer_envelopes,
+                                    completed_raters = progress.completed_raters,
+                                    eligible_raters = progress.eligible_raters,
+                                    quorum_reached = progress.quorum_reached,
+                                    all_raters_complete = progress.all_raters_complete,
+                                    "observed PoR rating exchange"
+                                );
+                                last_logged_exchange_progress = Some(progress);
+                            }
                         }
                     }
                 }
@@ -538,6 +576,7 @@ mod tests {
             bonds_file: "bonds.txt".into(),
             validator_rating_key_file: None,
             stage_local_ratings: false,
+            rating_exchange_dir: None,
             data_dir: "data".into(),
             shard_id: "root".into(),
             height_batch_size: 64,
@@ -547,6 +586,9 @@ mod tests {
         assert!(validate_config(&config).is_err());
         config.height_batch_size = 64;
         config.stage_local_ratings = true;
+        assert!(validate_config(&config).is_err());
+        config.stage_local_ratings = false;
+        config.rating_exchange_dir = Some("exchange".into());
         assert!(validate_config(&config).is_err());
     }
 }
