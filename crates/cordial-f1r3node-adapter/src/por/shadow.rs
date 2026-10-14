@@ -75,6 +75,9 @@ pub struct ShadowStatus {
     #[serde(default)]
     pub configured_rating_rater: Option<String>,
     pub active_por_round: u64,
+    /// Audited reputation checkpoint for the active round; absent at genesis.
+    #[serde(default)]
+    pub active_por_checkpoint: Option<String>,
     pub weight_commitment: String,
     pub weights: BTreeMap<String, u64>,
     pub finalized_anchor: Option<String>,
@@ -107,6 +110,7 @@ impl ShadowStatus {
             shadow_mode: true,
             configured_rating_rater: rating_rater.map(str::to_owned),
             active_por_round: record.reputation_round(),
+            active_por_checkpoint: record.checkpoint_hash().map(hex::encode),
             weight_commitment: hex::encode(record.weights_commitment()),
             weights,
             finalized_anchor: output.anchor_hash().map(hex::encode),
@@ -157,6 +161,12 @@ impl ShadowStatus {
                     && recovered.weights == self.weights,
                 "recovered PoR projection differs from the previous publication"
             );
+            if let Some(checkpoint) = &self.active_por_checkpoint {
+                ensure!(
+                    recovered.active_por_checkpoint.as_ref() == Some(checkpoint),
+                    "recovered PoR checkpoint differs from the previous publication"
+                );
+            }
         }
         Ok(())
     }
@@ -543,6 +553,7 @@ mod tests {
             shadow_mode: true,
             configured_rating_rater: None,
             active_por_round: 0,
+            active_por_checkpoint: None,
             weight_commitment: "abc".into(),
             weights: BTreeMap::from([("key".into(), 1)]),
             finalized_anchor: hashes.last().map(|hash| hash.to_string()),
@@ -591,9 +602,14 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("configured_rating_rater");
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("active_por_checkpoint");
         let previous: ShadowStatus = serde_json::from_value(value).unwrap();
         assert_eq!(previous.observed_finalized_wave, None);
         assert_eq!(previous.configured_rating_rater, None);
+        assert_eq!(previous.active_por_checkpoint, None);
         let mut recovered = status(&["a", "b"]);
         recovered.observed_finalized_wave = Some(1);
         previous.validate_recovered(&recovered).unwrap();
@@ -610,6 +626,20 @@ mod tests {
         recovered.configured_rating_rater = Some("validator-2".into());
         assert!(old.validate_recovered(&recovered).is_err());
         recovered.configured_rating_rater = None;
+        assert!(old.validate_recovered(&recovered).is_err());
+    }
+
+    #[test]
+    fn recovered_active_checkpoint_must_match_at_the_same_round() {
+        let mut old = status(&["a"]);
+        old.active_por_round = 1;
+        old.active_por_checkpoint = Some("checkpoint-a".into());
+        let mut recovered = old.clone();
+        recovered.finalized_hashes.push("b".into());
+        old.validate_recovered(&recovered).unwrap();
+        recovered.active_por_checkpoint = Some("checkpoint-b".into());
+        assert!(old.validate_recovered(&recovered).is_err());
+        recovered.active_por_checkpoint = None;
         assert!(old.validate_recovered(&recovered).is_err());
     }
 
