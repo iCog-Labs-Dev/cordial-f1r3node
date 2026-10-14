@@ -173,6 +173,65 @@ observer restart check. `--timeout-seconds` and `--min-finalized-blocks` adjust
 the convergence gate. The cluster must be running before this command; the
 harness does not start or reset it.
 
+### Parallel keyed PoR smoke
+
+The keyed harness can run against a fresh Compose project without stopping an
+existing cluster. First build the current runner and prepare four owner-readable
+key files named `validator-1.key` through `validator-4.key` under
+`$HOME/por-keys`. Their contents must match the validator private keys in the
+Compose configuration; the matching public keys must be in
+`docker/genesis/cordial-bonds.txt`. Prepare the cluster certificates with
+`./docker/scripts/generate-four-node-cluster-certs.sh` if needed.
+
+In terminal A, start the observers **before** the fresh validators:
+
+```sh
+cargo build --release -j 1 -p cordial-f1r3node-adapter --bin live_por_shadow
+smoke_root="$(mktemp -d /tmp/por-keyed-smoke.XXXXXX)"
+python3 docker/scripts/verify-four-node-por-shadow.py \
+  --data-root "$smoke_root/observers" \
+  --binary target/release/live_por_shadow \
+  --rating-keys-dir "$HOME/por-keys" \
+  --rating-exchange-dir "$smoke_root/exchange" \
+  --commit-complete-ratings --min-por-round 1 \
+  --grpc-ports 61001 62001 63001 64001 \
+  --compose-override docker/four-node-por-smoke-override.yml \
+  --compose-project por-keyed-smoke --timeout-seconds 900
+```
+
+In terminal B, start the separate cluster:
+
+```sh
+COMPOSE_PROJECT_NAME=por-keyed-smoke docker compose --env-file docker/.env \
+  -f docker/four-node-cluster.yml \
+  -f docker/four-node-por-smoke-override.yml up -d
+```
+
+After terminal A finishes or fails, stop only the smoke project:
+
+```sh
+COMPOSE_PROJECT_NAME=por-keyed-smoke docker compose --env-file docker/.env \
+  -f docker/four-node-cluster.yml \
+  -f docker/four-node-por-smoke-override.yml down
+```
+
+The override uses separate container names, host ports, network, and named
+volumes. Plain `down` preserves its volumes for diagnosis. The harness requires
+all four observers to reach at least PoR round 1 with the same active
+checkpoint, weight commitment, weight map, and finalized prefix; it then
+checks observer and validator restarts. Logs and durable PoR data remain under
+`$smoke_root`.
+
+**Observed blocker on 2026-10-14:** four keyed observers launched before a
+fresh cluster, then all exited with `no final leader can be replayed for wave
+0` after a later wave finalized. The node's height-0 genesis block has an
+empty sender, so it cannot be the validator elected as Cordial's wave-0
+leader. The current PoR protocol requires wave `k` to produce rating round
+`k+1` with consecutive reputation rounds; it has no representation for a
+wave without a final leader. No observer committed round 1 in this run. A
+deterministic skipped-wave rule must be designed and audited before this smoke
+can pass. Do not treat a timeout or a genesis-only status as PoR convergence.
+
 ### Isolated fresh-cluster reproduction
 
 The Compose file fixes container names and host ports, so only one copy can
