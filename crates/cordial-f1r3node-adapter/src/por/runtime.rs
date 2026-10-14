@@ -2,9 +2,9 @@
 //!
 //! Construction restores the durable reputation state and the previously
 //! activated projection, recomputes the Cordial finalized view under those
-//! weights, and activates any newer committed projection before ingress can be
-//! exposed. Completed local or attested rounds always commit state first and
-//! immediately attempt weight activation.
+//! weights. A newer committed projection may wait for the host to replay its
+//! source finalized wave before activation. Completed local or attested rounds
+//! commit state first and immediately attempt weight activation.
 
 use std::path::Path;
 
@@ -12,7 +12,7 @@ use cordial_por::{MAX_REPUTATION_BLOCK_SHARD_ID_LEN, PorConfig, PorError, Reputa
 use thiserror::Error;
 
 use crate::{
-    live_ingress::LiveIngress,
+    live_ingress::{LiveIngress, PorWeightActivationError},
     ordered_output::OrderedFinalizedOutput,
     snapshot::{CORDIAL_WAVELENGTH, SnapshotError},
 };
@@ -61,9 +61,10 @@ impl CommittedPorRound {
 
 /// Owns live Cordial ingress and durable PoR state as one lifecycle.
 ///
-/// The wrapper is returned only after startup has recomputed the current
-/// finalized output and restored committed weights. Host code should construct
-/// this owner before sharing its ingress with networking tasks.
+/// Startup restores the last activated projection before computing finality.
+/// If a newer committed round needs blocks that are not yet replayed, the host
+/// must publish those blocks and call `retry_weight_activation` before using
+/// the ingress to process another PoR round.
 pub struct PorRuntime<A> {
     ingress: LiveIngress<A>,
     state: DurablePorState,
@@ -74,7 +75,7 @@ pub struct PorRuntime<A> {
 }
 
 impl<A> PorRuntime<A> {
-    /// Restore one shard's PoR state and activate it before exposing ingress.
+    /// Restore one shard's PoR state and its last activated weights.
     pub fn open(
         data_dir: &Path,
         initial_state: ReputationState,
@@ -102,6 +103,14 @@ impl<A> PorRuntime<A> {
             restored_activation,
         ) {
             (false, Some(restored)) => restored,
+            (true, Some(restored)) => match state.activate_weights(&mut ingress) {
+                Ok(activated) => activated,
+                Err(DurablePorStateError::Activation(
+                    PorWeightActivationError::MissingFinalizedOutput { .. }
+                    | PorWeightActivationError::FinalizedWaveBehind { .. },
+                )) => restored,
+                Err(error) => return Err(error.into()),
+            },
             _ => state.activate_weights(&mut ingress)?,
         };
 
