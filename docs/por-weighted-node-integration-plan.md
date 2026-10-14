@@ -10,8 +10,10 @@ restart.
 
 Today, `live_por_shadow` connects to an upstream f1r3node over gRPC, mirrors
 blocks, and reports a durable genesis PoR projection and the latest observed
-finalized Cordial wave. It does not produce live ratings or advance beyond
-round 0. The four-node cluster uses upstream
+finalized Cordial wave. With an authorized validator key it can stage signed
+local ratings and exchange evidence-checked envelopes through a shared host
+directory. It does not close a rating round or advance beyond round 0. The
+four-node cluster uses upstream
 f1r3node consensus; host-side Cordial and PoR observers can check convergence,
 but they cannot make that node use PoR weights. See
 [`por-shadow-runner.md`](por-shadow-runner.md) for the current smoke test and
@@ -109,12 +111,13 @@ The adapter now has a shard-scoped shared-directory exchange in
 `por/transport/file_exchange.rs` for colocated observers. It publishes each
 signed envelope immutably by wave, rater, and recipient, accepts identical
 retries, and reads authorized peer envelopes in canonical order with bounded
-files and signature checks. This transport is not yet connected to the live
-runner. Its reader does not decide evidence admission or round closure; callers
-must pass each envelope through the existing collector. A directory shared by
-four host-side observers is a functional test transport, not an f1r3node peer
-protocol. Shard isolation is directory-based; the v1 rating signature does
-not itself bind a shard ID.
+files and signature checks. With `--rating-exchange-dir`, the live runner now
+publishes its durable outbox envelopes, reads peer envelopes, and passes all
+of them through the finalized-evidence collector. It reports complete-rater
+and quorum progress in logs, but does not close or commit the round. A
+directory shared by four host-side observers is a functional test transport,
+not an f1r3node peer protocol. Shard isolation is directory-based; the v1
+rating signature does not itself bind a shard ID.
 Before the slice 1 exit gate, connect authenticated per-validator rating
 delivery and a durable per-wave lifecycle cursor that processes every finalized
 wave, including after restart and weight changes. The observers must use
