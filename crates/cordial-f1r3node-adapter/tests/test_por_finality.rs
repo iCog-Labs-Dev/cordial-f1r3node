@@ -1,9 +1,10 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use cordial_f1r3node_adapter::{
     ordered_output::OrderedFinalizedOutput,
     por_finality::{
-        FinalizedRatingRound, PorFinalityError, PorFinalityTracker, finalized_wave_from_output,
+        FinalizedRatingRound, PorFinalityError, PorFinalityTracker, finalized_output_for_wave,
+        finalized_wave_from_output,
     },
 };
 use cordial_miners_core::{
@@ -213,5 +214,50 @@ fn rejects_zero_wavelength_for_a_finalized_anchor() {
     assert_eq!(
         tracker.observe_finalized_output(&blocklace, &output(Some(leader.identity.clone()), 0),),
         Err(PorFinalityError::InvalidWavelength)
+    );
+}
+
+#[test]
+fn replays_an_earlier_wave_only_when_its_ordering_is_a_finalized_prefix() {
+    let mut blocklace = Blocklace::new();
+    let mut chain = vec![block(1, None)];
+    for tag in 2..=7 {
+        chain.push(block(tag, Some(&chain.last().unwrap().identity)));
+    }
+    for entry in &chain {
+        insert(&mut blocklace, entry);
+    }
+
+    let bonds = HashMap::from([(NodeId(vec![1]), 1)]);
+    let latest = OrderedFinalizedOutput::new(
+        chain[..4]
+            .iter()
+            .map(|entry| entry.identity.clone())
+            .collect(),
+        Some(chain[3].identity.clone()),
+        WAVELENGTH,
+        1,
+        chain.len(),
+    )
+    .with_timestamp(0);
+    let replayed = finalized_output_for_wave(&blocklace, &latest, &bonds, 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(replayed.anchor, Some(chain[0].identity.clone()));
+    assert_eq!(replayed.blocks, vec![chain[0].identity.clone()]);
+    assert_eq!(
+        finalized_output_for_wave(&blocklace, &latest, &bonds, 1).unwrap(),
+        Some(latest.clone())
+    );
+    assert_eq!(
+        finalized_output_for_wave(&blocklace, &latest, &bonds, 2).unwrap(),
+        None
+    );
+
+    let mut drifted = latest;
+    drifted.blocks.remove(0);
+    assert_eq!(
+        finalized_output_for_wave(&blocklace, &drifted, &bonds, 0),
+        Err(PorFinalityError::HistoricalPrefixMismatch { wave: 0 })
     );
 }
