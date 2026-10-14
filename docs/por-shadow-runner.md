@@ -9,10 +9,11 @@ activates the genesis projection; on restart it restores the exact activated
 weights before computing finality.
 
 The runner observes and reports PoR weights and the latest finalized Cordial
-wave. It does not change the running f1r3node validator or advance reputation
-rounds. Finalized-wave reporting does not imply that the intermediate waves
-were processed as PoR rating rounds. With keyed observers and a shared exchange,
-it can derive a complete round candidate without committing it.
+wave. It does not change the running f1r3node validator. Finalized-wave
+reporting does not imply that intermediate waves were processed as PoR rating
+rounds. With keyed observers and a shared exchange, it derives complete round
+candidates. An explicit flag can commit and activate them in the local Cordial
+observer.
 
 For a validator observer, `--validator-rating-key-file /path/to/validator.key`
 optionally loads its own secp256k1 private key at startup. The file contains
@@ -30,14 +31,14 @@ and writes its signed envelopes under `<data-dir>/por/rating-outbox` before
 publishing a new shadow status. It stages only the next round expected by the
 durable PoR state. If the latest finalized leader is in a later wave, the
 runner replays the expected wave's final leader and ordered prefix under the
-genesis weights, then checks that prefix against the latest published output.
+currently active weights, then checks that prefix against the latest published
+output.
 Missing leaders or a prefix mismatch stop the runner. Start this opt-in check
 with a fresh chain or a source whose full block history is available. Repeated
 polls and restarts accept the same batch and reject conflicting ratings for
 that wave. Without an exchange directory, nothing is sent to peers.
-`active_por_round` remains unchanged until a separate complete-round commit
-path is connected. Historical replay
-after a weight change still requires durable per-wave weight history.
+`active_por_round` remains unchanged without an exchange and the explicit
+commit flag.
 
 For host-side exchange between keyed observers, also pass the same
 `--rating-exchange-dir` to each runner. Every observer needs its own data
@@ -68,11 +69,27 @@ it closes an in-memory candidate, replays the reputation transition, and logs
 `candidate_por_round`, `candidate_checkpoint`, and
 `candidate_weight_commitment`. Compare all three fields across four observer
 logs. The weighted quorum alone does not trigger a candidate because observers
-could otherwise close with different subsets. No state or active weights are
-committed by this path, so `active_por_round` remains at its last committed
-value. Durable commit and activation need a per-wave weight history and a
-defined activation boundary.
-An exchange conflict or invalid peer rating stops the runner for inspection.
+could otherwise close with different subsets. Without the flag below, no state
+or active weights are committed.
+
+To allow a complete candidate to advance durable PoR state, add
+`--commit-complete-ratings` to **each** keyed observer command. The runner
+commits only while the candidate's source wave is the latest finalized wave.
+It first checks that the projected weights preserve the published final leader
+and ordered prefix, then commits the audited reputation state and activates
+the weights in its local Cordial ingress. The JSON status then reports the new
+`active_por_round`, `weight_commitment`, and exact `weights` map. It defers
+commit when a later wave has already finalized; such a candidate stays
+visible in logs. Use a fresh cluster and start all keyed observers promptly to
+exercise this gate. A restart restores the last active projection before
+replaying blocks; if a commit was interrupted before activation, the runner
+replays under the prior projection and retries activation before publishing
+status. The durable reputation round is the cursor for the next wave.
+
+This flag changes only the observer's Cordial view. The running upstream
+f1r3node still uses its own consensus weights. A live four-observer activation
+and restart smoke remains to be run. An exchange conflict or invalid peer
+rating stops the runner for inspection.
 
 ## Live smoke procedure
 
@@ -207,7 +224,7 @@ for the recovery smoke until the long-history path has bounded memory and a
 durable mirror checkpoint.
 
 The default harness does not supply validator rating keys, so its observers
-retain the genesis reputation round. A keyed exchange can derive a later
-candidate, but does not commit or activate it. Agreement here tests
-deterministic observation and durable recovery, not enforcement of PoR weights
-by f1r3node.
+retain the genesis reputation round. A keyed exchange can derive later
+candidates and, with `--commit-complete-ratings`, activate them locally.
+Agreement in the default harness tests deterministic observation and durable
+recovery, not enforcement of PoR weights by f1r3node.
