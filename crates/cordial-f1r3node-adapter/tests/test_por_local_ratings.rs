@@ -7,8 +7,11 @@ use cordial_f1r3node_adapter::{
     ordered_output::OrderedFinalizedOutput,
     por::{
         finality::finalized_output_for_wave,
-        local_ratings::{observe_rating_exchange, stage_local_rating_batch},
+        local_ratings::{
+            close_rating_exchange_if_complete, observe_rating_exchange, stage_local_rating_batch,
+        },
         rating_key::load_bonded_rating_key,
+        transition::apply_completed_reputation_round,
         transport::{file_exchange::FileRatingExchange, outbox::RatingOutbox},
     },
 };
@@ -17,7 +20,7 @@ use cordial_miners_core::{
     consensus::{latest_weighted_final_leader, weighted_tau},
     crypto::CryptoVerifier,
 };
-use cordial_por::{PorConfig, ReputationState};
+use cordial_por::{PorConfig, ReputationState, authorized_validator_weights};
 use k256::ecdsa::SigningKey;
 
 struct AcceptAll;
@@ -291,6 +294,19 @@ fn distinct_observers_exchange_evidence_checked_ratings_after_restart() {
         .is_err()
     );
     assert!(
+        close_rating_exchange_if_complete(
+            &blocklace,
+            &changed_evidence,
+            &state,
+            &config,
+            &observers[0].1,
+            &authorized,
+            &observers[0].2,
+            &exchange,
+        )
+        .is_err()
+    );
+    assert!(
         exchange
             .read_peer_envelopes(0, &node(2), &authorized)
             .unwrap()
@@ -319,6 +335,20 @@ fn distinct_observers_exchange_evidence_checked_ratings_after_restart() {
     assert_eq!(second.peer_envelopes, 2);
     assert_eq!(second.completed_raters, 2);
     assert!(!second.quorum_reached);
+    assert!(
+        close_rating_exchange_if_complete(
+            &blocklace,
+            &output,
+            &state,
+            &config,
+            &observers[0].1,
+            &authorized,
+            &observers[0].2,
+            &exchange,
+        )
+        .unwrap()
+        .is_none()
+    );
     let third = observe(2, &exchange);
     assert_eq!(third.peer_envelopes, 4);
     assert!(third.all_raters_complete);
@@ -342,4 +372,145 @@ fn distinct_observers_exchange_evidence_checked_ratings_after_restart() {
     assert!(recovered.all_raters_complete);
     assert_eq!(recovered.peer_envelopes, 4);
     assert_eq!(state.round(), 0);
+
+    let mut projections = Vec::new();
+    for (_, key, outbox) in &observers {
+        let completed = close_rating_exchange_if_complete(
+            &blocklace,
+            &output,
+            &state,
+            &config,
+            key,
+            &authorized,
+            outbox,
+            &reopened,
+        )
+        .unwrap()
+        .unwrap();
+        let mut projected = state.clone();
+        let applied =
+            apply_completed_reputation_round(&completed, &mut projected, &config, b"root").unwrap();
+        let mut validators: Vec<_> = bonds.keys().cloned().collect();
+        validators.sort();
+        projections.push((
+            completed.batch().clone(),
+            applied.block,
+            authorized_validator_weights(&projected, &validators).unwrap(),
+        ));
+    }
+    assert_eq!(projections[0], projections[1]);
+    assert_eq!(projections[1], projections[2]);
+    assert_eq!(state.round(), 0);
+}
+
+#[test]
+fn weighted_quorum_does_not_close_an_incomplete_exchange() {
+    let directory = tempfile::tempdir().unwrap();
+    let bonds = HashMap::from([(node(1), 1), (node(2), 1), (node(3), 1), (node(4), 1)]);
+    let authorized: HashSet<_> = bonds.keys().cloned().collect();
+    let mut state = ReputationState::new(0);
+    for validator in bonds.keys() {
+        state.set_reputation(validator.clone(), 100);
+    }
+    let config = PorConfig::default();
+    let mut blocklace = Blocklace::new();
+    let first = block(1, 1, None);
+    let second = block(2, 2, Some(&first.identity));
+    let third = block(3, 3, Some(&second.identity));
+    for entry in [&first, &second, &third] {
+        blocklace.insert(entry.clone(), &AcceptAll).unwrap();
+    }
+    let output = OrderedFinalizedOutput::new(
+        vec![
+            first.identity.clone(),
+            second.identity.clone(),
+            third.identity.clone(),
+        ],
+        Some(first.identity),
+        3,
+        4,
+        3,
+    );
+    let exchange = FileRatingExchange::open(&directory.path().join("exchange"), b"root").unwrap();
+    let mut observers = Vec::new();
+    for seed in 1..=4 {
+        let data_dir = directory.path().join(format!("observer-{seed}"));
+        fs::create_dir_all(&data_dir).unwrap();
+        let key_path = data_dir.join("validator.key");
+        fs::write(&key_path, hex::encode([seed; 32])).unwrap();
+        let key = load_bonded_rating_key(&key_path, &bonds).unwrap();
+        let outbox = RatingOutbox::open(&data_dir).unwrap();
+        stage_local_rating_batch(&blocklace, &output, &state, &config, &key, &outbox)
+            .unwrap()
+            .unwrap();
+        observers.push((key, outbox));
+    }
+    for (key, outbox) in observers.iter().take(3) {
+        observe_rating_exchange(
+            &blocklace,
+            &output,
+            &state,
+            &config,
+            key,
+            &authorized,
+            outbox,
+            &exchange,
+        )
+        .unwrap();
+    }
+    let (key, outbox) = &observers[0];
+    let progress = observe_rating_exchange(
+        &blocklace,
+        &output,
+        &state,
+        &config,
+        key,
+        &authorized,
+        outbox,
+        &exchange,
+    )
+    .unwrap();
+    assert!(progress.quorum_reached);
+    assert_eq!(progress.completed_raters, 3);
+    assert!(!progress.all_raters_complete);
+    assert!(
+        close_rating_exchange_if_complete(
+            &blocklace,
+            &output,
+            &state,
+            &config,
+            key,
+            &authorized,
+            outbox,
+            &exchange,
+        )
+        .unwrap()
+        .is_none()
+    );
+    let (last_key, last_outbox) = &observers[3];
+    observe_rating_exchange(
+        &blocklace,
+        &output,
+        &state,
+        &config,
+        last_key,
+        &authorized,
+        last_outbox,
+        &exchange,
+    )
+    .unwrap();
+    assert!(
+        close_rating_exchange_if_complete(
+            &blocklace,
+            &output,
+            &state,
+            &config,
+            key,
+            &authorized,
+            outbox,
+            &exchange,
+        )
+        .unwrap()
+        .is_some()
+    );
 }
