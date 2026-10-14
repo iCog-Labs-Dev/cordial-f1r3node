@@ -11,8 +11,8 @@ weights before computing finality.
 The runner observes and reports PoR weights and the latest finalized Cordial
 wave. It does not change the running f1r3node validator or advance reputation
 rounds. Finalized-wave reporting does not imply that the intermediate waves
-were processed as PoR rating rounds. Signed peer exchange and round closure
-are later slices.
+were processed as PoR rating rounds. With keyed observers and a shared exchange,
+it can derive a complete round candidate without committing it.
 
 For a validator observer, `--validator-rating-key-file /path/to/validator.key`
 optionally loads its own secp256k1 private key at startup. The file contains
@@ -63,8 +63,15 @@ a fresh chain. The demo private keys and bonded public keys are in
 Compose-configured keys if they differ. Keep key files owner-readable only.
 The runner republishes its immutable outbox envelopes after restart, verifies
 peer signatures and finalized interaction evidence, and logs envelope counts,
-complete raters, and quorum progress. These observations do not close or
-commit a PoR round, so `active_por_round` stays at its last committed value.
+complete raters, and quorum progress. When **every** eligible rater is complete,
+it closes an in-memory candidate, replays the reputation transition, and logs
+`candidate_por_round`, `candidate_checkpoint`, and
+`candidate_weight_commitment`. Compare all three fields across four observer
+logs. The weighted quorum alone does not trigger a candidate because observers
+could otherwise close with different subsets. No state or active weights are
+committed by this path, so `active_por_round` remains at its last committed
+value. Durable commit and activation need a per-wave weight history and a
+defined activation boundary.
 An exchange conflict or invalid peer rating stops the runner for inspection.
 
 ## Live smoke procedure
@@ -199,7 +206,8 @@ the subsequent ordering calculation. Use the isolated fresh-cluster procedure
 for the recovery smoke until the long-history path has bounded memory and a
 durable mirror checkpoint.
 
-All observers currently retain the genesis reputation round because the live
-shadow runner does not yet produce ratings or activate later rounds. Agreement
-here tests deterministic observation and durable recovery, not enforcement of
-PoR weights by f1r3node.
+The default harness does not supply validator rating keys, so its observers
+retain the genesis reputation round. A keyed exchange can derive a later
+candidate, but does not commit or activate it. Agreement here tests
+deterministic observation and durable recovery, not enforcement of PoR weights
+by f1r3node.
