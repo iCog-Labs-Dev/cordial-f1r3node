@@ -261,3 +261,28 @@ fn replays_an_earlier_wave_only_when_its_ordering_is_a_finalized_prefix() {
         Err(PorFinalityError::HistoricalPrefixMismatch { wave: 0 })
     );
 }
+
+#[test]
+fn later_finality_cannot_supply_a_missing_wave_zero_leader() {
+    let mut blocklace = Blocklace::new();
+    let mut genesis = block(0, None);
+    genesis.identity.creator = NodeId(Vec::new());
+    let first = block(1, Some(&genesis.identity));
+    let second = block(2, Some(&first.identity));
+    let later_leader = block(4, Some(&second.identity));
+    for entry in [&genesis, &first, &second, &later_leader] {
+        insert(&mut blocklace, entry);
+    }
+    let latest = OrderedFinalizedOutput::new(
+        vec![genesis.identity.clone(), first.identity, second.identity],
+        Some(later_leader.identity),
+        WAVELENGTH,
+        1,
+        4,
+    );
+    let bonds = HashMap::from([(NodeId(vec![4]), 1)]);
+    assert_eq!(
+        finalized_output_for_wave(&blocklace, &latest, &bonds, 0),
+        Err(PorFinalityError::MissingFinalLeaderForWave { wave: 0 })
+    );
+}
