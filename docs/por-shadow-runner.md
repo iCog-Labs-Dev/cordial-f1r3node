@@ -29,11 +29,14 @@ To stage a local signed rating batch, add `--stage-local-ratings` alongside
 and writes its signed envelopes under `<data-dir>/por/rating-outbox` before
 publishing a new shadow status. It stages only the next round expected by the
 durable PoR state. If the latest finalized leader is in a later wave, the
-runner stops with an explicit gap error; it cannot reconstruct skipped waves
-yet. Start this opt-in check with a fresh chain before the first finalized
-wave. Repeated polls and restarts accept the same batch and reject conflicting
-ratings for that wave. Nothing is sent to peers, and `active_por_round` remains
-unchanged until a separate complete-round commit path is connected.
+runner replays the expected wave's final leader and ordered prefix under the
+genesis weights, then checks that prefix against the latest published output.
+Missing leaders or a prefix mismatch stop the runner. Start this opt-in check
+with a fresh chain or a source whose full block history is available. Repeated
+polls and restarts accept the same batch and reject conflicting ratings for
+that wave. Nothing is sent to peers, and `active_por_round` remains unchanged
+until a separate complete-round commit path is connected. Historical replay
+after a weight change still requires durable per-wave weight history.
 
 ## Live smoke procedure
 
