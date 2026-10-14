@@ -12,9 +12,10 @@ Today, `live_por_shadow` connects to an upstream f1r3node over gRPC, mirrors
 blocks, and reports a durable genesis PoR projection and the latest observed
 finalized Cordial wave. With an authorized validator key it can stage signed
 local ratings and exchange evidence-checked envelopes through a shared host
-directory. It does not close a rating round or advance beyond round 0. The
-four-node cluster uses upstream
-f1r3node consensus; host-side Cordial and PoR observers can check convergence,
+directory. It can close an all-raters-complete round in memory and report its
+projected checkpoint and weight commitment, but does not advance durable state
+beyond round 0. The four-node cluster uses upstream f1r3node consensus;
+host-side Cordial and PoR observers can check convergence,
 but they cannot make that node use PoR weights. See
 [`por-shadow-runner.md`](por-shadow-runner.md) for the current smoke test and
 its long-history memory limit.
@@ -114,8 +115,13 @@ retries, and reads authorized peer envelopes in canonical order with bounded
 files and signature checks. With `--rating-exchange-dir`, the live runner now
 publishes its durable outbox envelopes, reads peer envelopes, and passes all
 of them through the finalized-evidence collector. It reports complete-rater
-and quorum progress in logs, but does not close or commit the round. A
-directory shared by four host-side observers is a functional test transport,
+and quorum progress in logs. Once all eligible raters are complete, it
+rechecks the durable local batch, closes a candidate through the lifecycle
+coordinator, replays the reputation transition, and logs the candidate
+checkpoint and weight commitment. It does not commit or activate the candidate:
+the runner still needs a durable per-wave weight cursor and a safe activation
+boundary before changing its live finality projection. A directory shared by
+four host-side observers is a functional test transport,
 not an f1r3node peer protocol. Shard isolation is directory-based; the v1
 rating signature does not itself bind a shard ID.
 Before the slice 1 exit gate, connect authenticated per-validator rating
