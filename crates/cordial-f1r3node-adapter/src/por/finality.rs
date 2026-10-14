@@ -4,11 +4,14 @@
 //! already exported by [`OrderedFinalizedOutput`], derives its wave from the
 //! leader's blocklace depth, and opens the following PoR rating round.
 
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 use cordial_miners_core::{
-    Blocklace,
-    consensus::{depth, wave_of_round},
+    Blocklace, NodeId,
+    consensus::{
+        OrderingError, depth, wave_of_round, weighted_final_leader_for_wave,
+        weighted_tau_at_leader, xsort,
+    },
     types::BlockIdentity,
 };
 use cordial_por::{PorError, ReputationRound, rating_round_from_finalized_wave};
@@ -28,6 +31,9 @@ pub enum PorFinalityError {
     InvalidWavelength,
     UnknownFinalLeader,
     ConflictingFinalLeader { wave: u64 },
+    MissingFinalLeaderForWave { wave: u64 },
+    HistoricalPrefixMismatch { wave: u64 },
+    Ordering(OrderingError),
     RatingRound(PorError),
 }
 
@@ -64,6 +70,16 @@ impl fmt::Display for PorFinalityError {
             Self::ConflictingFinalLeader { wave } => {
                 write!(f, "conflicting final leader observed for wave {wave}")
             }
+            Self::MissingFinalLeaderForWave { wave } => {
+                write!(f, "no final leader can be replayed for wave {wave}")
+            }
+            Self::HistoricalPrefixMismatch { wave } => {
+                write!(
+                    f,
+                    "finalized output for wave {wave} is not a prefix of the latest output"
+                )
+            }
+            Self::Ordering(error) => write!(f, "cannot replay weighted ordering: {error:?}"),
             Self::RatingRound(error) => error.fmt(f),
         }
     }
@@ -73,9 +89,76 @@ impl std::error::Error for PorFinalityError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::RatingRound(error) => Some(error),
+            Self::Ordering(_) => None,
             _ => None,
         }
     }
+}
+
+/// Replay the finalized output at `wave` from a later cumulative output.
+///
+/// The historical ordered blocks must be an exact prefix of the published
+/// latest output. This rejects a leader that was final under the current
+/// bonds but did not belong to the latest Cordial ordering chain.
+pub fn finalized_output_for_wave(
+    blocklace: &Blocklace,
+    latest: &OrderedFinalizedOutput,
+    bonds: &HashMap<NodeId, u64>,
+    wave: u64,
+) -> Result<Option<OrderedFinalizedOutput>, PorFinalityError> {
+    let Some(latest_wave) = finalized_wave_from_output(blocklace, latest)? else {
+        return Ok(None);
+    };
+    if wave > latest_wave {
+        return Ok(None);
+    }
+    if wave == latest_wave {
+        return Ok(Some(latest.clone()));
+    }
+    if bonds.is_empty() {
+        return Err(PorFinalityError::MissingFinalLeaderForWave { wave });
+    }
+
+    let mut validators: Vec<NodeId> = bonds.keys().cloned().collect();
+    validators.sort();
+    let leader_selection = |selected_wave: u64| {
+        let index = usize::try_from(selected_wave).ok()? % validators.len();
+        Some(validators[index].clone())
+    };
+    let leader =
+        weighted_final_leader_for_wave(blocklace, wave, latest.wavelength, bonds, leader_selection)
+            .ok_or(PorFinalityError::MissingFinalLeaderForWave { wave })?;
+    let blocks = if validators.len() == 1 && blocklace.checkpoint().is_none() {
+        let observed = blocklace
+            .observe(&leader)
+            .into_iter()
+            .filter_map(|id| blocklace.get(&id))
+            .collect();
+        xsort(&observed).map_err(PorFinalityError::Ordering)?
+    } else {
+        weighted_tau_at_leader(
+            blocklace,
+            &leader,
+            latest.wavelength,
+            bonds,
+            leader_selection,
+        )
+        .map_err(PorFinalityError::Ordering)?
+    };
+    if !latest.blocks.starts_with(&blocks) || !blocks.contains(&leader) {
+        return Err(PorFinalityError::HistoricalPrefixMismatch { wave });
+    }
+
+    Ok(Some(
+        OrderedFinalizedOutput::new(
+            blocks,
+            Some(leader),
+            latest.wavelength,
+            latest.bond_count,
+            latest.total_mirrored_blocks,
+        )
+        .with_timestamp(latest.computed_at_ns),
+    ))
 }
 
 /// Process-local cursor over final leaders already used to open PoR rounds.
