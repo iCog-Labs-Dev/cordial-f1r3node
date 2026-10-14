@@ -137,6 +137,29 @@ claiming continuous progression. The observers must use distinct authorized
 validator keys; fabricating signatures for all validators in one observer
 would not prove the distributed path.
 
+### Fresh keyed smoke finding: a missing source wave
+
+The 2026-10-14 parallel fresh-cluster run launched four keyed observers before
+starting the validators. All four exited with `no final leader can be replayed
+for wave 0` after a later wave finalized. The f1r3node height-0 genesis block
+has an empty sender; it is not the elected validator leader for wave 0. The
+current protocol maps finalized wave `k` to reputation round `k+1`, requires
+consecutive reputation blocks, and has no representation for a wave without a
+final leader. The run therefore produced no non-genesis PoR commitment. The
+original long-running cluster was left untouched, and the fresh project's
+volumes and observer logs were preserved.
+
+This is a protocol decision for the next slice, not an exchange retry. One
+candidate design is to number PoR rounds by **finalized source events** while
+retaining the raw Cordial wave in each rating and reputation block. That
+requires a durable last-processed source wave, strictly increasing source-wave
+checks, and a versioned change to the current `wave + 1` validation in
+`cordial-por/src/ratings.rs`, `block.rs`, and `interactions.rs`. Another design
+is an audited carry-forward round for skipped waves, which requires a
+replayable rule proving when a wave may be declared skipped. Neither rule is
+implemented. Until one is specified and tested, the runner fails closed on a
+missing source leader and four-node PoR round advancement remains unproven.
+
 ## Safety and proof requirements
 
 - Take validator identities from f1r3node's authorized bonds. Reject an
