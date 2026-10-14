@@ -36,7 +36,8 @@ pub use finality::{
 pub use fork_choice::{ForkChoice, collect_validator_tips, fork_choice, is_cordial};
 pub use ordering::{
     OrderingCache, OrderingError, approved_blocks_for_leader, previous_final_leader, tau,
-    tau_with_cache, weighted_previous_final_leader, weighted_tau, weighted_tau_with_cache, xsort,
+    tau_with_cache, weighted_previous_final_leader, weighted_tau, weighted_tau_at_leader,
+    weighted_tau_with_cache, xsort,
 };
 pub use pruning::{
     CheckpointGc, PruneError, PruneReport, checkpoint_after_finality,
