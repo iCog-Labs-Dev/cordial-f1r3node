@@ -5,6 +5,7 @@
 //! checkpoint-attestation policy, transition replay, or collection deadline.
 
 pub mod channel;
+pub mod file_exchange;
 pub mod outbox;
 pub mod reputation_block;
 pub mod reputation_block_channel;
