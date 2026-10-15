@@ -12,11 +12,28 @@ use cordial_miners_core::{
         OrderingError, depth, wave_of_round, weighted_final_leader_for_wave,
         weighted_tau_at_leader, xsort,
     },
+    crypto::{Blake2b256Hasher, Hasher},
     types::BlockIdentity,
 };
 use cordial_por::{PorError, ReputationRound, rating_round_from_finalized_wave};
 
 use crate::ordered_output::OrderedFinalizedOutput;
+
+/// Number of canonical finalized blocks in one checkpoint-driven PoR window.
+/// This value is part of the source-round protocol and must be versioned if changed.
+pub const POR_FINALIZED_BLOCKS_PER_CHECKPOINT: u64 = 16;
+const POR_FINALIZED_PREFIX_HASH_DOMAIN: &[u8] = b"cordial-por:finalized-prefix:v1";
+
+/// A source checkpoint selected from a fixed position in Cordial's finalized
+/// block prefix. Its identity is independent of when an observer polls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FinalizedPrefixCheckpoint {
+    pub por_round: ReputationRound,
+    pub finalized_prefix_len: u64,
+    /// Rolling commitment to every full block identity in the prefix.
+    pub prefix_hash: [u8; 32],
+    pub terminal_block: BlockIdentity,
+}
 
 /// A PoR rating round opened by a finalized Cordial Miners wave.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +47,9 @@ pub struct FinalizedRatingRound {
 pub enum PorFinalityError {
     InvalidWavelength,
     UnknownFinalLeader,
+    UnanchoredFinalizedPrefix,
+    InvalidPrefixCheckpointRound,
+    PrefixCheckpointMismatch,
     ConflictingFinalLeader { wave: u64 },
     MissingFinalLeaderForWave { wave: u64 },
     HistoricalPrefixMismatch { wave: u64 },
@@ -67,6 +87,18 @@ impl fmt::Display for PorFinalityError {
             Self::UnknownFinalLeader => {
                 write!(f, "final leader anchor is not present in the blocklace")
             }
+            Self::UnanchoredFinalizedPrefix => {
+                write!(f, "non-empty finalized prefix has no final leader anchor")
+            }
+            Self::InvalidPrefixCheckpointRound => {
+                write!(f, "invalid or overflowing PoR source checkpoint round")
+            }
+            Self::PrefixCheckpointMismatch => {
+                write!(
+                    f,
+                    "PoR source checkpoint does not match the finalized prefix"
+                )
+            }
             Self::ConflictingFinalLeader { wave } => {
                 write!(f, "conflicting final leader observed for wave {wave}")
             }
@@ -92,6 +124,83 @@ impl std::error::Error for PorFinalityError {
             Self::Ordering(_) => None,
             _ => None,
         }
+    }
+}
+
+/// Select the checkpoint for `por_round` from a canonical finalized prefix.
+///
+/// Round one uses blocks 1..=16, round two 17..=32, and so on. A poll that
+/// receives several windows at once therefore selects the same checkpoints as
+/// a poll that observed every intermediate finalized output. Genesis alone
+/// does not open a round. The caller must still verify that successive Cordial
+/// outputs preserve the previously published prefix.
+pub fn finalized_prefix_checkpoint(
+    output: &OrderedFinalizedOutput,
+    por_round: ReputationRound,
+) -> Result<Option<FinalizedPrefixCheckpoint>, PorFinalityError> {
+    if por_round == 0 {
+        return Err(PorFinalityError::InvalidPrefixCheckpointRound);
+    }
+    let end = por_round
+        .checked_mul(POR_FINALIZED_BLOCKS_PER_CHECKPOINT)
+        .ok_or(PorFinalityError::InvalidPrefixCheckpointRound)?;
+    let index =
+        usize::try_from(end - 1).map_err(|_| PorFinalityError::InvalidPrefixCheckpointRound)?;
+    if output.anchor.is_none() {
+        if output.blocks.is_empty() {
+            return Ok(None);
+        }
+        return Err(PorFinalityError::UnanchoredFinalizedPrefix);
+    }
+    Ok(output
+        .blocks
+        .get(index)
+        .cloned()
+        .map(|terminal_block| FinalizedPrefixCheckpoint {
+            por_round,
+            finalized_prefix_len: end,
+            prefix_hash: finalized_prefix_hash(&output.blocks[..=index]),
+            terminal_block,
+        }))
+}
+
+fn finalized_prefix_hash(blocks: &[BlockIdentity]) -> [u8; 32] {
+    let mut hash = Blake2b256Hasher.hash(POR_FINALIZED_PREFIX_HASH_DOMAIN);
+    for (index, block) in blocks.iter().enumerate() {
+        let mut bytes = Vec::with_capacity(
+            POR_FINALIZED_PREFIX_HASH_DOMAIN.len()
+                + 32
+                + 8
+                + 32
+                + 8
+                + block.creator.0.len()
+                + 8
+                + block.signature.len(),
+        );
+        bytes.extend_from_slice(POR_FINALIZED_PREFIX_HASH_DOMAIN);
+        bytes.extend_from_slice(&hash);
+        bytes.extend_from_slice(&(index as u64).to_be_bytes());
+        bytes.extend_from_slice(&block.content_hash);
+        bytes.extend_from_slice(&(block.creator.0.len() as u64).to_be_bytes());
+        bytes.extend_from_slice(&block.creator.0);
+        bytes.extend_from_slice(&(block.signature.len() as u64).to_be_bytes());
+        bytes.extend_from_slice(&block.signature);
+        hash = Blake2b256Hasher.hash(&bytes);
+    }
+    hash
+}
+
+/// Confirm that a retained checkpoint still identifies the same canonical
+/// finalized prefix after replay or a newer final leader.
+pub fn validate_finalized_prefix_checkpoint(
+    output: &OrderedFinalizedOutput,
+    checkpoint: &FinalizedPrefixCheckpoint,
+) -> Result<(), PorFinalityError> {
+    let expected = finalized_prefix_checkpoint(output, checkpoint.por_round)?;
+    if expected.as_ref() == Some(checkpoint) {
+        Ok(())
+    } else {
+        Err(PorFinalityError::PrefixCheckpointMismatch)
     }
 }
 
