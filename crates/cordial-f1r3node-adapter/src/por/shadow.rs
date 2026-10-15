@@ -29,7 +29,9 @@ use crate::{
 
 use super::{
     activation::PorWeightActivationRecord,
-    finality::{finalized_output_for_wave, finalized_wave_from_output},
+    finality::{
+        finalized_output_for_wave, finalized_prefix_checkpoint, finalized_wave_from_output,
+    },
     local_ratings::{
         RatingExchangeProgress, close_rating_exchange_if_complete, observe_rating_exchange,
         stage_local_rating_batch,
@@ -68,6 +70,14 @@ pub struct ShadowConfig {
 /// Machine-readable local status, atomically replaced after every successful poll.
 /// The finalized hashes are retained to prove the complete prefix after restart.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowSourceCheckpoint {
+    pub por_round: u64,
+    pub finalized_prefix_len: u64,
+    pub prefix_hash: String,
+    pub terminal_block_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowStatus {
     pub schema_version: u16,
     pub shadow_mode: bool,
@@ -78,6 +88,9 @@ pub struct ShadowStatus {
     /// Audited reputation checkpoint for the active round; absent at genesis.
     #[serde(default)]
     pub active_por_checkpoint: Option<String>,
+    /// Deterministic next source window, reported for inspection only.
+    #[serde(default)]
+    pub next_por_source_checkpoint: Option<ShadowSourceCheckpoint>,
     pub weight_commitment: String,
     pub weights: BTreeMap<String, u64>,
     pub finalized_anchor: Option<String>,
@@ -105,12 +118,28 @@ impl ShadowStatus {
             .iter()
             .map(|(node, weight)| (hex::encode(&node.0), *weight))
             .collect();
+        let next_round = runtime
+            .state()
+            .state()?
+            .round()
+            .checked_add(1)
+            .context("PoR round overflow")?;
+        let next_por_source_checkpoint =
+            finalized_prefix_checkpoint(output, next_round)?.map(|checkpoint| {
+                ShadowSourceCheckpoint {
+                    por_round: checkpoint.por_round,
+                    finalized_prefix_len: checkpoint.finalized_prefix_len,
+                    prefix_hash: hex::encode(checkpoint.prefix_hash),
+                    terminal_block_hash: hex::encode(checkpoint.terminal_block.content_hash),
+                }
+            });
         Ok(Self {
             schema_version: 1,
             shadow_mode: true,
             configured_rating_rater: rating_rater.map(str::to_owned),
             active_por_round: record.reputation_round(),
             active_por_checkpoint: record.checkpoint_hash().map(hex::encode),
+            next_por_source_checkpoint,
             weight_commitment: hex::encode(record.weights_commitment()),
             weights,
             finalized_anchor: output.anchor_hash().map(hex::encode),
@@ -554,6 +583,7 @@ mod tests {
             configured_rating_rater: None,
             active_por_round: 0,
             active_por_checkpoint: None,
+            next_por_source_checkpoint: None,
             weight_commitment: "abc".into(),
             weights: BTreeMap::from([("key".into(), 1)]),
             finalized_anchor: hashes.last().map(|hash| hash.to_string()),
@@ -606,10 +636,15 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("active_por_checkpoint");
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("next_por_source_checkpoint");
         let previous: ShadowStatus = serde_json::from_value(value).unwrap();
         assert_eq!(previous.observed_finalized_wave, None);
         assert_eq!(previous.configured_rating_rater, None);
         assert_eq!(previous.active_por_checkpoint, None);
+        assert_eq!(previous.next_por_source_checkpoint, None);
         let mut recovered = status(&["a", "b"]);
         recovered.observed_finalized_wave = Some(1);
         previous.validate_recovered(&recovered).unwrap();
