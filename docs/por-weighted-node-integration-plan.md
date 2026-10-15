@@ -152,23 +152,25 @@ volumes and observer logs were preserved.
 ### Proposed checkpoint-driven PoR rounds
 
 The selected direction is **one PoR round per eligible finalized source
-checkpoint**, not one round per Cordial wave number. An eligible checkpoint
-must identify a replayable final leader and an immutable, canonical finalized
-prefix. Its Cordial wave and leader/block hash identify the source event; the
-next PoR round is `previous_committed_por_round + 1`. For example, if wave 0
-has no final leader and waves 2 and 4 supply eligible checkpoints, those
-checkpoints produce PoR rounds 1 and 2. Wave 0 produces no synthetic ratings,
-reputation transition, or weight change. The active weights remain in force
-until a new round is committed and safely activated.
+checkpoint**, not one round per Cordial wave number. The chosen source is a
+fixed boundary in Cordial's immutable, canonical finalized block prefix,
+which is itself backed by a final leader. Prefix length and a commitment to
+all block identities identify the checkpoint. The next PoR round is
+`previous_committed_por_round + 1`. A missing wave-0 leader creates no
+synthetic ratings, reputation transition, or weight change; the first
+completed source window can still produce PoR round 1. The active weights
+remain in force until a new round is committed and safely activated.
 
 The proposed processing rule is:
 
 1. Traverse finalized source checkpoints in a canonical order, independently
-   of observer polling intervals. Verify the source wave, final leader, and
-   finalized prefix before admitting interactions or opening a rating round.
+   of observer polling intervals. Verify the enclosing Cordial final leader
+   and finalized prefix before admitting interactions or opening a rating
+   round.
 2. Assign the next consecutive PoR round to an eligible checkpoint. Bind each
    signed rating, rating envelope, and reputation block to both that PoR round
-   and the source checkpoint identity, including its wave and hash. Distinct
+   and the source prefix length and commitment. A source wave may be retained
+   as informational provenance, but cannot determine the PoR round. Distinct
    checkpoints cannot share one PoR round; a repeated checkpoint is idempotent.
 3. Derive ratings only from evidence in the checkpoint's finalized source
    window. Close the batch when all raters are complete or at a deterministic
@@ -181,7 +183,7 @@ The proposed processing rule is:
    change that output. The existing exact-wave activation check must be
    adapted for delayed completion before continuous advancement is claimed.
 
-**Ordering gate before implementation:** verify from Cordial finality that an
+**Ordering gate for leader-wave checkpoints:** verify from Cordial finality that an
 observer can enumerate eligible checkpoints in one stable order and can pass a
 wave without a final leader without later discovering an older eligible
 checkpoint. A later observed wave alone is not proof that an earlier wave can
@@ -189,6 +191,19 @@ be skipped. If this property cannot be established for leader-wave
 checkpoints, select a canonical sequence of finalized block checkpoints
 instead and apply the same consecutive PoR numbering. Until that source order
 is proved, the runner must keep failing closed rather than guessing a round.
+
+The first source-ordering slice uses that fallback. It selects a checkpoint at
+each fixed 16-block boundary in Cordial's canonical finalized prefix: PoR
+round 1 ends at block 16, round 2 at block 32, and so on. Each checkpoint
+commits the full ordered prefix and its terminal block identity. This makes
+selection independent of observer polling and does not need to decide whether
+an absent older wave leader might appear later. Rechecking a retained
+checkpoint rejects any change to a block identity in its committed prefix.
+The shadow status reports the next available source checkpoint for inspection;
+it does **not** yet open, sign, commit, or activate a checkpoint-driven PoR
+round. The 16-block cadence is a protocol constant for this initial path and
+must be versioned if changed. The v1 wave-based rating and reputation-block
+rules remain in force until the format revision below is complete.
 
 This changes the protocol format, not just the shadow loop. The v1 rating
 envelope and reputation block require `rating_round = finalized_wave + 1`;
