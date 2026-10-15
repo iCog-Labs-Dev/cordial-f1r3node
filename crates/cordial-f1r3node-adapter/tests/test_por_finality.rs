@@ -4,7 +4,8 @@ use cordial_f1r3node_adapter::{
     ordered_output::OrderedFinalizedOutput,
     por_finality::{
         FinalizedRatingRound, PorFinalityError, PorFinalityTracker, finalized_output_for_wave,
-        finalized_wave_from_output,
+        finalized_prefix_checkpoint, finalized_wave_from_output,
+        validate_finalized_prefix_checkpoint,
     },
 };
 use cordial_miners_core::{
@@ -53,6 +54,61 @@ fn insert(blocklace: &mut Blocklace, block: &Block) {
 
 fn output(anchor: Option<BlockIdentity>, wavelength: u64) -> OrderedFinalizedOutput {
     OrderedFinalizedOutput::new(Vec::new(), anchor, wavelength, 1, 0).with_timestamp(0)
+}
+
+fn prefix_output(count: u8) -> OrderedFinalizedOutput {
+    let blocks: Vec<_> = (1..=count).map(|tag| block(tag, None).identity).collect();
+    let anchor = blocks.last().cloned();
+    OrderedFinalizedOutput::new(blocks, anchor, WAVELENGTH, 4, usize::from(count)).with_timestamp(0)
+}
+
+#[test]
+fn fixed_prefix_checkpoints_do_not_depend_on_poll_frequency() {
+    let early = prefix_output(17);
+    let late = prefix_output(35);
+    let first = finalized_prefix_checkpoint(&early, 1).unwrap().unwrap();
+
+    assert_eq!(first.finalized_prefix_len, 16);
+    assert_eq!(first.terminal_block, early.blocks[15]);
+    assert_eq!(
+        finalized_prefix_checkpoint(&late, 1).unwrap(),
+        Some(first.clone())
+    );
+    assert_eq!(finalized_prefix_checkpoint(&early, 2).unwrap(), None);
+    assert_eq!(
+        finalized_prefix_checkpoint(&late, 2)
+            .unwrap()
+            .unwrap()
+            .terminal_block,
+        late.blocks[31]
+    );
+    assert_eq!(finalized_prefix_checkpoint(&late, 3).unwrap(), None);
+    validate_finalized_prefix_checkpoint(&late, &first).unwrap();
+}
+
+#[test]
+fn checkpoint_replay_rejects_changed_or_missing_prefix() {
+    let original = prefix_output(16);
+    let checkpoint = finalized_prefix_checkpoint(&original, 1).unwrap().unwrap();
+    let mut changed = prefix_output(17);
+    changed.blocks[7] = block(99, None).identity;
+
+    assert_eq!(
+        validate_finalized_prefix_checkpoint(&changed, &checkpoint),
+        Err(PorFinalityError::PrefixCheckpointMismatch)
+    );
+    assert_eq!(
+        validate_finalized_prefix_checkpoint(&prefix_output(15), &checkpoint),
+        Err(PorFinalityError::PrefixCheckpointMismatch)
+    );
+    assert_eq!(
+        finalized_prefix_checkpoint(&original, 0),
+        Err(PorFinalityError::InvalidPrefixCheckpointRound)
+    );
+    assert_eq!(
+        finalized_prefix_checkpoint(&original, u64::MAX),
+        Err(PorFinalityError::InvalidPrefixCheckpointRound)
+    );
 }
 
 #[test]
