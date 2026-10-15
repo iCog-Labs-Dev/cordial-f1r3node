@@ -31,7 +31,11 @@ pub use checkpoint::{
     PorCheckpointPolicy, PorCheckpointProgress,
 };
 pub use collector::{BlockProductionRatingCollector, PorRatingCollectorError};
-pub use finality::{FinalizedRatingRound, PorFinalityError, PorFinalityTracker};
+pub use finality::{
+    FinalizedPrefixCheckpoint, FinalizedRatingRound, POR_FINALIZED_BLOCKS_PER_CHECKPOINT,
+    PorFinalityError, PorFinalityTracker, finalized_prefix_checkpoint,
+    validate_finalized_prefix_checkpoint,
+};
 pub use history::{
     POR_REPUTATION_BLOCK_HISTORY_DIRECTORY, PorReputationBlockAppendOutcome,
     PorReputationBlockHistory, PorReputationBlockHistoryError,
