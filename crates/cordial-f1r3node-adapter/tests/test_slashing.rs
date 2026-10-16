@@ -126,3 +126,56 @@ fn slash_formatter_rejects_non_conflicting_single_block_evidence() {
 
     assert!(err.to_string().contains("at least two conflicting blocks"));
 }
+
+#[test]
+fn tiered_evidence_preserves_ratios_and_the_legacy_host_payload() {
+    let validator = node(7);
+    let left = block(validator.clone(), 1, vec![0x11; 64]);
+    let right = block(validator.clone(), 2, vec![0x22; 64]);
+    let evidence = vec![EquivocationEvidence::new(
+        validator,
+        4,
+        vec![right.clone(), left.clone()],
+    )];
+    let formatter = F1r3SlashDeployFormatter::new(vec![0xaa; 33]);
+    let legacy = formatter.to_slash_system_deploys(&evidence).unwrap();
+
+    for ratio in [2500, 10000] {
+        let formatted = formatter.to_tiered_slash_deploys(&evidence, ratio).unwrap();
+        assert_eq!(formatted.len(), 1);
+        assert_eq!(formatted[0].penalty_ratio_bps, ratio);
+        assert_eq!(formatted[0].slash_system_deploy, legacy[0]);
+        let recovered = formatted[0]
+            .conflicting_block_bytes
+            .iter()
+            .map(|bytes| bincode::deserialize::<Block>(bytes).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(recovered, vec![left.clone(), right.clone()]);
+    }
+}
+
+#[test]
+fn tiered_formatter_rejects_out_of_range_ratios_even_without_evidence() {
+    let formatter = F1r3SlashDeployFormatter::new(vec![0xaa; 33]);
+    for ratio in [10001, u32::MAX] {
+        assert!(formatter.to_tiered_slash_deploys(&[], ratio).is_err());
+    }
+}
+
+#[test]
+fn tiered_evidence_is_independent_of_conflicting_block_order() {
+    let validator = node(7);
+    let left = block(validator.clone(), 1, vec![0x11; 64]);
+    let right = block(validator.clone(), 2, vec![0x22; 64]);
+    let forward = vec![EquivocationEvidence::new(
+        validator.clone(),
+        4,
+        vec![left.clone(), right.clone()],
+    )];
+    let reversed = vec![EquivocationEvidence::new(validator, 4, vec![right, left])];
+    let formatter = F1r3SlashDeployFormatter::new(vec![0xaa; 33]);
+    assert_eq!(
+        formatter.to_tiered_slash_deploys(&forward, 2500).unwrap(),
+        formatter.to_tiered_slash_deploys(&reversed, 2500).unwrap()
+    );
+}

@@ -25,6 +25,9 @@ SystemDeployDataProto::slashSystemDeploy {
 
 The Cordial adapter emits that exact protobuf byte payload.
 
+Tiered penalties are adapter metadata only; the host protobuf remains unchanged.
+See [Slashing Integration](./16-slashing-integration.md) for issue #234's scope.
+
 ## Formatter API
 
 `SlashDeployFormatter<V, P, Id>` exposes:
@@ -41,6 +44,15 @@ For Cordial Miners, `F1r3SlashDeployFormatter` implements the trait for:
 EquivocationEvidence<NodeId, Block, BlockIdentity>
 ```
 
+`to_tiered_slash_deploys(evidence, penalty_ratio_bps)` returns
+`FormattedSlashEvidence` containing the supplied ratio, existing host bytes,
+and serialized conflicting blocks. It accepts `0..=10_000` basis points:
+`2500` means 25%, and `10000` means 100%. Both produce the same host bytes.
+The formatter does not calculate the ratio or depend on PoR mathematics.
+The existing byte API remains available; `to_slash_evidence_envelopes` uses
+`10000`. The trait's default tiered method returns an unsupported error, so
+legacy formatter implementations continue compiling.
+
 The formatter is constructed with the issuer public key. This mirrors CBC
 Casper: the slash deploy identifies the invalid block being reported, while the
 issuer key is the validator proposing the system deploy.
@@ -51,8 +63,8 @@ For each evidence record:
 
 1. Require at least two conflicting blocks.
 2. Require every conflicting block to be from the evidence validator.
-3. Sort the conflicting block identities deterministically.
-4. Select the first sorted content hash as the `invalidBlockHash`.
+3. Select the lowest conflicting content hash as the `invalidBlockHash`.
+4. Serialize the conflicting blocks in identity order for the evidence envelope.
 5. Encode a successful `ProcessedSystemDeployProto` with a slash system deploy.
 
 The deterministic selection keeps repeated formatting stable even if the same

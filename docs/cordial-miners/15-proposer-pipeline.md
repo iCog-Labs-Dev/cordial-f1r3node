@@ -80,6 +80,12 @@ From the selected predecessor tips, decode each `CordialBlockPayload` and pick t
 
 **System deploys**: By default the proposer includes `SystemDeployRequest::CloseBlock` (f1r3node block sealing). Disable with `CordialProposer::with_close_block(false)` in tests.
 
+**Tiered slash preparation**: `with_slash_policy(policy)` enables per-round
+penalty calculation and prepares slashes before selected user deploys, followed
+by optional close block. `ExecutionEngine::execute_prepared` defaults to the
+legacy interface, dropping the extra metadata. Host percentage enforcement and
+runtime order remain outside this feature; see [Slashing Integration](./16-slashing-integration.md).
+
 ### (d) Signing — `BlockSigner`
 
 **Default**: [`Secp256k1BlockSigner`](../../crates/cordial-f1r3node-adapter/src/proposer.rs)

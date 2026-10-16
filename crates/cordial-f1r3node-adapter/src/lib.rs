@@ -59,3 +59,4 @@ pub mod shard_conf;
 pub mod shared_ordered_output;
 pub mod slashing;
 pub mod snapshot;
+pub mod tiered_slashing;

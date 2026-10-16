@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cordial_miners_core::Block;
@@ -16,6 +16,7 @@ use models::casper::{ProcessedSystemDeployProto, system_deploy_data_proto::Syste
 use prost::Message;
 
 use crate::slashing::SlashDeployFormatter;
+use crate::tiered_slashing::{ExecutionBatchItem, PreparedExecutionRequest, TieredSlashPolicy};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProposeError {
@@ -55,10 +56,26 @@ pub trait TipSelector {
 /// Exposes equivocation evidence retained by the pure Cordial core.
 pub trait EvidenceSource {
     fn pending_evidence(&mut self) -> Vec<CordialEquivocationEvidence>;
+
+    /// All known offenders in the round, including those whose proof was not
+    /// selected for this proposal. Legacy sources can leave this unsupported.
+    fn equivocating_validators_in_round(&self, _round: u64) -> Option<Vec<NodeId>> {
+        None
+    }
 }
 
 pub trait ExecutionEngine {
     fn execute(&mut self, request: ExecutionRequest) -> Result<ExecutionResult, RuntimeError>;
+
+    /// Adapter preparation boundary. Existing engines use the legacy request;
+    /// a future host integration can override this to consume tiered metadata.
+    /// The default does not apply the ratio or enforce host execution order.
+    fn execute_prepared(
+        &mut self,
+        request: PreparedExecutionRequest,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        self.execute(request.into_legacy_request())
+    }
 }
 
 pub trait BlockSigner {
@@ -154,6 +171,16 @@ where
             .iter()
             .flat_map(|validator| self.pool.evidence_for(validator))
             .collect()
+    }
+
+    fn equivocating_validators_in_round(&self, round: u64) -> Option<Vec<NodeId>> {
+        Some(
+            self.pool
+                .equivocating_validators_in_round(round)
+                .into_iter()
+                .cloned()
+                .collect(),
+        )
     }
 }
 
@@ -402,6 +429,91 @@ fn decode_slash_system_deploy(
     })
 }
 
+fn tiered_slash_system_deploys<ES, SF>(
+    evidence_source: &mut ES,
+    slash_formatter: &SF,
+    policy: &TieredSlashPolicy,
+) -> Result<(Vec<SystemDeployRequest>, Vec<ExecutionBatchItem>), ProposeError>
+where
+    ES: EvidenceSource,
+    SF: SlashDeployFormatter<NodeId, Block, BlockIdentity>,
+{
+    let mut rounds = BTreeMap::<u64, Vec<CordialEquivocationEvidence>>::new();
+    for record in evidence_source.pending_evidence() {
+        rounds.entry(record.round).or_default().push(record);
+    }
+    let mut requests = Vec::new();
+    let mut batch = Vec::new();
+    for (round, mut records) in rounds {
+        let offenders = evidence_source
+            .equivocating_validators_in_round(round)
+            .ok_or_else(|| {
+                ProposeError::SlashFormat("tiered slashing requires round-grouped evidence".into())
+            })?;
+        if records
+            .iter()
+            .any(|record| !offenders.contains(&record.validator))
+        {
+            return Err(ProposeError::SlashFormat(
+                "selected slash evidence is absent from the round's offender set".into(),
+            ));
+        }
+        let ratio = policy
+            .penalty_ratio_bps(round, &offenders)
+            .map_err(|error| ProposeError::SlashFormat(error.to_string()))?;
+        records.sort_by_cached_key(|record| {
+            let mut identities = record
+                .blocks
+                .iter()
+                .map(|block| block.identity.clone())
+                .collect::<Vec<_>>();
+            identities.sort();
+            (record.validator.clone(), identities)
+        });
+        let formatted = slash_formatter
+            .to_tiered_slash_deploys(&records, ratio)
+            .map_err(|error| ProposeError::SlashFormat(error.to_string()))?;
+        if formatted.len() != records.len() {
+            return Err(ProposeError::SlashFormat(format!(
+                "formatter returned {} slash deploys for {} evidence records",
+                formatted.len(),
+                records.len()
+            )));
+        }
+        // Preserve one request per proof, including multiple proofs for the same
+        // (validator, round). Before applying percentages, host integration must
+        // consolidate punishment by that pair or make it idempotent so repeated
+        // evidence or replay cannot cause repeated deductions.
+        for (record, evidence) in records.iter().zip(formatted) {
+            if evidence.penalty_ratio_bps != ratio {
+                return Err(ProposeError::SlashFormat(
+                    "formatter changed the computed slash penalty".into(),
+                ));
+            }
+            let request = decode_slash_system_deploy(record, &evidence.slash_system_deploy)?;
+            if let SystemDeployRequest::Slash {
+                invalid_block_hash, ..
+            } = &request
+                && !record
+                    .blocks
+                    .iter()
+                    .any(|block| block.identity.content_hash.as_slice() == invalid_block_hash)
+            {
+                return Err(ProposeError::SlashFormat(
+                    "formatted slash hash is not present in the selected evidence".into(),
+                ));
+            }
+            requests.push(request);
+            batch.push(ExecutionBatchItem::SlashSystemDeploy {
+                validator: record.validator.clone(),
+                round,
+                evidence,
+            });
+        }
+    }
+    Ok((requests, batch))
+}
+
 pub struct CordialProposer<TS, EE, BS, BC, ES = NoEvidenceSource, SF = NoopSlashFormatter> {
     tip_selector: TS,
     execution: EE,
@@ -409,6 +521,7 @@ pub struct CordialProposer<TS, EE, BS, BC, ES = NoEvidenceSource, SF = NoopSlash
     broadcaster: BC,
     evidence_source: ES,
     slash_formatter: SF,
+    slash_policy: Option<TieredSlashPolicy>,
     creator: NodeId,
     bonds: HashMap<NodeId, u64>,
     deploy_pool_config: DeployPoolConfig,
@@ -432,6 +545,7 @@ impl<TS, EE, BS, BC> CordialProposer<TS, EE, BS, BC, NoEvidenceSource, NoopSlash
             broadcaster,
             evidence_source: NoEvidenceSource,
             slash_formatter: NoopSlashFormatter,
+            slash_policy: None,
             creator,
             bonds,
             deploy_pool_config,
@@ -453,6 +567,7 @@ impl<TS, EE, BS, BC, ES, SF> CordialProposer<TS, EE, BS, BC, ES, SF> {
             broadcaster: self.broadcaster,
             evidence_source,
             slash_formatter,
+            slash_policy: self.slash_policy,
             creator: self.creator,
             bonds: self.bonds,
             deploy_pool_config: self.deploy_pool_config,
@@ -462,6 +577,13 @@ impl<TS, EE, BS, BC, ES, SF> CordialProposer<TS, EE, BS, BC, ES, SF> {
 
     pub fn with_close_block(mut self, include: bool) -> Self {
         self.include_close_block = include;
+        self
+    }
+
+    /// Enable adapter-only tiered preparation using explicit round snapshots.
+    /// The host payload and runtime punishment semantics remain unchanged.
+    pub fn with_slash_policy(mut self, policy: TieredSlashPolicy) -> Self {
+        self.slash_policy = Some(policy);
         self
     }
 
@@ -519,8 +641,19 @@ where
             derive_chain_head(blocklace, &predecessors)?
         };
 
-        let mut system_deploys =
-            slash_system_deploys(&mut self.evidence_source, &self.slash_formatter)?;
+        let (mut system_deploys, prepared_batch) = if let Some(policy) = &self.slash_policy {
+            let (requests, batch) = tiered_slash_system_deploys(
+                &mut self.evidence_source,
+                &self.slash_formatter,
+                policy,
+            )?;
+            (requests, Some(batch))
+        } else {
+            (
+                slash_system_deploys(&mut self.evidence_source, &self.slash_formatter)?,
+                None,
+            )
+        };
         if self.include_close_block {
             system_deploys.push(SystemDeployRequest::CloseBlock);
         }
@@ -543,10 +676,23 @@ where
             block_number,
         };
 
-        let result = self
-            .execution
-            .execute(request)
-            .map_err(ProposeError::Execution)?;
+        let result = if let Some(mut batch) = prepared_batch {
+            batch.extend(
+                request
+                    .deploys
+                    .iter()
+                    .cloned()
+                    .map(ExecutionBatchItem::UserDeploy),
+            );
+            if self.include_close_block {
+                batch.push(ExecutionBatchItem::CloseBlock);
+            }
+            self.execution
+                .execute_prepared(PreparedExecutionRequest::new(request, batch))
+        } else {
+            self.execution.execute(request)
+        }
+        .map_err(ProposeError::Execution)?;
 
         let next_bonds = active_bonds_to_map(&result.new_bonds);
         let payload = CordialBlockPayload {

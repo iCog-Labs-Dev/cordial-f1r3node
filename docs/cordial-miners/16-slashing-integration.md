@@ -3,40 +3,66 @@
 ## Purpose
 
 Cordial Miners treats equivocation as a consensus safety failure with an
-economic consequence. Detecting the fault is not enough: the next proposer must
-make the cost of corruption executable by placing a slash system transaction in
-front of normal user work.
+economic consequence. The adapter prepares slash requests before normal user
+work.
 
 This integration connects the pure evidence retained by the Cordial core to the
-host f1r3node execution batch:
+adapter's prepared execution batch:
 
 1. the core `EvidencePool` retains raw conflicting Cordial blocks,
 2. the adapter `SlashDeployFormatter` converts that evidence into f1r3node
    slash system deploy bytes,
-3. the proposer prepends those system deploys before user deploys,
-4. RSpace executes the ordered batch and produces the block payload,
+3. the proposer prepares those system deploys before user deploys,
+4. the execution engine receives the prepared request,
 5. the proposer signs and broadcasts the resulting Cordial block.
+
+For [issue #234's clarified scope](https://github.com/iCog-Labs-Dev/cordial-f1r3node/issues/234#issuecomment-6159081010),
+`penalty_ratio_bps` remains adapter metadata. The host protobuf still carries
+only the invalid block hash and issuer key. Applying the ratio and guaranteeing
+slash-before-user runtime/replay execution require a future integration change;
+this issue does not change the sibling `f1r3node` repository.
 
 ## Cost of Corruption
 
 In the paper, cordiality and finality depend on validators making observable,
 non-equivocating progress through the blocklace. If a validator creates
 conflicting blocks for the same round, honest nodes can retain both blocks as
-cryptographic proof. f1r3node turns that proof into economic pressure by
-executing a slash system deploy that removes or burns the attacker's stake.
+cryptographic proof.
 
-The ordering is intentional: slash deploys are system transactions, not normal
-mempool transactions. They represent protocol safety work and therefore run
-before user smart contracts. A validator cannot delay punishment by filling the
-block with user deploys first.
+The default PoR policy computes a 25% penalty when equivocating validators hold
+at most 30% of the round's active reputation weight, and 100% above that
+threshold. These become `2500` and `10000` basis points in the adapter.
+The prepared slash prefix expresses the intended order; it does not establish
+that the host enforces the percentage or executes slashes before user contracts.
 
 ## Proposer Flow
 
 The Cordial proposer pipeline in
-`crates/cordial-f1r3node-adapter/src/proposer.rs` is:
+`crates/cordial-f1r3node-adapter/src/proposer.rs` supports tiered preparation
+through `with_slash_policy(policy)`. The existing `with_slashing` path remains
+available without that policy.
+
+```rust,ignore
+use cordial_f1r3node_adapter::tiered_slashing::TieredSlashPolicy;
+
+let policy = TieredSlashPolicy::new(por_config)?
+    .with_round_weights(evidence_round, authorized_reputation_weights)?;
+let proposer = proposer
+    .with_slashing(evidence_source, slash_formatter)
+    .with_slash_policy(policy);
+```
+
+The caller must supply the Cordial-authorized active reputation weights for each
+core evidence round. Current proposal bonds, block numbers, and PoR rating
+rounds are not substitutes. The adapter does not authenticate these snapshots.
+Missing or invalid inputs fail explicitly; totals must fit `u64`, and penalty
+fractions must convert exactly to whole basis points.
+
+With a tiered policy configured, the flow is:
 
 1. `TipSelector::select_tips`
-   selects live parent block identities from the blocklace.
+   selects parent block identities from the blocklace. The proposer derives the
+   execution pre-state before preparing slash requests.
 
 2. `EvidenceSource::pending_evidence`
    queries the core evidence layer. The provided `EvidencePoolSource` wraps a
@@ -44,38 +70,50 @@ The Cordial proposer pipeline in
    validator. It returns raw `EquivocationEvidence` values without formatting or
    protobuf conversion.
 
-3. `SlashDeployFormatter::to_slash_system_deploys`
-   crosses the adapter boundary. It receives the raw evidence and emits
-   f1r3node slash system deploy bytes. The core pool still has no dependency on
-   f1r3node protobufs, RSpace, or node crates.
+3. `EvidenceSource::equivocating_validators_in_round`
+   queries all locally retained offenders for each selected evidence round,
+   including those whose proof was not selected. `TieredSlashPolicy` counts
+   each validator's weight once and calls `cordial_por::compute_slash_penalty`.
 
-4. `DeploySource::pending_deploys`
-   pulls normal user deploys from the mempool after slash evidence has already
-   been queried and formatted.
+4. `SlashDeployFormatter::to_tiered_slash_deploys`
+   receives evidence in deterministic round/validator/proof order and the
+   computed ratio. The proposer checks the output count, ratio, and block hash.
 
-5. `execution_batch`
-   creates the exact execution order:
+5. `DeployPool::select_for_block`
+   selects normal user deploys after slash preparation, preserving the existing
+   scope, expiration, and selection rules.
+
+6. `PreparedExecutionRequest::batch()`
+   exposes the adapter's preparation order:
 
    ```text
-   [slash system deploys..., user deploys...]
+   [slash system deploys..., selected user deploys..., optional close block]
    ```
 
-   Slash deploy order follows the deterministic evidence ordering supplied by
-   the core pool and formatter. User deploy order is preserved after the system
-   prefix.
+   User deploy order is preserved after the system prefix. Each slash item
+   retains its validator, evidence round, ratio, and formatted proof package.
 
-6. `ExecutionEngine::execute`
-   sends the ordered batch to the execution layer. For real f1r3node integration
-   this is the RSpace-facing step that returns the `CordialBlockPayload`
-   containing state hashes, processed user deploys, rejected deploys, and
-   processed system deploys.
+   The adapter preserves one slash request per evidence record. Multiple proofs
+   for the same `(validator, round)` therefore produce multiple requests, not
+   independent economic offenses. Before percentage enforcement is connected,
+   host integration must consolidate punishment by `(validator, round)` or make
+   it idempotent: repeated evidence, proposals, or replay must not cause repeated
+   deductions for the same offense. This adapter does not implement that host
+   punishment contract.
 
-7. `BlockSigner::sign`
-   wraps the payload bytes and selected parents into `BlockContent`, signs it,
-   and returns the final Cordial block.
+7. `ExecutionEngine::execute_prepared`
+   receives the prepared request and returns an `ExecutionResult`. Its default
+   implementation calls `execute` with `into_legacy_request()`, which drops the
+   extra metadata and keeps separate user/system deploy lists. This compatibility
+   path does not apply tiered penalties or enforce the prepared runtime order.
 
-8. `BlockBroadcaster::broadcast`
-   publishes the signed block to peers.
+8. `BlockSigner::sign_block`
+   signs the block content containing the execution results and selected parents.
+   The proposer packages those results into `CordialBlockPayload` first.
+
+9. `BlockBroadcaster::broadcast`
+   publishes the signed block to peers. The proposer activates post-state bonds
+   for the next proposal only after execution, signing, and broadcast succeed.
 
 ## Isolation Boundary
 
@@ -84,20 +122,31 @@ The integration keeps the core and adapter separated:
 - `EvidencePool` stores and returns generic raw evidence.
 - `EvidencePoolSource` only reads from that core pool.
 - `SlashDeployFormatter` is the first f1r3node-specific formatting boundary.
-- `ExecutionBatchItem::SlashSystemDeploy` stores already formatted system bytes.
-- The core never imports adapter, node, RSpace, or protobuf types.
+- `ExecutionBatchItem::SlashSystemDeploy` retains the formatted evidence package.
+- Penalty calculation stays in `TieredSlashPolicy`, outside the formatter.
+- The core never imports adapter, node, RSpace, protobuf, or PoR types.
 
 This lets consensus math remain pure while the adapter handles host-chain
 serialization and execution details.
 
 ## Test Coverage
 
-The proposer tests cover the issue requirements:
+The focused tests inspect adapter requests, not real host punishment or replay:
 
-- evidence is queried and formatted before user deploys are pulled,
-- formatted slash system deploy bytes are the first items in the execution
-  batch,
-- a real core `CordialEvidencePool` can feed the proposer through
-  `EvidencePoolSource`,
-- adapter formatting is mocked through the `SlashDeployFormatter` trait, proving
-  that the core pool and formatter stay isolated by traits.
+- `tests/test_slashing.rs`: unchanged host bytes, retained ratios, original
+  signatures, deterministic proof order, and invalid ratios.
+- `tests/test_tiered_slashing.rs`: threshold boundaries, distinct round snapshots,
+  duplicate offenders, complete round correlation, prepared slash-before-user
+  order with and without close-block, input failures, formatter checks, legacy
+  engine compatibility, and signed broadcast/peer validation using the existing
+  mock runtime.
+- `tests/test_proposer.rs`: existing proposal and execution-request regressions,
+  including a real core `CordialEvidencePool` feeding `EvidencePoolSource`.
+
+Run from the repository root:
+
+```bash
+cargo +nightly test --locked -j 1 -p cordial-f1r3node-adapter --test test_slashing --test test_tiered_slashing --test test_proposer
+```
+
+A single build job limits memory use when linking native host dependencies.
