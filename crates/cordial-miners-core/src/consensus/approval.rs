@@ -69,8 +69,27 @@ fn approves_uncached(
     target: &BlockIdentity,
     memo: &mut ApprovalMemo,
 ) -> bool {
-    if blocklace.get(approver).is_none() {
+    let Some(resolved_approver) = blocklace.resolve_identity(approver) else {
         return false;
+    };
+
+    // Fast path (#263). Observation is answered from the shared ancestor
+    // index instead of materialising a closure set per block, which was
+    // O(N^2) time and memory per memo. For a creator whose blocks are all
+    // pairwise comparable there is no equivocating sibling to exclude, so
+    // approval is exactly observation. Equivocators fall through to the
+    // original definition below.
+    let index = blocklace.ancestor_index();
+    let (Some(observer), Some(observed)) =
+        (index.index_of(resolved_approver), index.index_of(target))
+    else {
+        return false;
+    };
+    if !index.observes(observer, observed) {
+        return false;
+    }
+    if index.creator_is_chain(&target.creator) {
+        return true;
     }
 
     // Populate approver's observe cache entry and check target visibility in a

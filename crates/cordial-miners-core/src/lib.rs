@@ -1,3 +1,4 @@
+mod ancestor_index;
 pub mod block;
 pub mod blocklace;
 pub mod consensus;

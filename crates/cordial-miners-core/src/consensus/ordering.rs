@@ -26,7 +26,6 @@ pub struct OrderingCache {
     /// generation, a size change still invalidates the cache, so this can only
     /// be stricter than the size-based check it replaces — never looser.
     cache_generation: (u64, usize),
-    approved_blocks_by_leader: HashMap<BlockIdentity, HashSet<Block>>,
     sorted_approved_by_leader: HashMap<BlockIdentity, Result<Vec<BlockIdentity>, OrderingError>>,
     previous_final_by_leader: HashMap<PreviousLeaderCacheKey, Option<BlockIdentity>>,
     weighted_previous_final_by_leader:
@@ -214,8 +213,7 @@ impl OrderingCache {
     /// populated at all, and lets tests distinguish "invalidation works" from
     /// "caching was silently disabled".
     pub fn cached_entries(&self) -> usize {
-        self.approved_blocks_by_leader.len()
-            + self.sorted_approved_by_leader.len()
+        self.sorted_approved_by_leader.len()
             + self.previous_final_by_leader.len()
             + self.weighted_previous_final_by_leader.len()
             + self.tau_output_by_latest_leader.len()
@@ -232,31 +230,12 @@ fn sync_cache_generation(blocklace: &Blocklace, cache: &mut OrderingCache) {
     let generation = (blocklace.generation(), blocklace.dom().len());
     if cache.cache_generation != generation {
         cache.cache_generation = generation;
-        cache.approved_blocks_by_leader.clear();
         cache.sorted_approved_by_leader.clear();
         cache.previous_final_by_leader.clear();
         cache.weighted_previous_final_by_leader.clear();
         cache.tau_output_by_latest_leader.clear();
         cache.weighted_tau_output_by_latest_leader.clear();
     }
-}
-
-fn approved_blocks_for_leader_cached(
-    blocklace: &Blocklace,
-    leader: &BlockIdentity,
-    cache: &mut OrderingCache,
-) -> HashSet<Block> {
-    sync_cache_generation(blocklace, cache);
-
-    if let Some(blocks) = cache.approved_blocks_by_leader.get(leader) {
-        return blocks.clone();
-    }
-
-    let blocks = approved_blocks_for_leader(blocklace, leader);
-    cache
-        .approved_blocks_by_leader
-        .insert(leader.clone(), blocks.clone());
-    blocks
 }
 
 fn sorted_approved_fragment(
@@ -270,8 +249,14 @@ fn sorted_approved_fragment(
         return sorted.clone();
     }
 
-    let approved = approved_blocks_for_leader_cached(blocklace, leader, cache);
-    let sorted = xsort(&approved);
+    // The approved set holds full `Block` clones for the leader's whole
+    // history. It is only needed to compute the sort, so it is dropped here
+    // rather than cached per leader (that cache cost O(leaders x blocks)
+    // full blocks and dominated memory on long histories; see #263).
+    let sorted = {
+        let approved = approved_blocks_for_leader(blocklace, leader);
+        xsort(&approved)
+    };
     cache
         .sorted_approved_by_leader
         .insert(leader.clone(), sorted.clone());
