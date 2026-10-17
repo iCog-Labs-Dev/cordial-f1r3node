@@ -6,6 +6,7 @@ use crate::crypto::CryptoVerifier;
 use crate::trace::{self, BlockLifecycleEvent, TraceEvent};
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 // The blocklace B - a set of blocks satisfying the closure and axioms
 // From definition 2.3, A blocklace B is a set of blocks subject to some invariants.
@@ -28,6 +29,8 @@ pub struct Blocklace {
     pub(crate) checkpoint_weighted_order_prefix: Vec<BlockIdentity>,
     /// Monotonic counter over structural mutations. See [`Blocklace::generation`].
     generation: u64,
+    /// Stable identity for this in-memory mirror, distinct across reconstruction.
+    cache_identity: Arc<()>,
 }
 
 // Construction
@@ -41,6 +44,7 @@ impl Blocklace {
             checkpoint_order_prefix: Vec::new(),
             checkpoint_weighted_order_prefix: Vec::new(),
             generation: 0,
+            cache_identity: Arc::new(()),
         }
     }
 }
@@ -60,6 +64,10 @@ impl Blocklace {
     /// distinguish from no change at all.
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    pub(crate) fn cache_identity(&self) -> &Arc<()> {
+        &self.cache_identity
     }
 
     /// Insert validated content, bumping the generation.
