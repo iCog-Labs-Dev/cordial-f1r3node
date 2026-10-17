@@ -83,6 +83,11 @@ contents are removed instead of remaining traversable forever.
 Checkpoint pruning must preserve:
 
 - finalized tau output stability before and after GC
+- previous-final-leader searches stop at the current checkpoint: a newer
+  leader's recursion returns the checkpoint (already proven final) instead of
+  re-verifying it against post-pruning evidence or walking below it, so its
+  stored prefix is always replayed (see #275, and #170 for the same mechanism
+  in `latest_final_leader`)
 - checkpoint monotonicity, meaning the checkpoint cannot move backwards
 - branch continuity, meaning a new checkpoint must observe the current one
 - closure for retained non-checkpoint blocks
