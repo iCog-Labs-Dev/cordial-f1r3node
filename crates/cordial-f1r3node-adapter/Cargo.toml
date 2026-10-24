@@ -60,6 +60,10 @@ name = "ordered_output"
 harness = false
 
 [[bench]]
+name = "por_ordering"
+harness = false
+
+[[bench]]
 name = "block_translation"
 harness = false
 
