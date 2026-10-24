@@ -344,6 +344,18 @@ fn validate_config(config: &ShadowConfig) -> Result<()> {
     Ok(())
 }
 
+/// Resident set size in MiB (Linux only; 0 where `/proc` is unavailable).
+fn rss_mib() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("VmRSS:"))
+                .and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok())
+        })
+        .map_or(0, |kib| kib / 1024)
+}
+
 /// Run until stopped. Transport errors retry; invalid evidence and prefix drift fail closed.
 #[allow(clippy::collapsible_if)]
 pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
@@ -448,9 +460,14 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
         // Revisit the last two heights to catch late forks at the chain tip.
         let mut start = scanned_height.map_or(0, |height| height.saturating_sub(2).max(0));
         let mut transport_failed = false;
+        let mut fetch_time = std::time::Duration::ZERO;
+        let mut ingest_time = std::time::Duration::ZERO;
         while start <= head {
             let end = start.saturating_add(config.height_batch_size - 1).min(head);
-            let blocks = match grpc.light_blocks_by_heights(start, end).await {
+            let fetch_started = std::time::Instant::now();
+            let fetched = grpc.light_blocks_by_heights(start, end).await;
+            fetch_time += fetch_started.elapsed();
+            let blocks = match fetched {
                 Ok(blocks) => blocks,
                 Err(error) => {
                     tracing::warn!(%error, start, end, "gRPC height query failed");
@@ -460,6 +477,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
                 }
             };
             let block_count = blocks.len();
+            let ingest_started = std::time::Instant::now();
             let mut translated = Vec::with_capacity(block_count);
             for info in blocks {
                 let block = trusted_block_from_light_block_info_with_options(&info, true)
@@ -483,6 +501,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
                     .ingest_trusted_block(block)
                     .with_context(|| format!("cannot mirror block {block_hash}"))?;
             }
+            ingest_time += ingest_started.elapsed();
             scanned_height = Some(end);
             tracing::info!(start, end, block_count, "PoR shadow replayed height batch");
             if end == head {
@@ -494,6 +513,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
             tokio::time::sleep(config.poll_interval).await;
             continue;
         }
+        let publish_started = std::time::Instant::now();
         let mut output = match runtime.publish_finalized_output() {
             Ok(output) => output,
             Err(PorRuntimeError::CommittedCheckpointUnavailable { round }) => {
@@ -506,6 +526,13 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
             }
             Err(error) => return Err(error.into()),
         };
+        tracing::info!(
+            fetch_ms = fetch_time.as_millis() as u64,
+            ingest_ms = ingest_time.as_millis() as u64,
+            publish_ms = publish_started.elapsed().as_millis() as u64,
+            rss_mib = rss_mib(),
+            "PoR shadow phase timing"
+        );
         last_logged_waiting_checkpoint = None;
         if runtime.has_unactivated_committed_round()? {
             let activation = runtime.retry_weight_activation()?;

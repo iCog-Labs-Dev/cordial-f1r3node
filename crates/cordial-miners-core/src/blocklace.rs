@@ -1,3 +1,4 @@
+use crate::ancestor_index::AncestorIndex;
 use crate::block::Block;
 #[cfg(feature = "trace")]
 use crate::consensus::round::{candidate_depth, depth};
@@ -6,6 +7,7 @@ use crate::crypto::CryptoVerifier;
 use crate::trace::{self, BlockLifecycleEvent, TraceEvent};
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
 
 // The blocklace B - a set of blocks satisfying the closure and axioms
 // From definition 2.3, A blocklace B is a set of blocks subject to some invariants.
@@ -28,6 +30,10 @@ pub struct Blocklace {
     pub(crate) checkpoint_weighted_order_prefix: Vec<BlockIdentity>,
     /// Monotonic counter over structural mutations. See [`Blocklace::generation`].
     generation: u64,
+    /// Lazily built ancestor bit matrix, stamped with the generation it was
+    /// built at. It is rebuilt whenever the stamp no longer matches, so a
+    /// mutation path that forgot to clear it can never yield a stale answer.
+    ancestor_index: Mutex<Option<Arc<AncestorIndex>>>,
 }
 
 // Construction
@@ -41,6 +47,7 @@ impl Blocklace {
             checkpoint_order_prefix: Vec::new(),
             checkpoint_weighted_order_prefix: Vec::new(),
             generation: 0,
+            ancestor_index: Mutex::new(None),
         }
     }
 }
@@ -60,6 +67,28 @@ impl Blocklace {
     /// distinguish from no change at all.
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Ancestor index for the current generation, built on first use.
+    ///
+    /// Costs O(N^2 / 64) words of memory (about 18 MiB at 12 000 blocks) and
+    /// is shared by every approval and ratification query until the next
+    /// structural mutation. See `crate::ancestor_index`.
+    pub(crate) fn ancestor_index(&self) -> Arc<AncestorIndex> {
+        let mut slot = self
+            .ancestor_index
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let fresh = slot
+            .as_ref()
+            .filter(|index| index.generation() == self.generation)
+            .map(Arc::clone);
+        if let Some(index) = fresh {
+            return index;
+        }
+        let index = Arc::new(AncestorIndex::build(self));
+        *slot = Some(Arc::clone(&index));
+        index
     }
 
     /// Insert validated content, bumping the generation.
