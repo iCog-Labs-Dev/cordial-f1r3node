@@ -185,3 +185,19 @@ demo-cordial-ordered-output-status:
     curl -s http://127.0.0.1:7080/ordered-output/status | jq .
     @printf '%s\n' "--- latest ---"
     curl -s http://127.0.0.1:7080/ordered-output/latest | jq '{anchor_hash: .anchor.content_hash, len: (.blocks|length), wavelength, bond_count, total_mirrored_blocks}'
+
+# Small Criterion suite with provenance and archived reports.
+bench:
+    python3 scripts/benchmark.py
+
+bench-smoke:
+    python3 scripts/benchmark.py --smoke
+
+bench-large:
+    python3 scripts/benchmark.py --large
+
+bench-rspace:
+    python3 scripts/benchmark.py --rspace --package cordial-f1r3node-adapter --bench execution
+
+bench-harness-tests:
+    python3 -m unittest discover -s scripts/tests -p 'test_multi_node_load.py'

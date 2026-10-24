@@ -80,6 +80,12 @@ just check-core-boundaries
 just ci
 ```
 
+## Benchmarking
+
+See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for component coverage, small/large
+workloads, real RSpace execution, reproducible baselines, validation commands, and
+the separate multi-node load harness. Live monitoring is tracked separately.
+
 ## Documentation
 
 - **[`docs/implementation.md`](docs/implementation.md)** — what's implemented, organized by module. Start here if you want to understand the codebase.

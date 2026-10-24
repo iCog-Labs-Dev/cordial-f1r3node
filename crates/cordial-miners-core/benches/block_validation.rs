@@ -1,182 +1,142 @@
-//! Benchmark: block validation pipeline
-//!
-//! Measures performance of inbound peer block validation:
-//!
-//! * **`validate_block`** — closure check, chain axiom (equivocation check),
-//!   content hash check under Default vs Strict (cordial condition) configs
-//!   against DAGs of 100, 1 000, and 5 000 blocks.
-//! * **`validated_insert`** — complete validation + DAG insertion path.
-
-use std::collections::{HashMap, HashSet};
-
+//! Real and structural validation over exact four-validator DAG sizes.
+//! Key derivation, signing, fixture verification and graph construction are untimed.
 use cordial_miners_core::Block;
+use cordial_miners_core::bench_support as support;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::validation::{
-    ValidationConfig, validate_block, validated_insert,
+    InvalidBlock, ValidationConfig, validate_block, validated_insert,
 };
-use cordial_miners_core::crypto::CryptoVerifier;
-use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
-
+use cordial_miners_core::types::{BlockIdentity, NodeId};
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
+use std::cell::OnceCell;
+use std::collections::HashMap;
+use std::hint::black_box;
 use std::time::Duration;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-struct MockVerifier;
-
-impl CryptoVerifier for MockVerifier {
-    type Error = String;
-
-    fn verify_block(
-        &self,
-        _content: &BlockContent,
-        _sig: &[u8],
-        _creator: &NodeId,
-    ) -> Result<(), Self::Error> {
-        Ok(())
+fn fresh_history(
+    dag: &Blocklace,
+    ordered: &[BlockIdentity],
+    bonds: &HashMap<NodeId, u64>,
+    candidate: &Block,
+) -> (Blocklace, HashMap<NodeId, u64>, Option<Block>) {
+    let mut fresh = Blocklace::new();
+    // Signatures were checked by signed_dag. Rebuild in production xsort order
+    // without re-signing/re-verifying every calibration loop.
+    for id in ordered {
+        fresh
+            .insert(
+                dag.get(id).expect("history block"),
+                &support::FixtureVerifier,
+            )
+            .expect("rebuild");
     }
+    (fresh, bonds.clone(), Some(candidate.clone()))
 }
 
-fn node(id: u8) -> NodeId {
-    NodeId(vec![id])
-}
-
-fn make_block(creator: &NodeId, tag: u64, predecessors: HashSet<BlockIdentity>) -> Block {
-    let content = BlockContent {
-        payload: tag.to_le_bytes().to_vec(),
-        predecessors,
+fn bench_validation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("block_validation");
+    group.sample_size(20);
+    group.measurement_time(Duration::from_secs(2));
+    let sizes = if support::smoke() {
+        vec![8, 16]
+    } else {
+        // Strict validation scales steeply with history depth. Routine measurements
+        // stay small; thousand-block histories are explicitly opt-in.
+        support::sizes(&[16, 32], &[16, 32, 100, 1_000, 4_000])
     };
-    let content_hash = cordial_miners_core::crypto::block_hash(creator, &content);
-    Block {
-        identity: BlockIdentity {
-            content_hash,
-            creator: creator.clone(),
-            signature: tag.to_le_bytes().to_vec(),
-        },
-        content,
-    }
-}
-
-fn build_dag(n: usize) -> (Blocklace, HashMap<NodeId, u64>, Block) {
-    let validators: Vec<NodeId> = (1..=4u8).map(node).collect();
-    let bonds: HashMap<NodeId, u64> = validators.iter().map(|v| (v.clone(), 100)).collect();
-    let mut blocklace = Blocklace::new();
-    let mut prev_round: Vec<Block> = Vec::new();
-    let mut tag: u64 = 1;
-
-    let rounds = n / validators.len();
-    for _ in 0..rounds {
-        let preds: HashSet<BlockIdentity> = prev_round.iter().map(|b| b.identity.clone()).collect();
-        let mut this_round = Vec::new();
-        for v in &validators {
-            let block = make_block(v, tag, preds.clone());
-            tag += 1;
-            blocklace
-                .insert(block.clone(), &MockVerifier)
-                .expect("setup block insert");
-            this_round.push(block);
+    for n in sizes {
+        for (name, config) in [
+            (
+                "validate_default_no_signature",
+                ValidationConfig {
+                    check_signature: false,
+                    ..ValidationConfig::default()
+                },
+            ),
+            ("validate_default_signed", ValidationConfig::default()),
+            ("validate_strict_signed", ValidationConfig::strict()),
+        ] {
+            let fixture = OnceCell::new();
+            group.bench_function(BenchmarkId::new(name, n), |b| {
+                // Criterion applies its filter before invoking this callback.
+                // Initialize once across warmup/sampling, outside the timed loop.
+                let (dag, bonds, candidate) = fixture.get_or_init(|| {
+                    eprintln!("fixture: block_validation/{name}/{n}");
+                    let (dag, bonds, candidate) = support::signed_dag(n);
+                    assert!(!candidate.identity.signature.is_empty());
+                    let result = validate_block(&candidate, &dag, &bonds, &config);
+                    assert!(result.is_valid(), "invalid fixture: {:?}", result.errors());
+                    if config.check_signature {
+                        let mut bad = candidate.clone();
+                        bad.identity.signature = vec![0xFF];
+                        assert!(
+                            validate_block(&bad, &dag, &bonds, &config)
+                                .errors()
+                                .contains(&InvalidBlock::InvalidSignature)
+                        );
+                    }
+                    (dag, bonds, candidate)
+                });
+                b.iter(|| {
+                    validate_block(
+                        black_box(candidate),
+                        black_box(dag),
+                        black_box(bonds),
+                        black_box(&config),
+                    )
+                });
+            });
         }
-        prev_round = this_round;
-    }
-
-    // Candidate block referencing the latest round
-    let preds: HashSet<BlockIdentity> = prev_round.iter().map(|b| b.identity.clone()).collect();
-    let candidate = make_block(&validators[0], tag, preds);
-
-    (blocklace, bonds, candidate)
-}
-
-// ── benchmarks ────────────────────────────────────────────────────────────────
-
-fn bench_validate_block_default_config(c: &mut Criterion) {
-    let sizes: &[usize] = &[100, 1_000];
-
-    let mut group = c.benchmark_group("block_validation/validate_default");
-    group.sample_size(20);
-    group.measurement_time(Duration::from_secs(2));
-
-    for &n in sizes {
-        let (blocklace, bonds, candidate) = build_dag(n);
-        let config = ValidationConfig {
-            check_signature: false,
-            ..Default::default()
-        };
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("dag_size_{n}"), ""),
-            &(&candidate, &blocklace, &bonds, &config),
-            |b, (cand, bl, bnd, cfg)| {
-                b.iter(|| validate_block(cand, bl, bnd, cfg));
-            },
-        );
-    }
-    group.finish();
-}
-
-fn bench_validate_block_strict_config(c: &mut Criterion) {
-    let sizes: &[usize] = &[50, 250, 1_000];
-
-    let mut group = c.benchmark_group("block_validation/validate_strict");
-    group.sample_size(20);
-    group.measurement_time(Duration::from_secs(2));
-
-    for &n in sizes {
-        let (blocklace, bonds, candidate) = build_dag(n);
-        let config = ValidationConfig {
-            check_signature: false,
-            ..ValidationConfig::strict()
-        };
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("dag_size_{n}"), ""),
-            &(&candidate, &blocklace, &bonds, &config),
-            |b, (cand, bl, bnd, cfg)| {
-                b.iter(|| validate_block(cand, bl, bnd, cfg));
-            },
-        );
-    }
-    group.finish();
-}
-
-fn bench_validated_insert(c: &mut Criterion) {
-    let sizes: &[usize] = &[50, 250, 1_000];
-
-    let mut group = c.benchmark_group("block_validation/validated_insert");
-    group.sample_size(20);
-    group.measurement_time(Duration::from_secs(2));
-
-    for &n in sizes {
-        let config = ValidationConfig {
-            check_signature: false,
-            ..Default::default()
-        };
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("dag_size_{n}"), ""),
-            &(),
-            |b, _| {
-                b.iter_batched(
-                    || {
-                        let (bl, bnd, cand) = build_dag(n);
-                        (bl, cand, bnd, config.clone())
-                    },
-                    |(mut bl, cand, bnd, cfg)| {
-                        let res = validated_insert(cand, &mut bl, &bnd, &cfg);
-                        assert!(res.is_valid(), "insert must succeed");
-                    },
-                    criterion::BatchSize::SmallInput,
+        let fixture = OnceCell::new();
+        group.bench_function(BenchmarkId::new("validated_insert_signed", n), |b| {
+            let (dag, bonds, candidate, ordered) = fixture.get_or_init(|| {
+                eprintln!("fixture: block_validation/validated_insert_signed/{n}");
+                let (dag, bonds, candidate) = support::signed_dag(n);
+                let history = dag
+                    .dom()
+                    .iter()
+                    .map(|id| dag.get(id).expect("signed history"))
+                    .collect();
+                let ordered =
+                    cordial_miners_core::consensus::xsort(&history).expect("signed topology");
+                let (mut checked, weights, mut value) =
+                    fresh_history(&dag, &ordered, &bonds, &candidate);
+                assert!(
+                    validated_insert(
+                        value.take().expect("signed candidate"),
+                        &mut checked,
+                        &weights,
+                        &ValidationConfig::default()
+                    )
+                    .is_valid()
                 );
-            },
-        );
+                assert_eq!(checked.dom().len(), n + 1);
+                support::assert_content_eq(
+                    &checked
+                        .get(&candidate.identity)
+                        .expect("inserted candidate")
+                        .content,
+                    &candidate.content,
+                );
+                (dag, bonds, candidate, ordered)
+            });
+            b.iter_batched_ref(
+                || fresh_history(dag, ordered, bonds, candidate),
+                |(dag, bonds, candidate)| {
+                    // Move the signed candidate without timing allocation/cloning.
+                    let owned = candidate.take().expect("one insertion per fresh fixture");
+                    black_box(validated_insert(
+                        owned,
+                        dag,
+                        bonds,
+                        &ValidationConfig::default(),
+                    ))
+                },
+                BatchSize::PerIteration,
+            );
+        });
     }
     group.finish();
 }
-
-criterion_group!(
-    benches,
-    bench_validate_block_default_config,
-    bench_validate_block_strict_config,
-    bench_validated_insert,
-);
+criterion_group!(benches, bench_validation);
 criterion_main!(benches);

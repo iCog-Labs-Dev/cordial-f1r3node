@@ -246,5 +246,6 @@ jobs:
       - name: Smoke-check benchmarks
         working-directory: blocklace
         run: |
-          cargo bench -p cordial-miners-core -- --test
-          cargo bench -p cordial-f1r3node-adapter -- --test
+          python3 -m unittest discover -s scripts/tests -p 'test_benchmark.py'
+          python3 scripts/benchmark.py --smoke
+          python3 -m unittest discover -s scripts/tests -p 'test_multi_node_load.py'

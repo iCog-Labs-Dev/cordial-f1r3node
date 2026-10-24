@@ -721,6 +721,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 name = "cordial-app-runtime"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -752,9 +753,12 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "reqwest",
+ "rholang",
+ "rspace_plus_plus",
  "serde",
  "serde_json",
  "sha2",
+ "shared",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -793,6 +797,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "blake2",
+ "cordial-miners-core",
  "criterion",
  "ed25519-dalek",
  "k256",
@@ -809,6 +814,7 @@ name = "cordial-por"
 version = "0.1.0"
 dependencies = [
  "cordial-miners-core",
+ "criterion",
  "k256",
 ]
 

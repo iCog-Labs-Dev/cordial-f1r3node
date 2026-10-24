@@ -9,3 +9,9 @@ cordial-miners-core = { path = "../cordial-miners-core" }
 
 [dev-dependencies]
 k256.workspace = true
+cordial-miners-core = { path = "../cordial-miners-core", features = ["bench-support"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "reputation"
+harness = false

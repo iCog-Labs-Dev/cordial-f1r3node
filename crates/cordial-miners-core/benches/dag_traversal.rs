@@ -3,11 +3,13 @@
 //! Measures performance of fundamental blocklace DAG graph operations:
 //!
 //! * **`observe` on deep linear chains** — transitive predecessor closure traversal
-//!   at depths 100, 1 000, and 5 000.
+//!   at depths 100 and 1 000.
 //! * **`observe` on wide multi-validator DAGs** — transitive closure over multi-round
 //!   DAGs with 4, 10, and 50 validators per round.
 //! * **`precedes` query** — reachability checks between ancestor pairs vs non-ancestors.
 //! * **`is_closed` validation** — closure invariant verification over entire DAGs.
+
+use cordial_miners_core::bench_support as support;
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -120,14 +122,16 @@ fn build_wide_dag(num_validators: usize, rounds: usize) -> (Blocklace, BlockIden
 // ── benchmarks ────────────────────────────────────────────────────────────────
 
 fn bench_observe_linear_chain(c: &mut Criterion) {
-    let sizes: &[usize] = &[100, 1_000];
+    let sizes = support::sizes(&[100, 1_000], &[100, 1_000]);
 
     let mut group = c.benchmark_group("dag_traversal/observe_linear");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(2));
 
-    for &n in sizes {
+    for n in sizes {
         let (blocklace, _, tip) = build_linear_chain(n);
+        assert_eq!(blocklace.dom().len(), n);
+        assert_eq!(blocklace.observe(&tip).len(), n);
 
         group.bench_with_input(
             BenchmarkId::new(format!("depth_{n}"), ""),
@@ -141,18 +145,27 @@ fn bench_observe_linear_chain(c: &mut Criterion) {
 }
 
 fn bench_observe_wide_dag(c: &mut Criterion) {
-    let validator_counts: &[usize] = &[4, 10, 50];
+    let validator_counts = support::sizes(&[4, 10, 50], &[4, 10, 50]);
     const ROUNDS: usize = 10;
 
     let mut group = c.benchmark_group("dag_traversal/observe_wide_dag");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(2));
 
-    for &v in validator_counts {
+    for v in validator_counts {
         let (blocklace, tip) = build_wide_dag(v, ROUNDS);
+        assert_eq!(blocklace.dom().len(), v * (ROUNDS + 1));
+        assert_eq!(blocklace.observe(&tip).len(), v * ROUNDS + 1);
 
         group.bench_with_input(
-            BenchmarkId::new(format!("validators_{v}_rounds_{ROUNDS}"), ""),
+            BenchmarkId::new(
+                format!(
+                    "validators_{v}_layers_{}_blocks_{}",
+                    ROUNDS + 1,
+                    v * (ROUNDS + 1)
+                ),
+                "",
+            ),
             &tip,
             |b, tip| {
                 b.iter(|| blocklace.observe(tip));
@@ -163,14 +176,16 @@ fn bench_observe_wide_dag(c: &mut Criterion) {
 }
 
 fn bench_precedes_reachability(c: &mut Criterion) {
-    let sizes: &[usize] = &[100, 1_000];
+    let sizes = support::sizes(&[100, 1_000], &[100, 1_000]);
 
     let mut group = c.benchmark_group("dag_traversal/precedes");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(2));
 
-    for &n in sizes {
+    for n in sizes {
         let (blocklace, root, tip) = build_linear_chain(n);
+        assert!(blocklace.precedes(&root, &tip));
+        assert!(!blocklace.precedes(&tip, &root));
 
         group.bench_with_input(
             BenchmarkId::new(format!("ancestor_query_n{n}"), ""),
@@ -192,14 +207,15 @@ fn bench_precedes_reachability(c: &mut Criterion) {
 }
 
 fn bench_is_closed_invariant(c: &mut Criterion) {
-    let sizes: &[usize] = &[100, 1_000];
+    let sizes = support::sizes(&[100, 1_000], &[100, 1_000]);
 
     let mut group = c.benchmark_group("dag_traversal/is_closed");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(2));
 
-    for &n in sizes {
+    for n in sizes {
         let (blocklace, _, _) = build_linear_chain(n);
+        assert!(blocklace.is_closed());
 
         group.bench_with_input(
             BenchmarkId::new(format!("n{n}"), ""),
