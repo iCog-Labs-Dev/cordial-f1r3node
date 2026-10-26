@@ -13,7 +13,7 @@ If anything here is unclear or out of date, file an issue — we'd rather fix th
 ```bash
 git clone https://github.com/iCog-Labs-Dev/cordial-f1r3node.git
 cd cordial-f1r3node
-cargo +nightly-2025-06-15 test -p cordial-miners-core
+cargo +nightly-2026-02-09 test -p cordial-miners-core
 ```
 
 That's it. You only need a Rust toolchain (nightly recommended, see `Justfile` for pinned version).
@@ -27,17 +27,17 @@ You'll need three things:
    - Mac: `brew install protobuf`
    - Verify: `protoc --version`
 
-2. **f1r3node checked out as a sibling directory.** The path dependencies in `crates/cordial-f1r3space-adapter/Cargo.toml` expect to find f1r3node at `../f1r3node` relative to this repo. So your layout should be:
+2. **f1r3node-rust checked out as a sibling directory.** The adapter path dependencies expect `../f1r3node-rust` relative to this repo. Your layout should be:
 
    ```
    ~/your-projects/
      cordial-f1r3node/  ← this repo
-     f1r3node/        ← https://github.com/F1R3FLY-io/f1r3node
+     f1r3node-rust/   ← https://github.com/F1R3FLY-io/f1r3node-rust
    ```
 
    If you keep them somewhere else, edit the path deps in `crates/cordial-f1r3space-adapter/Cargo.toml` accordingly.
 
-3. **Rust nightly toolchain.** This workspace uses nightly features. Use the pinned toolchain in `Justfile` (`nightly-2025-06-15`) or a recent nightly.
+3. **Rust nightly toolchain.** This workspace uses nightly features. Use the pinned toolchain in `Justfile` (`nightly-2026-02-09`).
 
 Then verify:
 
@@ -55,8 +55,8 @@ First build is slow (~5-7 min) because it compiles f1r3node's Rholang interprete
 | `tonic_prost_build` errors about `protoc` | Install `protoc` (see above) |
 | `gxhash` errors about AES/SSE2 intrinsics | Make sure `.cargo/config.toml` exists at the repo root. It should be checked in — if it's missing, that's a bug |
 | Stack overflow in Rholang tests | `RUST_MIN_STACK=8388608` is set via `.cargo/config.toml`. Verify it's there |
-| `models` path dep "file not found" | f1r3node must be at `../f1r3node`. See setup step 2 |
-| `smallvec` feature error on stable | Use nightly toolchain: `cargo +nightly-2025-06-15 ...` |
+| `models` path dep "file not found" | f1r3node-rust must be at `../f1r3node-rust`. See setup step 2 |
+| `smallvec` feature error on stable | Use nightly toolchain: `cargo +nightly-2026-02-09 ...` |
 
 ---
 

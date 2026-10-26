@@ -3,11 +3,12 @@ use cordial_miners_core::{
     crypto::{Blake2b256Hasher, Hasher},
 };
 use cordial_por::{
-    MAX_REPUTATION_STATE_NODE_ID_LEN, MissingEntryPolicy, POR_STATE_SNAPSHOT_MAGIC,
-    POR_STATE_SNAPSHOT_VERSION, PorConfig, PorError, RatingRecord, ReputationBlockContext,
-    ReputationEntry, ReputationState, ReputationVector, build_rating_batch, build_reputation_block,
-    decode_reputation_state_snapshot, encode_reputation_state_snapshot,
-    replay_reputation_transition,
+    CheckpointReputationBlockContext, MAX_REPUTATION_STATE_NODE_ID_LEN, MissingEntryPolicy,
+    POR_CHECKPOINT_STATE_SNAPSHOT_VERSION, POR_STATE_SNAPSHOT_MAGIC, POR_STATE_SNAPSHOT_VERSION,
+    PorConfig, PorError, RatingRecord, RatingSourceCheckpoint, ReputationBlockContext,
+    ReputationEntry, ReputationState, ReputationVector, build_checkpoint_reputation_block,
+    build_rating_batch, build_reputation_block, decode_reputation_state_snapshot,
+    encode_reputation_state_snapshot, replay_reputation_transition,
 };
 
 const ROUND: u64 = 1;
@@ -71,6 +72,52 @@ fn audited_state() -> ReputationState {
     state
 }
 
+fn checkpoint_audited_state() -> ReputationState {
+    let config = config();
+    let ratings = ratings();
+    let mut state = initial_state();
+    let previous = ReputationVector {
+        round: state.round(),
+        values: state.reputation_list().entries.clone(),
+    };
+    let list = replay_reputation_transition(&previous, &ratings, ROUND, &config).unwrap();
+    let batch = build_rating_batch(ROUND, ratings.clone(), &config).unwrap();
+    let context = CheckpointReputationBlockContext {
+        shard_id: SHARD_ID,
+        source: RatingSourceCheckpoint {
+            round: ROUND,
+            finalized_prefix_len: 16,
+            finalized_prefix_hash: [0x31; 32],
+        },
+        previous_block: None,
+    };
+    let block = build_checkpoint_reputation_block(context, &batch, list, &config).unwrap();
+    state
+        .apply_checkpoint_reputation_block(SHARD_ID, context.source, &ratings, block, &config)
+        .unwrap();
+    state.eject_validator(&node(1)).unwrap();
+    state
+}
+
+fn rewrite_snapshot_version(mut encoded: Vec<u8>, version: u16) -> Vec<u8> {
+    let version_offset = POR_STATE_SNAPSHOT_MAGIC.len();
+    encoded[version_offset..version_offset + 2].copy_from_slice(&version.to_be_bytes());
+    let payload_start = version_offset + 2 + 8;
+    let checksum_start = encoded.len() - 32;
+    let domain: &[u8] = match version {
+        POR_STATE_SNAPSHOT_VERSION => b"cordial-por:state-snapshot:v2",
+        POR_CHECKPOINT_STATE_SNAPSHOT_VERSION => b"cordial-por:state-snapshot:v3",
+        _ => unreachable!(),
+    };
+    let mut input = domain.to_vec();
+    input.extend_from_slice(POR_STATE_SNAPSHOT_MAGIC);
+    input.extend_from_slice(&encoded[version_offset..payload_start]);
+    input.extend_from_slice(&encoded[payload_start..checksum_start]);
+    let checksum = Blake2b256Hasher.hash(&input);
+    encoded[checksum_start..].copy_from_slice(&checksum);
+    encoded
+}
+
 #[test]
 fn v2_snapshot_round_trips_the_complete_finalized_state() {
     let state = audited_state();
@@ -80,6 +127,58 @@ fn v2_snapshot_round_trips_the_complete_finalized_state() {
     assert_eq!(restored, state);
     assert_eq!(restored.latest_block(), state.latest_block());
     assert!(restored.is_ejected(&node(1)));
+}
+
+#[test]
+fn v3_snapshot_recovers_checkpoint_source_and_exclusions() {
+    let state = checkpoint_audited_state();
+    let encoded = encode_reputation_state_snapshot(&state).unwrap();
+    let version_offset = POR_STATE_SNAPSHOT_MAGIC.len();
+    assert_eq!(
+        &encoded[version_offset..version_offset + 2],
+        &POR_CHECKPOINT_STATE_SNAPSHOT_VERSION.to_be_bytes()
+    );
+    let restored = decode_reputation_state_snapshot(&encoded).unwrap();
+    assert_eq!(restored, state);
+    assert_eq!(
+        restored.latest_block().unwrap().header.source_checkpoint,
+        state.latest_block().unwrap().header.source_checkpoint
+    );
+    assert!(restored.is_ejected(&node(1)));
+    assert_eq!(
+        encode_reputation_state_snapshot(&restored).unwrap(),
+        encoded
+    );
+}
+
+#[test]
+fn snapshot_rejects_a_block_from_the_other_protocol_version() {
+    let forged_checkpoint = rewrite_snapshot_version(
+        encode_reputation_state_snapshot(&audited_state()).unwrap(),
+        POR_CHECKPOINT_STATE_SNAPSHOT_VERSION,
+    );
+    assert_eq!(
+        decode_reputation_state_snapshot(&forged_checkpoint),
+        Err(PorError::ReputationStateSnapshotBlockVersionMismatch)
+    );
+
+    let forged_wave = rewrite_snapshot_version(
+        encode_reputation_state_snapshot(&checkpoint_audited_state()).unwrap(),
+        POR_STATE_SNAPSHOT_VERSION,
+    );
+    assert_eq!(
+        decode_reputation_state_snapshot(&forged_wave),
+        Err(PorError::ReputationStateSnapshotBlockVersionMismatch)
+    );
+
+    let forged_empty_checkpoint = rewrite_snapshot_version(
+        encode_reputation_state_snapshot(&initial_state()).unwrap(),
+        POR_CHECKPOINT_STATE_SNAPSHOT_VERSION,
+    );
+    assert_eq!(
+        decode_reputation_state_snapshot(&forged_empty_checkpoint),
+        Err(PorError::ReputationStateSnapshotBlockVersionMismatch)
+    );
 }
 
 #[test]
@@ -131,11 +230,11 @@ fn rejects_unsupported_or_truncated_snapshots() {
     let mut unsupported = encoded.clone();
     let version_offset = POR_STATE_SNAPSHOT_MAGIC.len();
     unsupported[version_offset..version_offset + 2]
-        .copy_from_slice(&(POR_STATE_SNAPSHOT_VERSION + 1).to_be_bytes());
+        .copy_from_slice(&(POR_CHECKPOINT_STATE_SNAPSHOT_VERSION + 1).to_be_bytes());
     assert_eq!(
         decode_reputation_state_snapshot(&unsupported),
         Err(PorError::UnsupportedReputationStateSnapshotVersion(
-            POR_STATE_SNAPSHOT_VERSION + 1
+            POR_CHECKPOINT_STATE_SNAPSHOT_VERSION + 1
         ))
     );
 

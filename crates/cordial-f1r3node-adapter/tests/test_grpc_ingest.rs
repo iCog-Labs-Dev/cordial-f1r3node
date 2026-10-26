@@ -5,20 +5,24 @@
 //! delivery to recording `BlocklaceAdapter` implementations.
 
 use cordial_miners_core::Block;
-use cordial_miners_core::crypto::sign;
+use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::crypto::{block_hash, sign};
 use cordial_miners_core::types::{BlockIdentity, NodeId};
 
 use cordial_f1r3node_adapter::block_translation::{
     BlockMessage, Body, F1r3flyState, Header, Justification,
 };
 use cordial_f1r3node_adapter::crypto_bridge::compute_adapter_snapshot_hash;
-use cordial_f1r3node_adapter::grpc_ingest::{BlocklaceAdapter, GrpcBlockMapper};
+use cordial_f1r3node_adapter::grpc_ingest::{
+    BlocklaceAdapter, GrpcBlockMapper, NativeBlockIdentityIndex,
+};
+use cordial_f1r3node_adapter::live_ingress::AlreadyValidatedVerifier;
 
 use casper::rust::validator_identity::ValidatorIdentity;
 use crypto::rust::private_key::PrivateKey;
 use models::rust::casper::protocol::casper_message::{
     BlockMessage as WireBlockMessage, Body as WireBody, F1r3flyState as WireState,
-    Header as WireHeader,
+    Header as WireHeader, Justification as WireJustification,
 };
 
 // ── Test Helpers ─────────────────────────────────────────────────────────
@@ -167,6 +171,177 @@ impl BlocklaceAdapter<BlockIdentity> for RecordingAdapter {
 
 // ── Integration Tests ────────────────────────────────────────────────────
 
+fn signed_native_block(
+    validator: &ValidatorIdentity,
+    parent: Option<&WireBlockMessage>,
+    block_number: i64,
+) -> WireBlockMessage {
+    let parents_hash_list = parent
+        .map(|block| vec![block.block_hash.clone()])
+        .unwrap_or_default();
+    let justifications = parent
+        .map(|block| {
+            vec![WireJustification {
+                validator: block.sender.clone(),
+                latest_block_hash: block.block_hash.clone(),
+            }]
+        })
+        .unwrap_or_default();
+    let unsigned = WireBlockMessage {
+        block_hash: vec![].into(),
+        header: WireHeader {
+            parents_hash_list,
+            timestamp: block_number,
+            version: 1,
+            extra_bytes: vec![].into(),
+        },
+        body: WireBody {
+            state: WireState {
+                pre_state_hash: vec![].into(),
+                post_state_hash: vec![block_number as u8; 32].into(),
+                bonds: vec![],
+                block_number,
+            },
+            deploys: vec![],
+            rejected_deploys: vec![],
+            system_deploys: vec![],
+            extra_bytes: vec![].into(),
+            applied_from_scope: vec![],
+            merge_base: vec![].into(),
+        },
+        justifications,
+        sender: vec![].into(),
+        seq_num: 0,
+        sig: vec![].into(),
+        sig_algorithm: String::new(),
+        shard_id: "root".to_string(),
+        extra_bytes: vec![].into(),
+    };
+    validator.sign_block(&unsigned)
+}
+
+#[test]
+fn signed_native_parent_child_chain_resolves_to_cordial_ancestry() {
+    let parent_validator = ValidatorIdentity::new(&PrivateKey::from_bytes(&[7u8; 32]));
+    let child_validator = ValidatorIdentity::new(&PrivateKey::from_bytes(&[8u8; 32]));
+    let mapper: GrpcBlockMapper<(), (), ()> = GrpcBlockMapper::new();
+    let mut accepted = NativeBlockIdentityIndex::new();
+    let mut blocklace = Blocklace::new();
+
+    let native_parent = signed_native_block(&parent_validator, None, 0);
+    let parent = mapper.from_protobuf(&native_parent).unwrap();
+    assert_ne!(parent.wire_hash, parent.block.identity.content_hash);
+    accepted.check_candidate(&parent).unwrap();
+    blocklace
+        .insert(parent.block.clone(), &AlreadyValidatedVerifier)
+        .unwrap();
+    accepted.record_accepted(&parent).unwrap();
+
+    let native_child = signed_native_block(&child_validator, Some(&native_parent), 1);
+    let missing = mapper.from_protobuf(&native_child).unwrap_err();
+    assert!(missing.to_string().contains("no accepted Cordial identity"));
+
+    let child = mapper
+        .from_protobuf_with_parents(&native_child, &accepted)
+        .unwrap();
+    assert_eq!(child.block.content.predecessors.len(), 1);
+    assert!(
+        child
+            .block
+            .content
+            .predecessors
+            .contains(&parent.block.identity)
+    );
+    assert_eq!(
+        child.block.identity.content_hash,
+        block_hash(&child.block.identity.creator, &child.block.content)
+    );
+    accepted.check_candidate(&child).unwrap();
+    blocklace
+        .insert(child.block.clone(), &AlreadyValidatedVerifier)
+        .unwrap();
+    assert!(blocklace.get(&child.block.identity).is_some());
+    accepted.record_accepted(&child).unwrap();
+
+    let mut wrong_justification = native_child.clone();
+    wrong_justification.justifications[0].validator = native_child.sender.clone();
+    let wrong_justification = child_validator.sign_block(&wrong_justification);
+    let error = mapper
+        .from_protobuf_with_parents(&wrong_justification, &accepted)
+        .unwrap_err();
+    assert!(error.to_string().contains("justification creator"));
+}
+
+#[test]
+fn signed_native_child_accepts_validator_justification_for_unsigned_genesis() {
+    let validator = ValidatorIdentity::new(&PrivateKey::from_bytes(&[7u8; 32]));
+    let mapper: GrpcBlockMapper<(), (), ()> = GrpcBlockMapper::new();
+    let mut accepted = NativeBlockIdentityIndex::new();
+
+    let mut genesis = signed_native_block(&validator, None, 0);
+    genesis.sender = Vec::new().into();
+    genesis.sig = Vec::new().into();
+    genesis.sig_algorithm.clear();
+    genesis.seq_num = 0;
+    genesis.block_hash = casper::rust::util::proto_util::hash_block(&genesis);
+    let mapped_genesis = mapper.from_trusted_unsigned_genesis(&genesis).unwrap();
+    assert!(mapped_genesis.block.identity.creator.0.is_empty());
+    accepted.record_accepted(&mapped_genesis).unwrap();
+
+    let mut child = signed_native_block(&validator, Some(&genesis), 1);
+    child.justifications[0].validator = child.sender.clone();
+    let child = validator.sign_block(&child);
+    let mapped_child = mapper
+        .from_protobuf_with_parents(&child, &accepted)
+        .unwrap();
+    assert!(
+        mapped_child
+            .block
+            .content
+            .predecessors
+            .contains(&mapped_genesis.block.identity)
+    );
+
+    let mut malformed = child.clone();
+    malformed.justifications[0].validator = vec![1u8; 20].into();
+    let malformed = validator.sign_block(&malformed);
+    let error = mapper
+        .from_protobuf_with_parents(&malformed, &accepted)
+        .unwrap_err();
+    assert!(error.to_string().contains("invalid validator key length"));
+}
+
+#[test]
+fn distinct_native_blocks_cannot_collapse_to_one_cordial_identity() {
+    let validator = ValidatorIdentity::new(&PrivateKey::from_bytes(&[7u8; 32]));
+    let mapper: GrpcBlockMapper<(), (), ()> = GrpcBlockMapper::new();
+    let mut accepted = NativeBlockIdentityIndex::new();
+    let mut blocklace = Blocklace::new();
+
+    let first = signed_native_block(&validator, None, 0);
+    let first = mapper.from_protobuf(&first).unwrap();
+    accepted.check_candidate(&first).unwrap();
+    blocklace
+        .insert(first.block.clone(), &AlreadyValidatedVerifier)
+        .unwrap();
+    accepted.record_accepted(&first).unwrap();
+    accepted.record_accepted(&first).unwrap();
+
+    let mut second = signed_native_block(&validator, None, 0);
+    second.header.timestamp += 1;
+    let second = validator.sign_block(&second);
+    let second = mapper.from_protobuf(&second).unwrap();
+    assert_ne!(first.wire_hash, second.wire_hash);
+    assert_eq!(first.block.identity, second.block.identity);
+    let error = accepted.check_candidate(&second).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("collapse to one Cordial identity")
+    );
+    assert!(blocklace.get(&first.block.identity).is_some());
+}
+
 #[test]
 fn accepts_block_signed_by_f1r3node_validator_identity() {
     let private_key = PrivateKey::from_bytes(&[7u8; 32]);
@@ -190,6 +365,8 @@ fn accepts_block_signed_by_f1r3node_validator_identity() {
             rejected_deploys: vec![],
             system_deploys: vec![],
             extra_bytes: vec![0xcc].into(),
+            applied_from_scope: vec![],
+            merge_base: vec![].into(),
         },
         justifications: vec![],
         sender: vec![].into(),
@@ -224,6 +401,29 @@ fn accepts_block_signed_by_f1r3node_validator_identity() {
     tampered_signature.sig = vec![0; signed.sig.len()].into();
     assert!(mapper.from_protobuf(&tampered_signature).is_err());
 
+    let mut tampered_scope = signed.clone();
+    tampered_scope
+        .body
+        .applied_from_scope
+        .push(vec![0x11; 32].into());
+    assert!(
+        mapper
+            .from_protobuf(&tampered_scope)
+            .unwrap_err()
+            .to_string()
+            .contains("Wire hash mismatch")
+    );
+
+    let mut tampered_merge_base = signed.clone();
+    tampered_merge_base.body.merge_base = vec![0x22; 32].into();
+    assert!(
+        mapper
+            .from_protobuf(&tampered_merge_base)
+            .unwrap_err()
+            .to_string()
+            .contains("Wire hash mismatch")
+    );
+
     assert_ne!(
         validated.block.identity.content_hash.as_slice(),
         signed.block_hash.as_ref(),
@@ -254,6 +454,8 @@ fn rejects_tampered_f1r3node_wire_hash() {
             rejected_deploys: vec![],
             system_deploys: vec![],
             extra_bytes: vec![].into(),
+            applied_from_scope: vec![],
+            merge_base: vec![].into(),
         },
         justifications: vec![],
         sender: vec![].into(),

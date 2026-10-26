@@ -32,7 +32,7 @@ The math makes it impossible to produce a valid signature without the private ke
 
 Network protobuf messages enter through `GrpcBlockMapper::from_protobuf`. It recomputes f1r3node's wire hash with `casper::rust::util::proto_util::hash_block` and verifies the signature over that hash before translating the message. The returned `ValidatedF1r3nodeBlock` keeps the wire hash and signature separate from the internal Cordial identity.
 
-Locally constructed adapter messages enter through `from_adapter_message`. Their `block_hash` can be the adapter-local `compute_adapter_snapshot_hash` or Cordial's internal `hash_content`. Their signature must cover the internal content hash. `F1r3flyCryptoAdapter::verify_block` likewise verifies signatures over the internal content hash.
+Locally constructed adapter messages enter through `from_adapter_message`. Their `block_hash` can be the adapter-local `compute_adapter_snapshot_hash` or Cordial's internal `block_hash`. Their signature must cover the internal content hash. `F1r3flyCryptoAdapter::verify_block` likewise verifies signatures over the internal content hash.
 
 The snapshot helper hashes selected mirror fields, including the sender. It is neither a digest of every message field nor a replacement for f1r3node's protobuf hash. Tests using this helper establish local compatibility only.
 
@@ -70,7 +70,7 @@ blocklace.insert(block, &verifier)?;
 ---
 
 ## Why we recompute the hash inside [crypto_bridge.rs](../../crates/cordial-f1r3node-adapter/src/crypto_bridge.rs)
-Inside `verify_block`, we call `hash_content(content)` ourselves instead of using the `content_hash` stored in the block's identity.
+Inside `verify_block`, we call `block_hash(creator, content)` ourselves instead of using the `content_hash` stored in the block's identity.
 
 **Reason**: an attacker could put any value in `content_hash`. By recomputing it from the raw `content`, we guarantee we're checking the hash that the original signer actually produced.
 

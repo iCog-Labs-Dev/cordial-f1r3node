@@ -149,7 +149,7 @@ Then update `F1r3RspaceRuntime::system_deploy_to_f1r3node` to pass the real `inv
 
 **Status:** `GrpcBlockMapper::from_protobuf` calls f1r3node's `casper::rust::util::proto_util::hash_block` on the original message and verifies its wire signature before translation. The `models` and `casper` path dependencies are enabled.
 
-**Local compatibility path.** `compute_adapter_snapshot_hash` hashes a deterministic, selected-field layout of the adapter mirror. It is not the f1r3node wire hash and does not commit to all message fields. `from_adapter_message` accepts this local snapshot hash or Cordial's internal `hash_content`; signatures on that path cover the internal content hash.
+**Local compatibility path.** `compute_adapter_snapshot_hash` hashes a deterministic, selected-field layout of the adapter mirror. It is not the f1r3node wire hash and does not commit to all message fields. `from_adapter_message` accepts this local snapshot hash or Cordial's internal `block_hash`; signatures on that path cover the internal content hash.
 
 **Tests.** `test_grpc_ingest.rs` uses `ValidatorIdentity::sign_block` for real f1r3node wire validation, rejects tampered wire fields/signatures and substitution of either local hash, and separately tests local adapter compatibility. Local helper tests do not establish wire interoperability.
 

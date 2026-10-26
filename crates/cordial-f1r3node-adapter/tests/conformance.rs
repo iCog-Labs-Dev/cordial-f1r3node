@@ -98,6 +98,7 @@ fn tagged_hash(tag: u8) -> [u8; 32] {
 
 fn payload(block_number: u64, bonds: &HashMap<NodeId, u64>) -> CordialBlockPayload {
     CordialBlockPayload {
+        por_authorizations: vec![],
         state: BlockState {
             pre_state_hash: vec![block_number.saturating_sub(1) as u8; 32],
             post_state_hash: vec![block_number as u8; 32],
@@ -315,9 +316,9 @@ async fn equivocation_attack_is_rejected_and_yields_slash_evidence() {
     assert_eq!(evidence[0].blocks.len(), 2);
 
     let formatter = F1r3SlashDeployFormatter::new(node(2).0);
-    let slash_deploys = formatter.to_slash_system_deploys(&evidence).unwrap();
-    assert_eq!(slash_deploys.len(), 1);
-    assert!(!slash_deploys[0].is_empty());
+    let err = formatter.to_slash_system_deploys(&evidence).unwrap_err();
+    assert!(err.to_string().contains("native block hash"));
+    assert!(err.to_string().contains("target activation epoch"));
 }
 
 #[tokio::test]

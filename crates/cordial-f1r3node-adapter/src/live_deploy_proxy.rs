@@ -11,15 +11,15 @@ use models::casper::v1::ListeningNameDataResponse;
 use models::casper::v1::{
     BlockInfoResponse, BlockResponse, BondStatusResponse, ContinuationAtNameResponse,
     DeployResponse, EventInfoResponse, ExploratoryDeployResponse, FindDeployResponse,
-    IsFinalizedResponse, LastFinalizedBlockResponse, MachineVerifyResponse,
+    IsFinalizedResponse, LastFinalizedBlockResponse, MachineVerifyResponse, PendingDeploysResponse,
     PrivateNamePreviewResponse, RhoDataResponse, StatusResponse, VisualizeBlocksResponse,
     deploy_service_client::DeployServiceClient, deploy_service_server::DeployService,
 };
 use models::casper::{
     BlockQuery, BlocksQuery, BlocksQueryByHeight, BondStatusQuery, ContinuationAtNameQuery,
     DataAtNameByBlockQuery, DeployDataProto, ExploratoryDeployQuery, FindDeployQuery,
-    IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery, PrivateNamePreviewQuery,
-    ReportQuery, VisualizeDagQuery,
+    IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery, PendingDeploysQuery,
+    PrivateNamePreviewQuery, ReportQuery, VisualizeDagQuery,
 };
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
@@ -205,6 +205,17 @@ impl DeployService for LiveDeployProxy {
             .lock()
             .await
             .deploy_finalization_status(request)
+            .await
+    }
+
+    async fn get_pending_deploys(
+        &self,
+        request: tonic::Request<PendingDeploysQuery>,
+    ) -> Result<tonic::Response<PendingDeploysResponse>, tonic::Status> {
+        self.upstream
+            .lock()
+            .await
+            .get_pending_deploys(request)
             .await
     }
 

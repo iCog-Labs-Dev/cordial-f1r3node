@@ -31,11 +31,12 @@ jobs:
         with:
           path: blocklace
 
-      - name: Checkout f1r3node
+      - name: Checkout f1r3node-rust
         uses: actions/checkout@v4
         with:
-          repository: F1R3FLY-io/f1r3node
-          path: f1r3node
+          repository: F1R3FLY-io/f1r3node-rust
+          ref: 525f8e8b5419bac7b36a354c2325ef61ed73201f
+          path: f1r3node-rust
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler ripgrep
@@ -89,11 +90,12 @@ jobs:
         with:
           path: blocklace
 
-      - name: Checkout f1r3node
+      - name: Checkout f1r3node-rust
         uses: actions/checkout@v4
         with:
-          repository: F1R3FLY-io/f1r3node
-          path: f1r3node
+          repository: F1R3FLY-io/f1r3node-rust
+          ref: 525f8e8b5419bac7b36a354c2325ef61ed73201f
+          path: f1r3node-rust
 
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -126,11 +128,12 @@ jobs:
         with:
           path: blocklace
 
-      - name: Checkout f1r3node
+      - name: Checkout f1r3node-rust
         uses: actions/checkout@v4
         with:
-          repository: F1R3FLY-io/f1r3node
-          path: f1r3node
+          repository: F1R3FLY-io/f1r3node-rust
+          ref: 525f8e8b5419bac7b36a354c2325ef61ed73201f
+          path: f1r3node-rust
 
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -157,26 +160,58 @@ jobs:
       - name: Checkout cordial-f1r3node
         uses: actions/checkout@v4
         with:
-          path: blocklace
+          path: cordial-f1r3node
 
-      - name: Checkout f1r3node
+      - name: Checkout f1r3node-rust
         uses: actions/checkout@v4
         with:
-          repository: F1R3FLY-io/f1r3node
-          path: f1r3node
+          repository: F1R3FLY-io/f1r3node-rust
+          ref: 525f8e8b5419bac7b36a354c2325ef61ed73201f
+          path: f1r3node-rust
 
       - name: Create local Docker environment
-        working-directory: blocklace
+        working-directory: cordial-f1r3node
         run: cp docker/.env.example docker/.env
 
       - name: Validate Compose files
-        working-directory: blocklace
+        working-directory: cordial-f1r3node
         run: |
           docker compose --env-file docker/.env -f docker/standalone.yml config --quiet
           docker compose --env-file docker/.env -f docker/prebuilt-standalone.yml config --quiet
           docker compose --env-file docker/.env -f docker/conformance.yml config --quiet
-          docker compose --env-file docker/.env -f docker/four-node-intercept.yml config --quiet
           docker compose --env-file docker/.env -f docker/four-node-cluster.yml config --quiet
+
+  docker-image:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout cordial-f1r3node
+        uses: actions/checkout@v4
+        with:
+          path: cordial-f1r3node
+
+      - name: Checkout f1r3node-rust
+        uses: actions/checkout@v4
+        with:
+          repository: F1R3FLY-io/f1r3node-rust
+          ref: 525f8e8b5419bac7b36a354c2325ef61ed73201f
+          path: f1r3node-rust
+
+      - name: Create local Docker environment
+        working-directory: cordial-f1r3node
+        run: cp docker/.env.example docker/.env
+
+      - name: Build the runtime image from both sibling checkouts
+        working-directory: cordial-f1r3node
+        run: docker compose --env-file docker/.env -f docker/standalone.yml build cordial-standalone
+
+      - name: Check the native node CLI in the built image
+        run: |
+          help="$(docker run --rm --entrypoint /opt/docker/bin/node cordial-f1r3node:local run --help)"
+          grep -q -- '--native-token-name' <<<"$help"
+          ! grep -q -- '--consensus' <<<"$help"
 
   benchmark-smoke:
     name: benchmark smoke
@@ -189,11 +224,12 @@ jobs:
         with:
           path: blocklace
 
-      - name: Checkout f1r3node
+      - name: Checkout f1r3node-rust
         uses: actions/checkout@v4
         with:
-          repository: F1R3FLY-io/f1r3node
-          path: f1r3node
+          repository: F1R3FLY-io/f1r3node-rust
+          ref: 525f8e8b5419bac7b36a354c2325ef61ed73201f
+          path: f1r3node-rust
 
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -210,5 +246,6 @@ jobs:
       - name: Smoke-check benchmarks
         working-directory: blocklace
         run: |
-          cargo bench -p cordial-miners-core -- --test
-          cargo bench -p cordial-f1r3node-adapter -- --test
+          python3 -m unittest discover -s scripts/tests -p 'test_benchmark.py'
+          python3 scripts/benchmark.py --smoke
+          python3 -m unittest discover -s scripts/tests -p 'test_multi_node_load.py'

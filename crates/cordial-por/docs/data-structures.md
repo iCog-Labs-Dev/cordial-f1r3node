@@ -357,7 +357,12 @@ rejected. Evidence is nonempty and at most 64 KiB; node IDs are at most 4 KiB,
 total events at most one million, and the encoded input at most 64 MiB.
 `None` and an explicit empty event set have identical commitments. The block
 header binds this hash even for rounds with no penalty or no numeric decay.
-Evidence authentication and retention remain host responsibilities.
+Equivocation inputs require a private authorization created from core-verified
+evidence by EquivocationPenalty::authorize. Arbitrary bytes or altered claims
+are rejected before replay. Construction and audit bind approval to the shard
+and source wave. The adapter policy requires a signed authorization payload
+included in trusted finalized Cordial output. Evidence retention and inactivity
+authentication remain host responsibilities.
 
 ## Canonical Reputation Block Wire Envelope
 
@@ -417,6 +422,18 @@ one block encoding across persistence and publication. `tests/block.rs` locks
 the v2 envelope with a golden hash; `tests/snapshot.rs` locks the corresponding
 v2 state snapshot. V1 block and snapshot bytes are rejected; upgrades require
 an explicitly prepared v2 checkpoint.
+
+### Checkpoint-bound block v3
+
+Checkpoint ratings use the v2 signed rating payload and batch commitment. Their
+reputation blocks use header and wire version 3. The v3 block hash uses
+`cordial-por:reputation-block-commitment:v3` and commits the checkpoint's
+`finalized_prefix_len` and `finalized_prefix_hash` after the round, in addition
+to the v2 header fields and penalty commitment. Its `source_finalized_wave` is
+zero. The v3 wire envelope uses
+`cordial-por:reputation-block-envelope:v3` for its checksum and includes the
+checkpoint fields in the block payload. A wave-based v2 block has no checkpoint
+source; decoding requires its wire and header versions to agree.
 
 ## Signed Reputation Block Publication Envelope
 
@@ -506,11 +523,15 @@ map with zero weight so PoR never mutates membership. A zero-total projection is
 rejected.
 
 `LiveIngress::apply_por_weights` performs the runtime handoff atomically. It
-rejects non-genesis state without an audited checkpoint, requires the
-checkpoint's source wave to be covered by the published finalized output,
-prospectively verifies that the new values preserve the exported finalized prefix, replaces only the values, and clears the weighted ordering
-cache. Ratings from wave `k` therefore influence only subsequent Cordial
-decisions.
+rejects non-genesis state without an audited checkpoint. A wave-based block
+requires its source wave to be covered by published finality; a v3 checkpoint
+block requires its exact source prefix length and hash to match the locally
+finalized prefix. It then verifies that the new values preserve the exported
+finalized prefix, replaces only the values, and clears the weighted ordering
+cache. An incomplete checkpoint replay leaves activation pending; a conflicting
+prefix is rejected. When a new table would change an earlier final leader,
+the future-only epoch path seals the old-weight prefix and activates at a
+durable effective wave.
 
 ### Durable Activation Record
 
@@ -539,6 +560,12 @@ therefore binds the exact Cordial-supplied membership projection without making
 membership a PoR decision. The outer checksum is domain-separated with
 `"cordial-por:weight-activation-record:v2"`; malformed, non-canonical,
 oversized, unsupported, and corrupt records fail startup.
+
+Version 2 records do not contain an effective wave or a sealed output prefix.
+They restore the current single-table activation path; they cannot establish a
+shared future-only cutover between observers. The separate
+`<data_dir>/por/future-weight-epoch.bin` record binds the effective wave and
+sealed old-weight prefix for the current single-epoch prototype.
 
 `DurablePorState::activate_weights` enforces this ordering:
 
@@ -632,6 +659,12 @@ rejects trailing or truncated data, validates canonical ordering and the latest
 block, requires state/list/latest-block rounds to agree, and verifies that every
 exclusion flag exactly matches a zero-weight key in the permanent registry.
 `tests/snapshot.rs` locks the v2 format with a golden hash.
+
+Checkpoint-bound blocks are stored in a v3 snapshot envelope with checksum
+domain `cordial-por:state-snapshot:v3`. A v2 snapshot continues to represent
+wave-based state. Checkpoint v2 blocks and snapshots written before this
+version split are not migrated automatically; recovery requires a dedicated
+migration or a fresh observer data directory.
 
 The adapter writes these bytes to
 `<data_dir>/por/reputation-state.bin`. `PorStateStore` syncs a temporary

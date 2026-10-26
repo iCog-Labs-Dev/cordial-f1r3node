@@ -52,9 +52,9 @@ jobs:
       - name: Checkout workspace path dependencies
         uses: actions/checkout@v4
         with:
-          repository: F1R3FLY-io/f1r3node
-          ref: 3507ce3daab1946cdda2050a6dbeedd0f0898575 # rust-v0.4.15
-          path: f1r3node
+          repository: F1R3FLY-io/f1r3node-rust
+          ref: 525f8e8b5419bac7b36a354c2325ef61ed73201f
+          path: f1r3node-rust
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly

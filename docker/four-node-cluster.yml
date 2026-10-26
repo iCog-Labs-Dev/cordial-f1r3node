@@ -13,7 +13,7 @@ x-cordial-node-common: &cordial-node-common
   networks:
     - cordial-real-four-node
   environment:
-    RUST_LOG: ${RUST_LOG:-info,cordial_f1r3node_adapter=debug,cordial_f1r3space_adapter=debug}
+    RUST_LOG: ${RUST_LOG:-info}
     OPENAI_ENABLED: "false"
   healthcheck:
     test: ["CMD", "curl", "-f", "http://127.0.0.1:40403/api/status"]
@@ -50,8 +50,6 @@ services:
       - "127.0.0.1:55405:40405"
     volumes:
       - cordial-real-boot-data:/var/lib/rnode
-      - ./conf/f1r3node-defaults.conf:/opt/docker/node/src/main/resources/defaults.conf:ro
-      - ./conf/f1r3node-kamon.conf:/opt/docker/node/src/main/resources/kamon.conf:ro
       - ./conf/cordial-four-node-cluster.conf:/var/lib/rnode/rnode.conf:ro
       - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
       - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
@@ -87,8 +85,6 @@ services:
       - "127.0.0.1:51405:40405"
     volumes:
       - cordial-real-validator-1-data:/var/lib/rnode
-      - ./conf/f1r3node-defaults.conf:/opt/docker/node/src/main/resources/defaults.conf:ro
-      - ./conf/f1r3node-kamon.conf:/opt/docker/node/src/main/resources/kamon.conf:ro
       - ./conf/cordial-four-node-cluster.conf:/var/lib/rnode/rnode.conf:ro
       - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
       - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
@@ -124,8 +120,6 @@ services:
       - "127.0.0.1:52405:40405"
     volumes:
       - cordial-real-validator-2-data:/var/lib/rnode
-      - ./conf/f1r3node-defaults.conf:/opt/docker/node/src/main/resources/defaults.conf:ro
-      - ./conf/f1r3node-kamon.conf:/opt/docker/node/src/main/resources/kamon.conf:ro
       - ./conf/cordial-four-node-cluster.conf:/var/lib/rnode/rnode.conf:ro
       - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
       - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
@@ -161,8 +155,6 @@ services:
       - "127.0.0.1:53405:40405"
     volumes:
       - cordial-real-validator-3-data:/var/lib/rnode
-      - ./conf/f1r3node-defaults.conf:/opt/docker/node/src/main/resources/defaults.conf:ro
-      - ./conf/f1r3node-kamon.conf:/opt/docker/node/src/main/resources/kamon.conf:ro
       - ./conf/cordial-four-node-cluster.conf:/var/lib/rnode/rnode.conf:ro
       - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
       - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro
@@ -198,8 +190,6 @@ services:
       - "127.0.0.1:54405:40405"
     volumes:
       - cordial-real-validator-4-data:/var/lib/rnode
-      - ./conf/f1r3node-defaults.conf:/opt/docker/node/src/main/resources/defaults.conf:ro
-      - ./conf/f1r3node-kamon.conf:/opt/docker/node/src/main/resources/kamon.conf:ro
       - ./conf/cordial-four-node-cluster.conf:/var/lib/rnode/rnode.conf:ro
       - ./genesis/cordial-wallets.txt:/var/lib/rnode/genesis/wallets.txt:ro
       - ./genesis/cordial-bonds.txt:/var/lib/rnode/genesis/bonds.txt:ro

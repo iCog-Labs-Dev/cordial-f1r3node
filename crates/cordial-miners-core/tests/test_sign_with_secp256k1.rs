@@ -1,5 +1,5 @@
-use cordial_miners_core::BlockContent;
-use cordial_miners_core::crypto::{hash_content, sign, verify};
+use cordial_miners_core::crypto::{block_hash, sign, verify};
+use cordial_miners_core::{BlockContent, NodeId};
 use k256::ecdsa::{Signature, SigningKey};
 use rand::rngs::OsRng;
 use std::collections::HashSet;
@@ -19,7 +19,7 @@ fn secp_sign_and_verify_roundtrip() {
         payload: vec![1, 2, 3],
         predecessors: HashSet::new(),
     };
-    let hash = hash_content(&content);
+    let hash = block_hash(&NodeId(vec![1]), &content);
     let signature = sign(&hash, &private_key);
     assert!(
         verify(&hash, &public_key, &signature),

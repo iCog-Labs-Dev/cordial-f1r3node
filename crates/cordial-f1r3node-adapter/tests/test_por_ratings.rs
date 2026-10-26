@@ -4,16 +4,18 @@ use cordial_f1r3node_adapter::{
     ordered_output::OrderedFinalizedOutput,
     por_finality::{FinalizedRatingRound, PorFinalityTracker},
     por_ratings::{
-        PorRatingError, build_finalized_block_production_rating_batch, build_verified_rating_batch,
-        sign_admitted_interaction, validate_signed_rating, verify_rating_signature,
+        PorRatingError, build_finalized_block_production_rating_batch,
+        build_verified_checkpoint_rating_batch, build_verified_rating_batch,
+        sign_admitted_interaction, sign_checkpoint_rating, validate_checkpoint_signed_rating,
+        validate_signed_rating, verify_checkpoint_rating_signature, verify_rating_signature,
     },
 };
 use cordial_miners_core::{
     Block, BlockContent, BlockIdentity, Blocklace, NodeId, crypto::CryptoVerifier,
 };
 use cordial_por::{
-    InteractionEvidence, InteractionKind, PorConfig, PorError, ReputationState,
-    admit_interaction_evidence,
+    InteractionEvidence, InteractionKind, PorConfig, PorError, RatingRecord,
+    RatingSourceCheckpoint, ReputationState, admit_interaction_evidence,
 };
 use k256::ecdsa::SigningKey;
 
@@ -70,6 +72,104 @@ fn admitted(rater_seed: u8, recipient_seed: u8) -> cordial_por::AdmittedInteract
         &state,
     )
     .unwrap()
+}
+
+fn checkpoint_source() -> RatingSourceCheckpoint {
+    RatingSourceCheckpoint {
+        round: 1,
+        finalized_prefix_len: 16,
+        finalized_prefix_hash: [0x31; 32],
+    }
+}
+
+fn unsigned_checkpoint_rating() -> RatingRecord {
+    let mut rating = RatingRecord::new(1, node(1), node(2), 80, Vec::new());
+    rating.interaction_ref = Some(vec![0x42; 32]);
+    rating
+}
+
+#[test]
+fn checkpoint_signature_binds_the_exact_source_and_rejects_v1_replay() {
+    let source = checkpoint_source();
+    let rating = sign_checkpoint_rating(
+        unsigned_checkpoint_rating(),
+        &source,
+        &PorConfig::default(),
+        &private_key(1),
+    )
+    .unwrap();
+    assert_eq!(
+        validate_checkpoint_signed_rating(&rating, &source, &PorConfig::default()),
+        Ok(())
+    );
+    assert_eq!(
+        verify_rating_signature(&rating),
+        Err(PorRatingError::InvalidSignature)
+    );
+    let changed_source = RatingSourceCheckpoint {
+        finalized_prefix_hash: [0x32; 32],
+        ..source
+    };
+    assert_eq!(
+        verify_checkpoint_rating_signature(&rating, &changed_source),
+        Err(PorRatingError::InvalidSignature)
+    );
+    assert_eq!(
+        sign_checkpoint_rating(rating, &source, &PorConfig::default(), &private_key(1)),
+        Err(PorRatingError::RatingAlreadySigned)
+    );
+}
+
+#[test]
+fn checkpoint_signing_rejects_another_key_or_round() {
+    let source = checkpoint_source();
+    assert_eq!(
+        sign_checkpoint_rating(
+            unsigned_checkpoint_rating(),
+            &source,
+            &PorConfig::default(),
+            &private_key(3),
+        ),
+        Err(PorRatingError::InvalidSignature)
+    );
+    let mut wrong_round = unsigned_checkpoint_rating();
+    wrong_round.round = 2;
+    assert_eq!(
+        sign_checkpoint_rating(wrong_round, &source, &PorConfig::default(), &private_key(1)),
+        Err(PorRatingError::Protocol(PorError::InvalidRatingRound))
+    );
+}
+
+#[test]
+fn checkpoint_batch_verifies_every_signature_before_ordering() {
+    let source = checkpoint_source();
+    let first = sign_checkpoint_rating(
+        unsigned_checkpoint_rating(),
+        &source,
+        &PorConfig::default(),
+        &private_key(1),
+    )
+    .unwrap();
+    let mut second = RatingRecord::new(1, node(2), node(1), 70, Vec::new());
+    second.interaction_ref = Some(vec![0x43; 32]);
+    let second =
+        sign_checkpoint_rating(second, &source, &PorConfig::default(), &private_key(2)).unwrap();
+    let batch = build_verified_checkpoint_rating_batch(
+        &source,
+        vec![second.clone(), first.clone()],
+        &PorConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(batch.ratings, vec![first, second]);
+
+    let other_source = RatingSourceCheckpoint {
+        finalized_prefix_hash: [0x32; 32],
+        ..source
+    };
+    assert_eq!(
+        build_verified_checkpoint_rating_batch(&other_source, batch.ratings, &PorConfig::default(),),
+        Err(PorRatingError::InvalidSignature)
+    );
 }
 
 fn block(tag: u8, creator_seed: u8, predecessor: Option<&BlockIdentity>) -> Block {

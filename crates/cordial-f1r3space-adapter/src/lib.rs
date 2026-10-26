@@ -35,14 +35,13 @@
 //! - **pre/post state hashes** are `Vec<u8>` on our side, `prost::bytes::Bytes`
 //!   on f1r3node's side. Both are just byte sequences; conversion is free.
 //! - **Deploys**: our `SignedDeploy` carries a `Vec<u8>` term; f1r3node's
-//!   `DeployData` wants a `String`. Non-UTF-8 terms are rejected rather than
-//!   rewritten before signature verification.
+//!   `DeployData` wants a `String`. Non-UTF-8 terms are rejected before
+//!   signature verification.
 //! - **Signatures**: supported algorithms are translated explicitly and the
 //!   signature is verified with `Signed::from_signed_data` before execution.
-//! - **System deploys**: `Slash` requires a `PublicKey` and a block hash
-//!   (what's being slashed). Our `SystemDeployRequest::Slash` now carries
-//!   both the validator NodeId and the `invalid_block_hash`, so we pass
-//!   the real hash to f1r3node's `SlashDeploy`.
+//! - **System deploys**: the new node requires a verified activation epoch
+//!   for `Slash`. Our request does not carry it, so slash translation fails
+//!   until that evidence is added to the execution boundary.
 //! - **Block data** (sender, seq_num, block_number): populated from
 //!   `ExecutionRequest.block_number` plus a default sender derived from the
 //!   bonds list. Timestamp is 0.
@@ -69,9 +68,7 @@ use cordial_miners_core::execution::{
 };
 use cordial_miners_core::types::NodeId;
 
-use casper::rust::util::rholang::costacc::{
-    close_block_deploy::CloseBlockDeploy, slash_deploy::SlashDeploy,
-};
+use casper::rust::util::rholang::costacc::close_block_deploy::CloseBlockDeploy;
 use casper::rust::util::rholang::runtime_manager::RuntimeManager as F1r3RuntimeManager;
 use casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum;
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
@@ -126,7 +123,7 @@ impl<'a> CoreRuntimeManager for F1r3RspaceRuntime<'a> {
             .system_deploys
             .iter()
             .map(|sd| system_deploy_to_f1r3node(sd, &request.pre_state_hash))
-            .collect();
+            .collect::<Result<Vec<_>, RuntimeError>>()?;
 
         let block_data = build_block_data(&request)?;
 
@@ -159,6 +156,7 @@ impl<'a> CoreRuntimeManager for F1r3RspaceRuntime<'a> {
                     system_deploys,
                     block_data,
                     invalid_blocks,
+                    None,
                 ))
                 .map_err(|e| {
                     RuntimeError::InternalError(format!("compute_state_with_bonds: {e:?}"))
@@ -240,6 +238,7 @@ pub fn signed_deploy_to_f1r3node(sd: &CmSignedDeploy) -> Result<Signed<DeployDat
             .map(i64::try_from)
             .transpose()
             .map_err(|_| RuntimeError::InternalError("expiration_timestamp overflow".into()))?,
+        parameters: Vec::new(),
     };
 
     let sig_algorithm: Box<dyn SignaturesAlg> = match &sd.signature_algorithm {
@@ -264,27 +263,20 @@ pub fn signed_deploy_to_f1r3node(sd: &CmSignedDeploy) -> Result<Signed<DeployDat
 
 /// Convert our `SystemDeployRequest` to f1r3node's `SystemDeployEnum`.
 ///
-/// `Slash` needs a `PublicKey` for the slashed validator and a "block
-/// hash that's being slashed"; our request now carries both the validator
-/// NodeId and the invalid_block_hash, so we pass the real hash. `CloseBlock`
-/// needs an initial random seed; we derive one from the pre-state hash.
+/// `Slash` needs a verified target activation epoch, which the current
+/// request cannot supply. `CloseBlock` derives its seed from the pre-state hash.
 pub fn system_deploy_to_f1r3node(
     sd: &SystemDeployRequest,
     pre_state_hash: &[u8],
-) -> SystemDeployEnum {
+) -> Result<SystemDeployEnum, RuntimeError> {
     let rand_seed = Blake2b512Random::create_from_bytes(pre_state_hash);
     match sd {
-        SystemDeployRequest::Slash {
-            validator,
-            invalid_block_hash,
-        } => SystemDeployEnum::Slash(SlashDeploy {
-            invalid_block_hash: prost::bytes::Bytes::copy_from_slice(invalid_block_hash),
-            pk: PublicKey::from_bytes(&validator.0),
+        SystemDeployRequest::Slash { .. } => Err(RuntimeError::InternalError(
+            "cannot translate slash deploy without a verified target activation epoch".into(),
+        )),
+        SystemDeployRequest::CloseBlock => Ok(SystemDeployEnum::Close(CloseBlockDeploy {
             initial_rand: rand_seed,
-        }),
-        SystemDeployRequest::CloseBlock => SystemDeployEnum::Close(CloseBlockDeploy {
-            initial_rand: rand_seed,
-        }),
+        })),
     }
 }
 

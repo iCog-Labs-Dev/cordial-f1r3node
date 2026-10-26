@@ -6,8 +6,8 @@
 # recursion. Without these, the build fails on gxhash and tests stack-
 # overflow.
 #
-# Mirrors /home/john/Desktop/rust/f1r3node/.cargo/config.toml so the
-# two projects can share the same build expectations.
+# Mirrors the sibling f1r3node-rust Cargo settings so both workspaces share
+# the same build expectations.
 
 [env]
 # Rholang's interpreter recurses deeply via Box::pin across async state

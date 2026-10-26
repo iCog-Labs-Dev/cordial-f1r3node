@@ -4,7 +4,7 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 DOCKER_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 CERTS_DIR="$DOCKER_DIR/certs"
-UPSTREAM_CERTS_DIR="$DOCKER_DIR/../../f1r3node/docker/certs"
+UPSTREAM_CERTS_DIR="$DOCKER_DIR/../../f1r3node-rust/docker/certs"
 
 copy_bootstrap_cert() {
   src_dir="$UPSTREAM_CERTS_DIR/bootstrap"

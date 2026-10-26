@@ -7,6 +7,8 @@
 
 use cordial_miners_core::NodeId;
 
+use crate::ratings::RatingSourceCheckpoint;
+
 /// Logical PoR processing round.
 pub type ReputationRound = u64;
 
@@ -144,12 +146,14 @@ pub struct ReputationVector {
 // Finalized penalty inputs
 // ============================================================
 
-/// One externally authenticated equivocation event. The pure calculation
-/// layer requires a nonempty evidence reference but does not verify proofs.
+/// One equivocation claim, usable for penalties only after strict proof
+/// verification and protocol authorization through EquivocationPenalty::authorize.
+/// Changing its public claim fields invalidates its private authorization.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EquivocationPenalty {
     pub offender: NodeId,
     pub evidence: Vec<u8>,
+    pub(crate) authorization: Option<crate::evidence::EquivocationAuthorization>,
 }
 
 /// One externally established missed participation round. Consecutive replay
@@ -186,8 +190,11 @@ pub struct ReputationBlockHeader {
     /// Shard whose finalized activity produced this reputation update.
     pub shard_id: Vec<u8>,
 
-    /// Finalized Cordial wave containing the rated interactions.
+    /// Finalized Cordial source wave for wave blocks (v2); zero in checkpoint blocks (v3).
     pub source_finalized_wave: u64,
+
+    /// Finalized-prefix source identity for checkpoint blocks (v3); absent in wave blocks (v2).
+    pub source_checkpoint: Option<RatingSourceCheckpoint>,
 
     pub round: ReputationRound,
 

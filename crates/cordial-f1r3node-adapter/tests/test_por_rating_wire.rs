@@ -1,15 +1,18 @@
 use cordial_f1r3node_adapter::{
     por_rating_wire::{
         BLOCK_PRODUCTION_RATING_ENVELOPE_DOMAIN, BLOCK_PRODUCTION_RATING_ENVELOPE_VERSION,
-        BlockProductionRatingEnvelopeV1, MAX_BLOCK_PRODUCTION_RATING_ENVELOPE_LEN,
-        PorRatingWireError,
+        BlockProductionRatingEnvelopeV1, BlockProductionRatingEnvelopeV2,
+        CHECKPOINT_RATING_ENVELOPE_VERSION, MAX_BLOCK_PRODUCTION_RATING_ENVELOPE_LEN,
+        MAX_CHECKPOINT_RATING_ENVELOPE_LEN, PorRatingWireError,
     },
-    por_ratings::sign_admitted_interaction,
+    por_ratings::{
+        sign_admitted_interaction, sign_checkpoint_rating, verify_checkpoint_rating_signature,
+    },
 };
 use cordial_miners_core::NodeId;
 use cordial_por::{
-    InteractionEvidence, InteractionKind, PorConfig, RatingRecord, ReputationState,
-    admit_interaction_evidence,
+    InteractionEvidence, InteractionKind, PorConfig, RatingRecord, RatingSourceCheckpoint,
+    ReputationState, admit_interaction_evidence,
 };
 use k256::ecdsa::SigningKey;
 
@@ -51,6 +54,120 @@ fn rating() -> RatingRecord {
     .unwrap();
 
     sign_admitted_interaction(admitted, &PorConfig::default(), &private_key(1)).unwrap()
+}
+
+fn checkpoint_source() -> RatingSourceCheckpoint {
+    RatingSourceCheckpoint {
+        round: 1,
+        finalized_prefix_len: 16,
+        finalized_prefix_hash: [0x31; 32],
+    }
+}
+
+fn checkpoint_rating() -> RatingRecord {
+    let mut rating = RatingRecord::new(1, node(1), node(2), 80, Vec::new());
+    rating.interaction_ref = Some(vec![0x42; 32]);
+    sign_checkpoint_rating(
+        rating,
+        &checkpoint_source(),
+        &PorConfig::default(),
+        &private_key(1),
+    )
+    .unwrap()
+}
+
+#[test]
+fn checkpoint_envelope_has_a_distinct_canonical_v2_layout() {
+    let source = checkpoint_source();
+    let rating = checkpoint_rating();
+    let envelope = BlockProductionRatingEnvelopeV2::new(source, rating.clone()).unwrap();
+    let mut expected = BLOCK_PRODUCTION_RATING_ENVELOPE_DOMAIN.to_vec();
+    expected.extend_from_slice(&CHECKPOINT_RATING_ENVELOPE_VERSION.to_be_bytes());
+    expected.extend_from_slice(&source.round.to_be_bytes());
+    expected.extend_from_slice(&source.finalized_prefix_len.to_be_bytes());
+    expected.extend_from_slice(&source.finalized_prefix_hash);
+    expected.extend_from_slice(&(rating.rater.0.len() as u16).to_be_bytes());
+    expected.extend_from_slice(&rating.rater.0);
+    expected.extend_from_slice(&(rating.recipient.0.len() as u16).to_be_bytes());
+    expected.extend_from_slice(&rating.recipient.0);
+    expected.extend_from_slice(&rating.score.to_be_bytes());
+    expected.extend_from_slice(rating.interaction_ref.as_ref().unwrap());
+    expected.extend_from_slice(&(rating.signature.len() as u16).to_be_bytes());
+    expected.extend_from_slice(&rating.signature);
+    assert_eq!(envelope.encode(), expected);
+    let decoded = BlockProductionRatingEnvelopeV2::decode(&expected).unwrap();
+    assert_eq!(decoded.source(), source);
+    assert_eq!(decoded.rating(), &rating);
+    assert_eq!(decoded.encode(), expected);
+    assert_eq!(
+        verify_checkpoint_rating_signature(decoded.rating(), &decoded.source()),
+        Ok(())
+    );
+    assert_eq!(
+        BlockProductionRatingEnvelopeV1::decode(&expected),
+        Err(PorRatingWireError::UnsupportedVersion(2))
+    );
+}
+
+#[test]
+fn checkpoint_envelope_rejects_bad_source_and_malformed_bytes() {
+    let source = checkpoint_source();
+    let rating = checkpoint_rating();
+    assert_eq!(
+        BlockProductionRatingEnvelopeV2::new(
+            RatingSourceCheckpoint {
+                finalized_prefix_len: 17,
+                ..source
+            },
+            rating.clone(),
+        ),
+        Err(PorRatingWireError::InvalidSourceCheckpoint)
+    );
+    assert_eq!(
+        BlockProductionRatingEnvelopeV2::new(
+            RatingSourceCheckpoint {
+                round: 2,
+                finalized_prefix_len: 32,
+                ..source
+            },
+            rating,
+        ),
+        Err(PorRatingWireError::SourceCheckpointRoundMismatch)
+    );
+    let encoded = BlockProductionRatingEnvelopeV2::new(source, checkpoint_rating())
+        .unwrap()
+        .encode();
+    let mut changed_prefix = encoded.clone();
+    let prefix_len_offset = BLOCK_PRODUCTION_RATING_ENVELOPE_DOMAIN.len() + 2 + 8;
+    changed_prefix[prefix_len_offset + 7] ^= 1;
+    assert_eq!(
+        BlockProductionRatingEnvelopeV2::decode(&changed_prefix),
+        Err(PorRatingWireError::InvalidSourceCheckpoint)
+    );
+    let mut truncated = encoded.clone();
+    truncated.pop();
+    assert_eq!(
+        BlockProductionRatingEnvelopeV2::decode(&truncated),
+        Err(PorRatingWireError::UnexpectedEnd)
+    );
+    let mut trailing = encoded;
+    trailing.push(0);
+    assert_eq!(
+        BlockProductionRatingEnvelopeV2::decode(&trailing),
+        Err(PorRatingWireError::TrailingBytes)
+    );
+}
+
+#[test]
+fn checkpoint_envelope_enforces_its_size_limit() {
+    let oversized = vec![0; MAX_CHECKPOINT_RATING_ENVELOPE_LEN + 1];
+    assert_eq!(
+        BlockProductionRatingEnvelopeV2::decode(&oversized),
+        Err(PorRatingWireError::EnvelopeTooLong {
+            actual: oversized.len(),
+            maximum: MAX_CHECKPOINT_RATING_ENVELOPE_LEN,
+        })
+    );
 }
 
 #[test]

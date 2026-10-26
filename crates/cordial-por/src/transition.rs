@@ -210,14 +210,18 @@ pub(crate) fn apply_reputation_penalties(
         }
         Ok(entry)
     };
-    let mut equivocating_weight = 0u128;
+    let mut equivocating_weights = std::collections::BTreeMap::<u64, u128>::new();
     for event in &events.equivocations {
+        event.validate_authorization(events.round)?;
         if !seen.insert(&event.offender) || event.evidence.is_empty() {
             return Err(PorError::InvalidPenaltyEvents(
                 "duplicate offender or empty equivocation evidence".into(),
             ));
         }
-        equivocating_weight = equivocating_weight
+        let weight = equivocating_weights
+            .entry(event.proof_round()?)
+            .or_default();
+        *weight = weight
             .checked_add(u128::from(prior_entry(&event.offender)?.reputation))
             .ok_or(PorError::SlashOverflow)?;
     }
@@ -248,8 +252,12 @@ pub(crate) fn apply_reputation_penalties(
                 sum.checked_add(u128::from(entry.reputation))
                     .ok_or(PorError::SlashOverflow)
             })?;
-        let penalty = compute_slash_penalty_wide(equivocating_weight, total_weight, config)?;
         for event in &events.equivocations {
+            let penalty = compute_slash_penalty_wide(
+                equivocating_weights[&event.proof_round()?],
+                total_weight,
+                config,
+            )?;
             let index = staged
                 .entries
                 .binary_search_by(|entry| entry.node_id.cmp(&event.offender))

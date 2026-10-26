@@ -1,0 +1,363 @@
+# PoR-weighted node integration plan
+
+## Goal and current boundary
+
+Derive PoR weights from finalized, replayable evidence and make the running
+Cordial consensus instance use those weights for its **existing authorized
+validator set**. PoR does not select a committee or replace Cordial consensus.
+The weight activation point must be deterministic and recoverable after a
+restart.
+
+Today, `live_por_shadow` connects to an upstream f1r3node over gRPC, mirrors
+blocks, and reports a durable genesis PoR projection and the latest observed
+finalized Cordial wave. With an authorized validator key it can stage signed
+local ratings and exchange evidence-checked envelopes through a shared host
+directory. It can close an all-raters-complete round in memory and report its
+projected checkpoint and weight commitment. With
+`--commit-complete-ratings`, it can also durably advance and locally activate
+that round while its source wave is the latest finalized wave. The four-node
+cluster uses upstream f1r3node consensus; host-side Cordial and PoR observers
+can check convergence, but they cannot make that node use PoR weights. See
+[`por-shadow-runner.md`](por-shadow-runner.md) for the current smoke test and
+its long-history memory limit.
+
+## Integration decision: keep upstream source unchanged if possible
+
+Prefer to keep the sibling `f1r3node` checkout unchanged. That is a goal, not
+an established integration capability. The current
+[`casper_adapter.rs`](../crates/cordial-f1r3node-adapter/src/casper_adapter.rs)
+implements local mirrors of the upstream Casper traits, and the Docker node
+binary does not select that adapter. An observer cannot change consensus
+weights in another process through the existing block-query API.
+
+**First gate:** trace the upstream node startup path that constructs and owns
+Casper, its runtime manager, block store, and authorized bonds. Establish
+whether an integration binary in this repository can construct the real node
+with our adapter using public upstream crates and trait interfaces. Record the
+exact call sites and missing methods. Require a minimal compile or startup
+proof before adopting any claimed source-free host path.
+
+- If that host is viable, implement it here and leave upstream source alone.
+- If no suitable construction seam exists, describe the smallest upstream
+  feature-gated startup hook or adapter-selection change required. Do not
+  assume a sidecar or a configuration flag enforces weights without a test
+  showing the running consensus instance consumes them.
+
+This gate decides the implementation location before work on node enforcement.
+It does not block the earlier PoR lifecycle and adapter tests.
+
+### Slice 0 audit of the current sibling checkout
+
+The read-only audit used sibling `f1r3node` commit `dca4619b`. It found a
+usable **engine** seam but no corresponding **node startup** injection seam:
+
+| Boundary | Current implementation | Consequence |
+| --- | --- | --- |
+| Running engine | `casper/src/rust/engine/engine.rs::transition_to_running` and `running.rs::Running::new` accept `Arc<dyn MultiParentCasper + Send + Sync>`. | The engine can consume another implementation of the real trait. |
+| Node startup | `node/src/rust/runtime/node_runtime.rs::NodeRuntime::main` calls `setup_node_program`; its `node_program` method is private. `setup.rs::setup_node_program` constructs `CasperLaunchImpl` directly. | A separate binary cannot replace the launch component through `NodeRuntime::new` or `start`. Reusing the current node requires changing this construction path or copying substantial node orchestration. |
+| Casper creation | `casper_launch.rs` calls `hash_set_casper` when reconnecting. `initializing.rs` and `genesis_ceremony_master.rs` also call `hash_set_casper` on their startup paths. | Replacing only the normal reconnect path would leave genesis and fresh-join paths on upstream Casper. |
+| Our adapter | `crates/cordial-f1r3node-adapter/src/casper_adapter.rs` implements local mirror traits and types. Its local `CordialMultiParentCasper` omits the real trait's block store, runtime manager, DAG, history exporter, and related methods. | The adapter cannot yet be passed to the running engine as a real `MultiParentCasper`. An RSpace-backed wrapper and real-type translation are required. |
+
+**Decision for the current code:** an unmodified upstream node binary cannot
+enforce PoR weights. Although a new binary could theoretically reproduce
+f1r3node's private startup orchestration, that would duplicate a large,
+change-sensitive node lifecycle. The recommended path is a narrow,
+feature-gated Casper-construction hook in upstream node/Casper startup. Its
+default must keep the existing `hash_set_casper` behavior; the integrated build
+would supply a real-trait Cordial wrapper backed by the existing RSpace and
+storage dependencies. The hook must cover reconnect, initialization, and
+genesis-ceremony paths. This changes startup wiring, not Cordial consensus
+rules or PoR membership authority.
+
+If upstream source must remain untouched, continue slices 1 and 2 as
+observer/adapter work and defer slice 3. Do not report the resulting cluster
+as enforcing PoR weights. Before implementing the hook, make a small
+compile-time integration proof that an RSpace-backed wrapper satisfies the
+real `MultiParentCasper` trait and can be passed to `transition_to_running`.
+No such proof exists in this audit; this table records the source-level seam
+and the missing interface precisely.
+
+## Delivery slices
+
+| Slice | Work and starting files | Exit evidence |
+| --- | --- | --- |
+| 0. Locate the node seam | Inspect upstream startup and real Casper traits; compare with `crates/cordial-f1r3node-adapter/src/casper_adapter.rs` and the real RSpace bridge in `crates/cordial-f1r3space-adapter/src/lib.rs`. | A written integration choice, named call sites, missing interfaces, and a buildable proof for the preferred host. |
+| 1. Advance live PoR rounds | Connect finalized waves and evidence to `por/finality.rs`, `por/interactions.rs`, `por/ratings.rs`, `por/collector.rs`, and `por/runtime.rs`. Reuse the existing transport and durable state boundaries. | Four observers derive the same non-genesis round, weight map, and commitment from the same finalized history; restart preserves the result. |
+| 2. Activate committed weights locally | Use `por/runtime.rs`, `por/persistence.rs`, and `LiveIngress::apply_por_weights` in `live_ingress.rs`. Define the finalized-wave activation boundary and handle pending or rejected activation. | A nonuniform weight change is durable, keeps the authorized identities unchanged, preserves the published finalized prefix, and recovers after restart. |
+| 3. Connect weights to the running node | Build the host selected in slice 0 and wire its block production, validation, finality, fork choice, and ordering to the same active Cordial weight projection. | A node-facing test proves that a controlled weight change affects the running consensus path. Reading a shadow status file alone does not satisfy this gate. |
+| 4. Four-node functional smoke | Extend the connected-cluster harness with a fresh, isolated chain and per-node activation observations. Keep the long-running cluster as a separate stability and disk baseline. | Four nodes agree on active round, exact weights, commitment, and finalized output through observer and validator restarts; a controlled nonuniform-weight scenario demonstrates enforcement. |
+| 5. Sustained-run gate | Repeat with longer histories after the shadow ordering, restart, and disk-growth issues are measured and addressed. | Recovery time, peak RSS, per-poll latency, and disk-growth rates are recorded against agreed limits. |
+
+Slices 1 and 2 can progress while slice 0 is investigated. Slice 3 depends on
+the result of slice 0 and on a safe activation boundary from slice 2. A fresh
+four-node functional test can proceed before the long-history performance work
+is complete; sustained operation cannot be claimed until slice 5 passes.
+
+The first slice 1 increment reports the latest finalized wave and rejects wave
+regression after shadow replay. It does not open or close a rating round, and
+the latest output alone may skip intermediate waves. The current rating channel
+is process-local. The next increment optionally loads one validator key file,
+checks that its derived identity is authorized by the bonds, and pins that
+identity in shadow status across restarts. It does not sign or exchange ratings.
+The next transport increment adds a durable local rating outbox under
+`<data-dir>/por/rating-outbox`. It atomically stages the existing signed wire
+envelopes by finalized wave and rater, rejects conflicting retries, and checks
+stored signatures on recovery. With `--stage-local-ratings` and an authorized
+key, the live runner now feeds this outbox through the existing coordinator.
+It can reconstruct the expected historical wave under the active projection
+and checks its ordered output against the latest finalized prefix. Missing
+leaders and changed prefixes fail closed. The durable reputation round selects
+the next source wave. Activation is gated to the latest finalized wave so
+later waves have not already finalized under the previous weights.
+
+The adapter now has a shard-scoped shared-directory exchange in
+`por/transport/file_exchange.rs` for colocated observers. It publishes each
+signed envelope immutably by wave, rater, and recipient, accepts identical
+retries, and reads authorized peer envelopes in canonical order with bounded
+files and signature checks. With `--rating-exchange-dir`, the live runner now
+publishes its durable outbox envelopes, reads peer envelopes, and passes all
+of them through the finalized-evidence collector. It reports complete-rater
+and quorum progress in logs. Once all eligible raters are complete, it
+rechecks the durable local batch, closes a candidate through the lifecycle
+coordinator, replays the reputation transition, and logs the candidate
+checkpoint and weight commitment. The opt-in commit path preflights the
+candidate against the current final leader and ordered prefix, then commits
+and activates it only at that source-wave boundary. On restart, a committed
+but pending activation replays blocks under the prior active weights before
+retrying. A directory shared by four host-side observers is a functional test
+transport, not an f1r3node peer protocol. Shard isolation is directory-based;
+the v1 rating signature does not itself bind a shard ID.
+
+Before the slice 1 exit gate, run four keyed observers against a fresh cluster
+and verify that they commit the same non-genesis round, weight map, and
+checkpoint through restart. The durable reputation round selects the next
+wave, and the exact-wave activation gate leaves later-wave candidates pending
+if exchange completes too late. Measure that window in the live smoke before
+claiming continuous progression. The observers must use distinct authorized
+validator keys; fabricating signatures for all validators in one observer
+would not prove the distributed path.
+
+### Fresh keyed smoke finding: a missing source wave
+
+The 2026-10-14 parallel fresh-cluster run launched four keyed observers before
+starting the validators. All four exited with `no final leader can be replayed
+for wave 0` after a later wave finalized. The f1r3node height-0 genesis block
+has an empty sender; it is not the elected validator leader for wave 0. The
+current protocol maps finalized wave `k` to reputation round `k+1`, requires
+consecutive reputation blocks, and has no representation for a wave without a
+final leader. The run therefore produced no non-genesis PoR commitment. The
+original long-running cluster was left untouched, and the fresh project's
+volumes and observer logs were preserved.
+
+### Proposed checkpoint-driven PoR rounds
+
+The selected direction is **one PoR round per eligible finalized source
+checkpoint**, not one round per Cordial wave number. The chosen source is a
+fixed boundary in Cordial's immutable, canonical finalized block prefix,
+which is itself backed by a final leader. Prefix length and a commitment to
+all block identities identify the checkpoint. The next PoR round is
+`previous_committed_por_round + 1`. A missing wave-0 leader creates no
+synthetic ratings, reputation transition, or weight change; the first
+completed source window can still produce PoR round 1. The active weights
+remain in force until a new round is committed and safely activated.
+
+The proposed processing rule is:
+
+1. Traverse finalized source checkpoints in a canonical order, independently
+   of observer polling intervals. Verify the enclosing Cordial final leader
+   and finalized prefix before admitting interactions or opening a rating
+   round.
+2. Assign the next consecutive PoR round to an eligible checkpoint. Bind each
+   signed rating, rating envelope, and reputation block to both that PoR round
+   and the source prefix length and commitment. A source wave may be retained
+   as informational provenance, but cannot determine the PoR round. Distinct
+   checkpoints cannot share one PoR round; a repeated checkpoint is idempotent.
+3. Derive ratings only from evidence in the checkpoint's finalized source
+   window. Close the batch when all raters are complete or at a deterministic
+   cutoff based on later finalized source progress; the current next-wave
+   cutoff needs revision. Audit and durably commit the transition and its
+   source cursor together. On restart, replay the committed cursor and pending
+   evidence without assigning another round to the same checkpoint.
+4. Activate committed weights only at a later safe Cordial boundary. A rating
+   completed after newer Cordial output has finalized cannot retroactively
+   change that output. The existing exact-wave activation check must be
+   adapted for delayed completion before continuous advancement is claimed.
+
+**Ordering gate for leader-wave checkpoints:** verify from Cordial finality that an
+observer can enumerate eligible checkpoints in one stable order and can pass a
+wave without a final leader without later discovering an older eligible
+checkpoint. A later observed wave alone is not proof that an earlier wave can
+be skipped. If this property cannot be established for leader-wave
+checkpoints, select a canonical sequence of finalized block checkpoints
+instead and apply the same consecutive PoR numbering. Until that source order
+is proved, the runner must keep failing closed rather than guessing a round.
+
+The first source-ordering slice uses that fallback. It selects a checkpoint at
+each fixed 16-block boundary in Cordial's canonical finalized prefix: PoR
+round 1 ends at block 16, round 2 at block 32, and so on. Each checkpoint
+commits the full ordered prefix and its terminal block identity. This makes
+selection independent of observer polling and does not need to decide whether
+an absent older wave leader might appear later. Rechecking a retained
+checkpoint rejects any change to a block identity in its committed prefix.
+The shadow status reports the next available source checkpoint for inspection;
+it does **not** yet open, sign, commit, or activate a checkpoint-driven PoR
+round. The 16-block cadence is a protocol constant for this initial path and
+must be versioned if changed. The v1 wave-based rating and reputation-block
+rules remain in force until the format revision below is complete.
+
+This changes the protocol format, not just the shadow loop. The v1 rating
+envelope and reputation block require `rating_round = finalized_wave + 1`;
+their signed/committed source fields and validation need a versioned revision.
+Start with `crates/cordial-por/src/ratings.rs` and `block.rs`, then the adapter's
+`por/finality.rs`, `interactions.rs`, lifecycle, transport, persistence,
+runtime, and shadow runner. Update the architecture, data-structure, and
+rating-policy documents when the rule is implemented. Preserve v1 decoding
+for existing durable histories or provide an explicit migration; do not
+reinterpret an old commitment under the new rule.
+
+The rating-format slice now has a v2 source-bound signing payload, signature
+verification, canonical batch verification, and a versioned checkpoint rating
+envelope and batch encoder. The v2 envelope decoder checks structure.
+Checkpoint-window extraction now checks the finalized prefix, selects
+block-production references only from the 16-block source window, and admits
+participants against the preceding PoR state before signing a local batch.
+An independent v2 collector now checks remote envelope bytes against that
+source, Cordial's supplied authorized-rater set, signatures, exact evidence,
+and deterministic scores. It inserts batches atomically and excludes partial
+raters from a complete-batch snapshot. The v2 outbox stores the exact source
+checkpoint alongside each signed batch (including empty batches) and rejects
+a conflicting source for the same round and rater after restart. The shared
+file exchange uses a separate `checkpoint-v2` namespace and an immutable
+round source marker; readers reject a missing or conflicting marker, invalid
+peer signatures, and unauthorized identities. Its partial envelope set still
+requires the evidence-backed collector to establish complete batches. The
+checkpoint exchange now has a PoC closure path: the local signed batch is
+staged before delivery, rechecked against finalized evidence on recovery,
+and published to peers. A candidate closes only when every rater in the
+caller-supplied Cordial authorization set has passed all expected
+checkpoint-window ratings through the v2 collector. A
+rater with no expected ratings is complete without an envelope. Missing or
+partial expected ratings keep the round open; there is no wall-clock cutoff.
+The returned completed round can now be replayed into a v3 reputation block,
+audited against its checkpoint source, and committed through the existing
+snapshot-first and immutable-history storage path. The retained v3 block's
+source checkpoint is the committed cursor; recovery reads it from the
+snapshot, and a repeated round fails the consecutive-round audit. The runtime
+now accepts a complete checkpoint round only after it rechecks that source
+against its current finalized prefix, audits the candidate state, and confirms
+that the candidate weight projection preserves published Cordial finality.
+It then durably commits the round before activating the weights. A prior
+committed round awaiting activation blocks another checkpoint commit. This
+handoff has a focused live-ingress and restart test. The live shadow runner now
+has an opt-in `--checkpoint-ratings` mode that stages, exchanges, closes,
+commits, and activates checkpoint rounds using v2 ratings and v3 blocks in its
+local Cordial ingress. It
+uses the full source checkpoint on startup and activation retry, so a partial
+replay cannot activate a pending round and a conflicting replayed prefix fails
+closed. The four-node v2 smoke remains pending; node-side enforcement still
+requires the integration work in slice 3.
+
+The acceptance test is a fresh four-node run in which wave 0 has no final
+leader, all observers commit the same first non-genesis round from the same
+eligible checkpoint, and restart recovers its cursor, weights, and commitment.
+Focused tests must also cover gaps between source wave numbers, duplicate or
+conflicting checkpoint identities, delayed rating completion, and a source
+that reveals an earlier checkpoint late. Observer convergence remains a
+separate gate from actual f1r3node weight enforcement.
+
+## Future-only weight epochs
+
+The current `LiveIngress::apply_por_weights` checks a candidate by recomputing
+weighted finality and the entire tau prefix with one new bond table. A valid
+PoR result can therefore remain pending forever if that table would select a
+different leader in a wave that was already finalized. The four-node checkpoint
+smoke exposed this as `WouldRewriteFinalizedLeader`. Relaxing that check while
+continuing to recompute old waves would rewrite published output.
+
+The next implementation needs a **consensus weight epoch** separate from the
+blocklace pruning checkpoint. The pruning checkpoint changes DAG traversal and
+would hide old finalized blocks that PoR still needs as replayable evidence.
+An epoch instead seals an ordered prefix and its final leader while retaining
+the full blocklace:
+
+1. Derive the effective wave from the source checkpoint and a network-wide,
+   immutable activation policy. Bind the resulting wave, source checkpoint,
+   PoR round, authorized validator set, exact projected weights, sealed leader,
+   and sealed-prefix commitment in a durable activation record. Local receipt
+   time or the observer's current head must not choose the effective wave.
+2. Before accepting the record, verify that the sealed prefix was finalized
+   under the previous epoch, the source checkpoint is within that prefix, and
+   no previously published output extends into the proposed new epoch. A late
+   or conflicting record fails closed; it cannot move the cutover forward
+   locally to make the check pass.
+3. For waves before the effective wave, replay the previous epoch's weights and
+   final leader chain. For eligible waves at or after it, use the new weights
+   for weighted finality and tau recursion. Emit the sealed prefix verbatim,
+   then append only newly approved blocks in deterministic topological order.
+   Keep the epoch boundary independent of `Blocklace::checkpoint` and keep
+   previous epoch data available for PoR evidence replay.
+4. Persist the epoch record before exposing new output or weights. On restart,
+   verify its commitments, rebuild the same sealed prefix and weighted suffix,
+   and reject a mirror that cannot reproduce the recorded boundary. A later
+   PoR round creates another epoch using the same rules.
+
+The core epoch ordering primitive and an adapter-side read-only preview are
+implemented. A checkpoint epoch policy now derives the effective wave from the
+checkpoint terminal block's wave plus an explicitly configured positive delay.
+Its result is the same when observers have different later heads, provided
+they replay the same source prefix. The adapter verifies that source before
+previewing the projected suffix. It waits for the finalized boundary wave
+immediately before the cutover and rejects a cutover into a published wave.
+The delay must be shared by all participants; there is no implicit default.
+A prepared-epoch record binds the source, policy delay, effective wave,
+reputation checkpoint hash, exact old and new validator weights, sealed leader,
+and sealed-prefix commitment. The runtime now persists the proposal before
+committing reputation state. It discards an orphan proposal after a crash
+before that commit. After the commit, it verifies the record against durable
+state and replays the sealed prefix from the retained DAG before publishing
+the new weights and ordered output. A changed checkpoint, validator set, or
+prefix fails closed. The shadow runner exposes this one-epoch path through
+`--checkpoint-epoch-delay-waves N`. The delay is explicit and must match on
+all observers. This store supports one epoch only; the runner continues
+observing after it and does not commit another checkpoint round. Later rounds
+need an append-only epoch journal.
+
+The remaining implementation gate is an unequal-weight fixture in which applying the new
+table to the whole DAG changes an old leader, yet epoch-aware ordering leaves
+the old prefix byte-for-byte identical and changes a subsequent leader or
+ordering result. Then run four observers with the same effective wave and
+commitment, compare their complete finalized prefixes, and repeat after
+restart. A separate node-side test must show f1r3node consuming those epoch
+weights; observer agreement alone does not establish enforcement.
+
+## Safety and proof requirements
+
+- Take validator identities from f1r3node's authorized bonds. Reject an
+  activation whose weight keys add or omit an authorized validator.
+- Accept only deterministic, audited PoR transitions backed by finalized
+  evidence. Persist the state and activation record before reporting weights
+  as active. Recover the same projection before computing new finality.
+- Activate a new projection at a defined finalized boundary. All participants
+  must derive the same commitment for that boundary; missing or conflicting
+  inputs must not silently cause nodes to use different weights.
+- Preserve the already-published finalized prefix when weights change. Test
+  the activation rejection and retry path as well as the successful path.
+- Distinguish three outcomes in tests and reports: observers agree on weights,
+  a local Cordial ingress uses weights, and the running f1r3node consensus
+  uses weights. Only the third demonstrates node enforcement.
+
+## Test and change discipline
+
+Extend the focused tests in
+`crates/cordial-f1r3node-adapter/tests/test_por_runtime.rs`,
+`test_por_weight_activation.rs`, and `test_por_finality.rs` as the lifecycle
+changes. Use `docker/scripts/verify-four-node-por-shadow.py` for observer
+agreement, then add a separate integration assertion for actual node weight
+consumption. Keep implementation, tests, and documentation in separate,
+reviewable commits. Do not stage or commit changes automatically.
+
+The current 25-hour cluster is useful for measuring f1r3node stability and
+storage, but the present shadow runner replays its full history and has already
+shown a large memory peak. Use a fresh isolated Compose project and separate
+PoR data root for the initial functional smoke, as described in
+[`por-shadow-runner.md`](por-shadow-runner.md#isolated-fresh-cluster-reproduction).

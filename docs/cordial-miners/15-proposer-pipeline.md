@@ -80,16 +80,34 @@ From the selected predecessor tips, decode each `CordialBlockPayload` and pick t
 
 **System deploys**: By default the proposer includes `SystemDeployRequest::CloseBlock` (f1r3node block sealing). Disable with `CordialProposer::with_close_block(false)` in tests.
 
+**Tiered slash preparation**: `with_slash_policy(policy)` enables per-round
+penalty calculation and prepares slashes before selected user deploys, followed
+by optional close block. `ExecutionEngine::execute_prepared` defaults to the
+legacy interface, dropping the extra metadata. Host percentage enforcement and
+runtime order remain outside this feature; see [Slashing Integration](./16-slashing-integration.md).
+
 ### (d) Signing — `BlockSigner`
 
 **Default**: [`Secp256k1BlockSigner`](../../crates/cordial-f1r3node-adapter/src/proposer.rs)
 
 1. Build `CordialBlockPayload` from `ExecutionResult` (pre/post state, deploys, bonds).
-2. Serialize into `BlockContent.payload` via bincode.
-3. `content_hash = hash_content(content)` (Blake2b-256, f1r3node-aligned).
+2. Include queued PoR authorizations and serialize with `CordialBlockPayload::to_bytes()`.
+3. `content_hash = block_hash(creator, content)` (Blake2b-256, f1r3node-aligned).
 4. Sign with Secp256k1 DER over the content hash.
 
 Verification on receive uses [`F1r3flyCryptoAdapter`](./14-crypto-adapter.md) implementing [`CryptoVerifier`](../../crates/cordial-miners-core/src/crypto.rs).
+
+Call `queue_por_equivocation_authorization(context, &verified_proof)` to include
+a PoR authorization in the next successful proposal. The host supplies the shard
+and intended source wave; admission only accepts a carrier finalized in that
+wave. Messages are sorted and deduplicated before signing. Failed execution,
+signing or broadcast retains the queue; successful broadcast clears it.
+
+The `por_authorizations` field uses a versioned payload encoding. Payloads without
+messages retain their existing bytes and block identities. Block translation
+preserves the carrier through `Body.extra_bytes`; receivers reject malformed
+recognized extensions. Peers must support the extension before it is used.
+These messages do not replace host-chain slash system deploys.
 
 ### (e) Broadcast — `BlockBroadcaster`
 

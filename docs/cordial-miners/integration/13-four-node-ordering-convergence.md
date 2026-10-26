@@ -76,6 +76,9 @@ PASS: four real f1r3node validators produced the same bounded mirrored Cordial w
 
 The script supports these optional environment variables:
 
+- `CORDIAL_ORDER_NODES_FILE`: path to a four-line file with node name, gRPC URL,
+  and HTTP URL on each line. Use it for an isolated cluster with different host
+  ports. The default file uses the `514xx` through `544xx` validator ports.
 - `CORDIAL_ORDER_DEPTH`: recent-block query depth used to discover each node's
   latest visible height. Use a small value such as `16` for fast local checks.
 - `CORDIAL_ORDER_HEIGHT_BATCH_SIZE`: block-height bootstrap batch size. Increase

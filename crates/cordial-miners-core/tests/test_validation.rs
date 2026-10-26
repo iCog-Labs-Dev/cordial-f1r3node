@@ -3,7 +3,7 @@ use cordial_miners_core::consensus::{
     InvalidBlock, ValidationConfig, ValidationResult, validate_block, validated_insert,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
-use cordial_miners_core::crypto::{hash_content, sign};
+use cordial_miners_core::crypto::{block_hash, sign};
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
 use ed25519_dalek::SigningKey as EdSigningKey;
 use rand::rngs::OsRng;
@@ -68,7 +68,7 @@ fn genesis_signed(private_key: &[u8], creator: &NodeId, tag: u8) -> Block {
         payload: vec![tag],
         predecessors: HashSet::new(),
     };
-    let content_hash = hash_content(&content);
+    let content_hash = block_hash(creator, &content);
     let signature = sign(&content_hash, private_key);
     Block {
         identity: BlockIdentity {
@@ -87,7 +87,7 @@ fn child_signed(private_key: &[u8], creator: &NodeId, tag: u8, parents: &[&Block
         payload: vec![tag],
         predecessors: preds,
     };
-    let content_hash = hash_content(&content);
+    let content_hash = block_hash(creator, &content);
     let signature = sign(&content_hash, private_key);
     Block {
         identity: BlockIdentity {
@@ -375,11 +375,12 @@ fn correct_content_hash_passes() {
         payload: vec![42],
         predecessors: HashSet::new(),
     };
-    let content_hash = hash_content(&content);
+    let creator = node(1);
+    let content_hash = block_hash(&creator, &content);
     let block = Block {
         identity: BlockIdentity {
             content_hash,
-            creator: node(1),
+            creator,
             signature: vec![],
         },
         content,
@@ -410,6 +411,40 @@ fn wrong_content_hash_fails() {
         content,
     };
     let b = bonds(&[(1, 100)]);
+    let config = ValidationConfig {
+        check_content_hash: true,
+        check_signature: false,
+        ..Default::default()
+    };
+    let result = validate_block(&block, &bl, &b, &config);
+    assert!(!result.is_valid());
+    assert!(
+        result
+            .errors()
+            .iter()
+            .any(|e| matches!(e, InvalidBlock::InvalidContentHash { .. }))
+    );
+}
+
+#[test]
+fn validation_rejects_block_when_creator_does_not_match_hash() {
+    let bl = Blocklace::new();
+    let content = BlockContent {
+        payload: vec![42],
+        predecessors: HashSet::new(),
+    };
+    // Content hash was computed using creator node(1)
+    let content_hash = block_hash(&node(1), &content);
+    // But identity declares creator node(2)
+    let block = Block {
+        identity: BlockIdentity {
+            content_hash,
+            creator: node(2),
+            signature: vec![],
+        },
+        content,
+    };
+    let b = bonds(&[(1, 100), (2, 100)]);
     let config = ValidationConfig {
         check_content_hash: true,
         check_signature: false,

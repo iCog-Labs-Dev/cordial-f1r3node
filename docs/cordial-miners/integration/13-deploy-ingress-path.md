@@ -448,9 +448,9 @@ curl -s -X POST http://127.0.0.1:40413/api/deploy \
 
 ---
 
-### Option 3 — gRPC proxy + `submit_live_deploy` against a live f1r3node
+### Option 3 — gRPC proxy + `submit_live_deploy` against a live f1r3node-rust
 
-**Prerequisite:** f1r3node must be running with its gRPC API on `127.0.0.1:40401`.
+**Prerequisite:** f1r3node-rust must be running with its gRPC API on `127.0.0.1:40401`.
 
 ```bash
 # Terminal 1 — start the gRPC proxy
@@ -458,8 +458,10 @@ cargo run -p cordial-f1r3node-adapter --bin live_deploy_proxy \
   -- --upstream-grpc-url http://127.0.0.1:40401
 
 # Terminal 2 — submit a real signed deploy through the proxy
+export STANDALONE_PRIVATE_KEY="$(sed -n 's/^STANDALONE_PRIVATE_KEY=//p' ../f1r3node-rust/docker/.env.example)"
 cargo run -p cordial-f1r3node-adapter --bin submit_live_deploy \
-  -- --grpc-url http://127.0.0.1:40411
+  -- --grpc-url http://127.0.0.1:40411 \
+  --private-key-env STANDALONE_PRIVATE_KEY
 ```
 
 ---

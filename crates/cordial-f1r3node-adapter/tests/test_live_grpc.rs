@@ -1,12 +1,79 @@
+use std::collections::HashMap;
+
 use prost::bytes::Bytes;
 
 use cordial_f1r3node_adapter::live_grpc::{
-    light_block_info_to_block_message, trusted_block_from_light_block_info,
+    light_block_info_to_block_message, reconcile_trusted_predecessor_creators,
+    trusted_block_from_light_block_info,
 };
+use cordial_miners_core::{BlockContent, Blocklace, NodeId, crypto::CryptoVerifier};
 use models::casper::{BondInfo, JustificationInfo, LightBlockInfo, RejectedDeployInfo};
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+struct AcceptAll;
+
+impl CryptoVerifier for AcceptAll {
+    type Error = String;
+
+    fn verify_block(
+        &self,
+        _content: &BlockContent,
+        _signature: &[u8],
+        _creator: &NodeId,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+#[test]
+#[allow(clippy::field_reassign_with_default)]
+fn actual_genesis_creator_overrides_misleading_justification_validator() {
+    let genesis_hash = [1u8; 32];
+    let child_hash = [2u8; 32];
+    let validator = [3u8; 33];
+
+    let mut genesis_info = LightBlockInfo::default();
+    genesis_info.block_hash = hex(&genesis_hash);
+    genesis_info.pre_state_hash = hex(&[4u8; 32]);
+    genesis_info.post_state_hash = hex(&[5u8; 32]);
+    let genesis = trusted_block_from_light_block_info(&genesis_info).unwrap();
+    assert!(genesis.identity.creator.0.is_empty());
+
+    let mut child_info = LightBlockInfo::default();
+    child_info.block_hash = hex(&child_hash);
+    child_info.sender = hex(&validator);
+    child_info.sig = hex(&[6u8; 64]);
+    child_info.block_number = 1;
+    child_info.pre_state_hash = hex(&[5u8; 32]);
+    child_info.post_state_hash = hex(&[7u8; 32]);
+    child_info.parents_hash_list = vec![hex(&genesis_hash)];
+    child_info.justifications = vec![JustificationInfo {
+        validator: hex(&validator),
+        latest_block_hash: hex(&genesis_hash),
+    }];
+    let mut child = trusted_block_from_light_block_info(&child_info).unwrap();
+
+    let mut blocklace = Blocklace::new();
+    blocklace.insert(genesis.clone(), &AcceptAll).unwrap();
+    assert!(blocklace.insert(child.clone(), &AcceptAll).is_err());
+
+    let creators = HashMap::from([
+        (genesis_hash, genesis.identity.creator),
+        (child_hash, child.identity.creator.clone()),
+    ]);
+    reconcile_trusted_predecessor_creators(&mut child, &creators);
+    assert_eq!(child.content.predecessors.len(), 1);
+    assert!(
+        child
+            .content
+            .predecessors
+            .iter()
+            .all(|predecessor| predecessor.creator.0.is_empty())
+    );
+    blocklace.insert(child, &AcceptAll).unwrap();
 }
 
 #[test]

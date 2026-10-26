@@ -1,182 +1,125 @@
-# Cordial Miners Docker Demo
+# Docker development cluster
 
-This Docker folder runs the local Cordial Miners integration through the real
-`f1r3node` binary.
+These images build the native `f1r3node-rust` node. Cordial and PoR run as
+host-side observers of its finalized blocks. The node keeps its own consensus;
+these Compose files do not enable in-node Cordial consensus or enforce PoR
+weights.
 
-The authoritative standalone path builds a local f1r3node image from two sibling
-source trees:
+Place the checkouts beside each other:
 
-- `../f1r3node` for the node, RSpace, API, and transport crates.
-- `.` for the Cordial Miners core and adapter crates.
-
-A registry or old local image is not enough unless it was built with the current
-Cordial Miners integration.
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `.env.example` | Development-only demo keys and image names |
-| `Dockerfile` | Builds `f1r3node` with the sibling `cordial-f1r3node` path dependencies |
-| `Dockerfile.dockerignore` | Keeps the parent build context restricted to the two required source trees |
-| `standalone.yml` | Builds and starts one standalone node from the sibling `f1r3node` checkout plus this repository |
-| `prebuilt-standalone.yml` | Optional shortcut for a local image that was already built from the current integration branch |
-| `conformance.yml` | Runs the Cordial Miners conformance test suite inside Docker |
-| `four-node-intercept.yml` | Starts four local f1r3node runtimes in local-intercept mode and verifies their Cordial ordered views match |
-| `four-node-cluster.yml` | Starts a real connected local cluster: bootstrap + four validators + verifier |
-| `conf/cordial-standalone.conf` | Minimal standalone node config |
-| `conf/cordial-four-node.conf` | Four-node local-intercept config for the KR convergence demo |
-| `conf/f1r3node-defaults.conf` | Upstream runtime defaults expected by the Rust node binary |
-| `conf/f1r3node-kamon.conf` | Upstream metrics/runtime config expected by the Rust node binary |
-| `genesis/cordial-bonds.txt` | Bonds the four demo validator public keys |
-| `genesis/cordial-wallets.txt` | Empty wallet file for the no-deploy standalone demo |
-| `scripts/generate-four-node-cluster-certs.sh` | Copies bootstrap TLS material and creates stable validator TLS keys |
-| `scripts/verify-four-node-order.sh` | Containerized four-node ordered-view verifier for the local-intercept demo |
-| `scripts/verify-four-node-cluster.sh` | Containerized verifier for the real connected four-node cluster |
-
-## Quick Commands
-
-From the repository root:
-
-```bash
-cp -n docker/.env.example docker/.env
-docker-compose --env-file docker/.env -f docker/standalone.yml config
-docker-compose --env-file docker/.env -f docker/conformance.yml run --rm cordial-conformance
-docker-compose --env-file docker/.env -f docker/standalone.yml up -d --build
-curl -s http://127.0.0.1:40403/api/status | jq
-curl -s -X POST http://127.0.0.1:40405/api/propose
-curl -s http://127.0.0.1:40403/api/blocks/10 | jq
-docker-compose --env-file docker/.env -f docker/standalone.yml down -v
+```text
+cordial-miners/
+├── cordial-f1r3node/
+└── f1r3node-rust/
 ```
 
-The `Justfile` wraps these commands as `just demo-cordial-*`.
+The Docker build context is their parent directory. `Dockerfile.dockerignore`
+limits the context to the source required by both Rust workspaces. The node
+includes its default configuration and genesis resources in the binary. The
+Compose files mount only local overrides and node data.
 
-For the four-node local-intercept KR demo:
+## Build and check the image
+
+Run these commands from the `cordial-f1r3node` root:
+
+```bash
+test -e docker/.env || cp docker/.env.example docker/.env
+docker compose --env-file docker/.env -f docker/standalone.yml build cordial-standalone
+just demo-cordial-image-check
+```
+
+The first build compiles the release node from the pinned `f1r3node-rust`
+checkout. `just demo-cordial-image-check` checks the native node CLI in the
+built image. CI builds the same runtime image, in addition to checking the
+Compose syntax.
+
+## One node
 
 ```bash
 just demo-cordial-up
-just demo-cordial-four-node-config
-just demo-cordial-four-node-up
-just demo-cordial-four-node-verify
-just demo-cordial-four-node-blocks
-just demo-cordial-four-node-down
+just demo-cordial-wait
+just demo-cordial-blocks
+just demo-cordial-down
 ```
 
-`just demo-cordial-up` is included first because it source-builds the local
-`cordial-f1r3node:local` image used by the four-node compose file. If that image
-already exists from the current integration branch, start at
-`just demo-cordial-four-node-config`.
+`demo-cordial-up` builds the image. Use `demo-cordial-up-prebuilt` after a
+successful build if you want to start the existing local image. The standalone
+node publishes ports `40400` through `40405` on the host. Stop the node before
+starting another service on those ports.
 
-The four-node demo is a non-breaking logic prototype. It starts four local
-`f1r3node` runtimes with `--consensus cordial-miners`, each using its own bonded
-validator identity, then compares the ordered block views returned by
-`/api/blocks/10`. It does not replace `f1r3node` peer discovery or the
-production consensus networking layer.
+Run adapter conformance separately with `just demo-cordial-conformance`. The
+`docker/conformance.yml` service uses the same two source trees and runs the
+adapter tests inside the build image.
 
-For the connected four-node cluster demo:
+## Connected four-node cluster
 
-The cluster publishes its node APIs on `127.0.0.1` only. Host-side checks and
-the PoR shadow runners use the localhost ports; the containers communicate
-with each other over their Compose network.
+This path starts one bootstrap node and four bonded validators. Each node has
+its own data volume. The cluster publishes HTTP and gRPC ports on `127.0.0.1`.
 
 ```bash
 ./docker/scripts/generate-four-node-cluster-certs.sh
 just demo-cordial-four-node-cluster-config
 just demo-cordial-four-node-cluster-up
 just demo-cordial-four-node-cluster-wait
-just demo-cordial-four-node-cluster-status
 just demo-cordial-four-node-cluster-verify
-just demo-cordial-four-node-cluster-blocks
-just demo-cordial-four-node-cluster-down
+just demo-cordial-four-node-cluster-ordering
 ```
 
-`demo-cordial-four-node-cluster-down` stops the cluster and keeps its five
-named node-data volumes for the next run. `demo-cordial-down` also keeps those
-cluster volumes. To discard the cluster's node data and start from genesis,
-run `just demo-cordial-four-node-cluster-reset` instead. The `-legacy` recipes
-provide the same choices with `docker-compose`.
+The certificate script reads the bootstrap key and certificate from the
+`f1r3node-rust` sibling. It keeps existing validator TLS keys. The bootstrap
+certificate must match `CORDIAL_BOOTSTRAP_NODE_ID` in `docker/.env`.
 
-This path is heavier than the local-intercept demo. It launches upstream
-f1r3node nodes; host-side Cordial and PoR observers mirror their finalized
-blocks through gRPC. The cluster does not select Cordial consensus inside
-f1r3node or enforce PoR weights. It launches:
+The cluster verifier checks network membership and a shared finalized block
+window. The ordering script runs on the host. It mirrors the same recent block
+window from the four validator gRPC endpoints and compares the Cordial view.
+See [the convergence check](../docs/cordial-miners/integration/13-four-node-ordering-convergence.md)
+for its parameters. Run the PoR shadow check separately as described in
+[the PoR shadow runner guide](../docs/por-shadow-runner.md).
 
-- one bootstrap node
-- four bonded validators with distinct validator keys
-- a verifier that checks:
-  - all validators joined the expected network
-  - validators are not isolated (`peers` / `nodes` visibility)
-  - each node reaches the same post-genesis finalized height
-  - each node reports the same finalized block window and anchor at that height
-
-The current f1r3node `/api/status` response does not expose `isValidator`.
-The verifier rejects an explicit `false` if a build supplies that field, but
-cannot prove each node's validator identity from the current HTTP API. The
-four validator identities are configured in `four-node-cluster.yml` and bonded
-in `genesis/cordial-bonds.txt`.
-
-The connected cluster uses a fixed upstream bootstrap TLS key and certificate.
-`docker/scripts/generate-four-node-cluster-certs.sh` creates validator TLS keys
-under `docker/certs/` once and preserves them on later runs. f1r3node generates
-each validator's matching certificate from its mounted key at startup. The
-validator certificates live in the containers' temporary directories, so an
-older certificate in a retained data volume cannot conflict with a key.
-`--data-dir=/var/lib/rnode` keeps node data in the named volumes. TLS material
-under `docker/certs/` is kept out of git.
-
-The five cluster nodes rotate their Docker logs at 20 MB per file, retaining
-three files per node. During a run, compare log and node-data growth with:
+Stop and restart without deleting node data:
 
 ```bash
-docker inspect --format '{{.LogPath}}' cordial.validator1
-sudo du -h "$(docker inspect --format '{{.LogPath}}' cordial.validator1)"
+just demo-cordial-four-node-cluster-down
+just demo-cordial-four-node-cluster-up
+```
+
+Run `just demo-cordial-four-node-cluster-reset` only when you want fresh node
+data and a new genesis. The stopped cluster keeps five named volumes.
+
+The local image tag defaults to `cordial-f1r3node:local`. Build it before you
+start the cluster. `just demo-cordial-image-check` rejects an image that still
+advertises the old `--consensus` flag.
+
+## Disk use
+
+The cluster rotates Docker logs at 20 MB per file, with three files per node.
+The named node volumes hold the blockchain data. Measure both while the nodes
+run:
+
+```bash
 docker system df -v
 docker ps --size --filter name=cordial
-```
-
-Repeat the log check for `cordial.validator2` through `cordial.validator4`
-and `cordial-boot`. `docker system df -v` lists the five named node-data
-volumes; `docker ps --size` shows each container's writable layer. Measure
-these while the containers still exist, because removing them discards their
-logs and writable layers.
-
-For a timed comparison while all five nodes are running, use:
-
-```bash
 sudo sh docker/scripts/measure-four-node-disk.sh 300 \
   /tmp/cordial-cluster-disk-report "$HOME/cordial-por-four-node"
 ```
 
-The script measures active and rotated Docker logs, each node's `/var/lib/rnode`
-data, container writable layers, host free space, and optional PoR shadow data
-before and after five minutes. It saves both snapshots and `docker system df -v`
-output in the report directory, then prints byte deltas. `sudo` is normally
-needed to read Docker's host log files. The sampler does not stop containers or
-remove data; run it before teardown so the evidence is still available.
+The measurement script reports Docker logs, node data, writable layers, free
+space, and optional PoR shadow data before and after the interval. It does not
+stop containers or delete data.
 
-## Docker CLI Compatibility
+## Files
 
-Some environments provide the legacy `docker-compose` command instead of
-`docker compose`. If a `Justfile` recipe fails with an error such as
-`unknown flag: --env-file`, run the equivalent command directly with
-`docker-compose`.
+| File | Purpose |
+|---|---|
+| `Dockerfile` and `Dockerfile.dockerignore` | Build the native node and adapter conformance image from sibling checkouts |
+| `standalone.yml` and `prebuilt-standalone.yml` | Run one native node |
+| `conformance.yml` | Run adapter conformance tests in Docker |
+| `four-node-cluster.yml` | Run the connected bootstrap and validator cluster |
+| `conf/cordial-standalone.conf` | Standalone node overrides |
+| `conf/cordial-four-node-cluster.conf` | Connected-cluster overrides |
+| `scripts/generate-four-node-cluster-certs.sh` | Prepare cluster TLS material |
+| `scripts/verify-four-node-cluster.sh` | Check connected-cluster finality and agreement |
 
-Example cluster shutdown:
-
-```bash
-docker-compose --env-file docker/.env -f docker/four-node-cluster.yml down
-```
-
-The `cp -n` warning that may appear while creating `docker/.env` is harmless.
-
-If you rebuild the Docker image after changing runtime packaging, use:
-
-```bash
-docker-compose --env-file docker/.env -f docker/standalone.yml build cordial-standalone
-```
-
-The Dockerfile starts from `rust:slim-bookworm`, installs the f1r3node pinned
-`nightly-2026-02-09` toolchain with retry support, and removes local
-`rust-toolchain.toml` overrides before compiling. This keeps both copied source
-trees on the same compiler inside Docker. Override `CORDIAL_RUST_BASE` and
-`RUST_TOOLCHAIN` at build time if a pinned internal base image is available.
+The old local-intercept demo used a modified node and an in-node
+`--consensus cordial-miners` flag. That mode is not part of `f1r3node-rust`.
+The connected cluster and host-side ordering script replace that demo.

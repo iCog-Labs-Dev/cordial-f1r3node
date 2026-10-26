@@ -53,17 +53,17 @@ for node in $validators; do
     jq . "$tmp_dir/${node}.status" >&2
     exit 1
   fi
-  echo "${node}: connected Cordial node on ${network_id} (validator status=${is_validator}, peers=${peers}, nodes=${nodes})"
+  echo "${node}: connected native node on ${network_id} (validator status=${is_validator}, peers=${peers}, nodes=${nodes})"
 done
 
 for node in $validators; do
-  echo "${node}: triggering local Cordial proposal through admin API"
+  echo "${node}: triggering a native proposal through the admin API"
   propose_body="$(mktemp)"
   propose_status="$(curl -sS -o "$propose_body" -w "%{http_code}" -X POST "http://${node}:40405/api/propose")"
   if [ "$propose_status" -ge 200 ] && [ "$propose_status" -lt 300 ]; then
     cat "$propose_body"
     echo
-  elif grep -q "NoNewDeploys" "$propose_body"; then
+  elif grep -Eq 'NoNewDeploys|"error":"no_new_deploys"' "$propose_body"; then
     echo "${node}: no pending deploys; heartbeat proposer is already producing blocks"
   else
     cat "$propose_body" >&2 || true
@@ -139,6 +139,10 @@ for node in $validators; do
         printf '%s %s\n' "$height" "$hash" >>"$finalized_file"
       fi
     done
+
+  # The native API may return same-height blocks in a different order on
+  # different nodes. Compare the finalized set at each height.
+  LC_ALL=C sort -k1,1n -k2,2 "$finalized_file" -o "$finalized_file"
 
   if ! grep -Fxq "${target_height} ${target_hash}" "$finalized_file"; then
     echo "ERROR: ${node} has not finalized reference anchor ${target_hash} at height ${target_height}" >&2

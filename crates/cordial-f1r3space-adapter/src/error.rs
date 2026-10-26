@@ -16,6 +16,12 @@ pub enum RepoError {
     #[error("Mutex poisoned: {0}")]
     Lock(String),
 
+    #[error("Invalid native block identity mapping: {0}")]
+    NativeMapping(String),
+
+    #[error("Invalid native height cursor: {0}")]
+    NativeCursor(String),
+
     #[error("Incompatible blocklace storage: {0}")]
     IncompatibleStorage(String),
 }

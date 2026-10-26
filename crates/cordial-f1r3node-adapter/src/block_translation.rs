@@ -35,7 +35,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use cordial_miners_core::block::Block;
-use cordial_miners_core::crypto::hash_content;
+use cordial_miners_core::crypto::block_hash;
 use cordial_miners_core::execution::{
     Bond as CmBond, CordialBlockPayload, Deploy as CmDeploy,
     DeploySignatureAlgorithm as CmDeploySignatureAlgorithm, ProcessedDeploy as CmProcessedDeploy,
@@ -370,6 +370,7 @@ pub fn block_to_message(block: &Block, shard_id: &str) -> Result<BlockMessage, T
         extra_bytes: vec![],
     };
 
+    let por_extra = CordialBlockPayload::encode_por_extra(&payload.por_authorizations);
     let body = Body {
         state: F1r3flyState {
             pre_state_hash: payload.state.pre_state_hash,
@@ -397,7 +398,7 @@ pub fn block_to_message(block: &Block, shard_id: &str) -> Result<BlockMessage, T
             .into_iter()
             .map(system_deploy_to_f1r3node)
             .collect(),
-        extra_bytes: vec![],
+        extra_bytes: por_extra,
     };
 
     Ok(BlockMessage {
@@ -470,6 +471,8 @@ pub fn message_to_block(msg: &BlockMessage) -> Result<Block, TranslationError> {
 
     // Rebuild the payload from Body
     let payload = CordialBlockPayload {
+        por_authorizations: CordialBlockPayload::decode_por_extra(&msg.body.extra_bytes)
+            .map_err(TranslationError::PayloadDecodeFailed)?,
         state: cordial_miners_core::execution::BlockState {
             pre_state_hash: msg.body.state.pre_state_hash.clone(),
             post_state_hash: msg.body.state.post_state_hash.clone(),
@@ -510,12 +513,13 @@ pub fn message_to_block(msg: &BlockMessage) -> Result<Block, TranslationError> {
     // The block's content_hash is recomputed so the blocklace structure
     // stays internally consistent. f1r3node's `block_hash` is advisory and
     // discarded — the hash we compute is over the translated content.
-    let content_hash = hash_content(&content);
+    let creator = NodeId(msg.sender.clone());
+    let content_hash = block_hash(&creator, &content);
 
     Ok(Block {
         identity: BlockIdentity {
             content_hash,
-            creator: NodeId(msg.sender.clone()),
+            creator,
             signature: msg.sig.clone(),
         },
         content,

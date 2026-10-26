@@ -9,11 +9,8 @@
 //!
 //! ## Bootstrap
 //!
-//! Each test calls `setup()` which uses f1r3node's own `test_utils` to:
-//! 1. Build a genesis block (in-memory + temp LMDB, ~10–30 s first run, cached after)
-//! 2. Return the genesis state hash and a `RuntimeManager` connected to it
-//!
-//! This is the same mechanism used by f1r3node's own casper tests.
+//! Each test calls `setup()` to build a genesis block in temporary LMDB
+//! storage and return its state hash with a connected `RuntimeManager`.
 //!
 //! ## Running
 //!
@@ -52,16 +49,24 @@
 //! failed deploys appear in `processed_deploys` with `is_failed: true`.
 //! See `lib.rs:161`.
 
-use casper::rust::test_utils::util::rholang::resources::{
-    genesis_context, mk_runtime_manager_with_history_at, mk_test_rnode_store_manager_from_genesis,
-};
+use casper::rust::genesis::contracts::proof_of_stake::ProofOfStake;
+use casper::rust::genesis::contracts::validator::Validator;
+use casper::rust::genesis::contracts::vault::Vault;
+use casper::rust::genesis::genesis::Genesis;
+use casper::rust::storage::rnode_key_value_store_manager::new_key_value_store_manager;
+use casper::rust::util::construct_deploy::{DEFAULT_PUB, DEFAULT_PUB2};
 use casper::rust::util::rholang::runtime_manager::RuntimeManager as F1r3RuntimeManager;
 use cordial_f1r3space_adapter::F1r3RspaceRuntime;
 use cordial_miners_core::execution::{
-    Bond, Deploy, DeploySignatureAlgorithm, ExecutionRequest, ProcessedSystemDeploy,
+    Bond, Deploy, DeploySignatureAlgorithm, ExecutionRequest, ProcessedSystemDeploy, RuntimeError,
     RuntimeManager as CoreRuntimeManager, SignedDeploy, SystemDeployRequest,
 };
 use cordial_miners_core::types::NodeId;
+use rholang::rust::interpreter::external_services::ExternalServices;
+use rholang::rust::interpreter::util::vault_address::VaultAddress;
+use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
+use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
+use tempfile::TempDir;
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
@@ -69,33 +74,93 @@ use cordial_miners_core::types::NodeId;
 struct Setup {
     rt: F1r3RuntimeManager,
     genesis_hash: Vec<u8>,
+    _storage: TempDir,
     genesis_bonds: Vec<Bond>,
 }
 
 /// Build a `RuntimeManager` connected to a bootstrapped genesis state.
 ///
-/// Uses f1r3node's own `test_utils::GenesisBuilder` + `resources::genesis_context()`,
-/// which is the same mechanism f1r3node's casper integration tests use.
-/// Genesis is cached in a process-wide `OnceLock`; the heavy work only runs once.
+/// Uses the host's public storage and genesis APIs. The temporary directory
+/// stays alive for the entire test so LMDB can read the genesis state.
 async fn setup() -> Setup {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let genesis_ctx = genesis_context()
+    let storage = tempfile::tempdir().expect("temporary LMDB directory");
+    let mut kvm = new_key_value_store_manager(storage.path().to_path_buf(), None);
+    let rspace = kvm.r_space_stores().await.expect("RSpace stores");
+    let mergeable = kvm
+        .store("mergeable-channel-cache".to_string())
         .await
-        .expect("genesis_context() failed — check that f1r3node's test-utils are available");
+        .expect("mergeable channel store");
+    let genesis_rt = F1r3RuntimeManager::create_with_store(
+        rspace,
+        KeyValueTypedStoreImpl::new(mergeable),
+        Genesis::default_mergeable_tags_arc(),
+        ExternalServices::noop(),
+    );
+    let genesis = Genesis {
+        shard_id: "root".to_string(),
+        timestamp: 0,
+        block_number: 0,
+        proof_of_stake: ProofOfStake {
+            minimum_bond: 1,
+            maximum_bond: i64::MAX,
+            validators: vec![Validator {
+                pk: DEFAULT_PUB2.clone(),
+                stake: 1,
+            }],
+            epoch_length: 1000,
+            quarantine_length: 50_000,
+            number_of_active_validators: 100,
+            fault_tolerance_threshold_ppm: 0,
+            max_parent_depth: 15,
+            deploy_lifespan: 50,
+            min_phlo_price: 0,
+            pos_multi_sig_public_keys: vec![
+                "04db91a53a2b72fcdcb201031772da86edad1e4979eb6742928d27731b1771e0bc40c9e9c9fa6554bdec041a87cee423d6f2e09e9dfb408b78e85a4aa611aad20c".to_string(),
+                "042a736b30fffcc7d5a58bb9416f7e46180818c82b15542d0a7819d1a437aa7f4b6940c50db73a67bfc5f5ec5b5fa555d24ef8339b03edaa09c096de4ded6eae14".to_string(),
+                "047f0f0f5bbe1d6d1a8dac4d88a3957851940f39a57cd89d55fe25b536ab67e6d76fd3f365c83e5bfe11fe7117e549b1ae3dd39bfc867d1c725a4177692c4e7754".to_string(),
+            ],
+            pos_multi_sig_quorum: 2,
+        },
+        vaults: vec![
+            Vault {
+                vault_address: VaultAddress::from_public_key(&DEFAULT_PUB)
+                    .expect("default deployer vault address"),
+                initial_balance: 9_000_000,
+            },
+            Vault {
+                vault_address: VaultAddress::from_public_key(&DEFAULT_PUB2)
+                    .expect("validator vault address"),
+                initial_balance: 0,
+            },
+        ],
+        supply: i64::MAX,
+        version: 1,
+        native_token_name: "F1R3CAP".to_string(),
+        native_token_symbol: "F1R3".to_string(),
+        native_token_decimals: 8,
+        fs_bundle: vec![],
+        consensus_fs_snapshot_cadence: None,
+    };
+    let block = Genesis::create_genesis_block(&genesis_rt, &genesis)
+        .await
+        .expect("create genesis block");
+    let rspace = kvm.r_space_stores().await.expect("RSpace history stores");
+    let mergeable = kvm
+        .store("mergeable-channel-cache".to_string())
+        .await
+        .expect("mergeable history store");
+    let (rt, _history_repo) = F1r3RuntimeManager::create_with_history(
+        rspace,
+        KeyValueTypedStoreImpl::new(mergeable),
+        Genesis::default_mergeable_tags_arc(),
+        ExternalServices::noop(),
+    );
 
-    // `body` and `state` are plain structs (not Option) in f1r3node's BlockMessage.
-    // `post_state_hash` is a `ByteString` (alias for `prost::bytes::Bytes`, 32 bytes).
-    let genesis_hash = genesis_ctx
-        .genesis_block
-        .body
-        .state
-        .post_state_hash
-        .to_vec();
-    let mut genesis_bonds: Vec<Bond> = genesis_ctx
-        .genesis_block
+    let mut genesis_bonds: Vec<Bond> = block
         .body
         .state
         .bonds
@@ -107,12 +172,10 @@ async fn setup() -> Setup {
         .collect();
     genesis_bonds.sort_by(|left, right| left.validator.0.cmp(&right.validator.0));
 
-    let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_ctx);
-    let (rt, _history_repo) = mk_runtime_manager_with_history_at(&mut *kvm).await;
-
     Setup {
         rt,
-        genesis_hash,
+        genesis_hash: block.body.state.post_state_hash.to_vec(),
+        _storage: storage,
         genesis_bonds,
     }
 }
@@ -166,12 +229,11 @@ fn signed_deploy(term: &str) -> SignedDeploy {
     signed_deploy_at(term, 0)
 }
 
-/// A minimal bond set using the default test public key.
+/// A minimal bond set matching the test genesis validator.
 fn test_bonds() -> Vec<Bond> {
-    use casper::rust::util::construct_deploy::DEFAULT_PUB;
     vec![Bond {
-        validator: NodeId(DEFAULT_PUB.bytes.to_vec()),
-        stake: 100,
+        validator: NodeId(DEFAULT_PUB2.bytes.to_vec()),
+        stake: 1,
     }]
 }
 
@@ -217,6 +279,7 @@ async fn execute_block_changes_state_hash() {
     let Setup {
         mut rt,
         genesis_hash,
+        _storage,
         ..
     } = setup().await;
     let mut adapter = F1r3RspaceRuntime::new(&mut rt);
@@ -242,6 +305,7 @@ async fn deploy_appears_in_processed_list() {
     let Setup {
         mut rt,
         genesis_hash,
+        _storage,
         ..
     } = setup().await;
     let mut adapter = F1r3RspaceRuntime::new(&mut rt);
@@ -274,6 +338,7 @@ async fn failed_deploy_surfaces_as_is_failed() {
     let Setup {
         mut rt,
         genesis_hash,
+        _storage,
         ..
     } = setup().await;
     let mut adapter = F1r3RspaceRuntime::new(&mut rt);
@@ -300,6 +365,7 @@ async fn close_block_system_deploy_executes() {
     let Setup {
         mut rt,
         genesis_hash,
+        _storage,
         genesis_bonds,
     } = setup().await;
     let mut adapter = F1r3RspaceRuntime::new(&mut rt);
@@ -333,11 +399,12 @@ async fn close_block_system_deploy_executes() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "runs genesis bootstrapping (~10–30 s); run with: just e2e-rholang"]
-async fn slash_updates_post_state_bonds() {
+async fn slash_without_verified_epoch_is_rejected() {
     let Setup {
         mut rt,
         genesis_hash,
         genesis_bonds,
+        _storage,
     } = setup().await;
     let target = genesis_bonds
         .iter()
@@ -356,29 +423,13 @@ async fn slash_updates_post_state_bonds() {
         bonds: genesis_bonds,
         block_number: 1,
     };
-    let result = tokio::task::block_in_place(|| adapter.execute_block(req))
-        .expect("a valid slash must execute and return post-state bonds");
-
-    assert!(
-        result.system_deploys.iter().any(|deploy| matches!(
-            deploy,
-            ProcessedSystemDeploy::Slash {
-                validator,
-                succeeded: true
-            } if validator == &target.validator
-        )),
-        "expected a successful slash for the target validator: {:?}",
-        result.system_deploys
-    );
-    assert!(
-        result
-            .new_bonds
-            .iter()
-            .find(|bond| bond.validator == target.validator)
-            .is_none_or(|bond| bond.stake == 0),
-        "slashed validator must be absent or have zero effective stake: {:?}",
-        result.new_bonds
-    );
+    let error = tokio::task::block_in_place(|| adapter.execute_block(req))
+        .expect_err("slash without a verified host epoch must be rejected");
+    assert!(matches!(
+        error,
+        RuntimeError::InternalError(message)
+            if message.contains("verified target activation epoch")
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -387,6 +438,7 @@ async fn multiple_deploys_all_appear_in_result() {
     let Setup {
         mut rt,
         genesis_hash,
+        _storage,
         ..
     } = setup().await;
     let mut adapter = F1r3RspaceRuntime::new(&mut rt);

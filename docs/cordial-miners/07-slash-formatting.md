@@ -1,81 +1,64 @@
 # Cordial Miners Slash Formatting
 
-## Purpose
+## Current migration boundary
 
-The core evidence pool keeps `EquivocationEvidence` free of F1R3FLY types. The
-adapter is the boundary where that pure evidence becomes a host-chain system
-deploy that F1R3FLY can execute and replay.
+The core evidence pool retains conflicting Cordial blocks without host-node
+types. `F1r3SlashDeployFormatter` receives that evidence through the adapter's
+`SlashDeployFormatter` trait. With the migrated `f1r3node-rust` host, the
+formatter rejects nonempty evidence with a clear error. It does not emit slash
+system deploy bytes. An empty evidence list still produces an empty list.
 
-CBC Casper creates slashing deploys in `BlockCreator.prepareSlashingDeploys` by
-taking an invalid block hash and wrapping it in:
+The new host's `SlashSystemDeployDataProto` requires `invalidBlockHash`,
+`issuerPublicKey`, and `targetActivationEpoch`. The host resolves the invalid
+block hash in its own DAG and checks that the referenced block is marked
+invalid, the offender is bonded, and the evidence and proposed block belong
+to the target epoch. These checks live in the sibling checkout's
+`casper/src/rust/slashing_authorization.rs`.
 
-```text
-SlashDeploy(invalidBlockHash, issuerPublicKey, slashRandomSeed)
-```
+The Cordial `BlockIdentity.content_hash` is an internal hash. It is distinct
+from the host wire hash validated in `grpc_ingest.rs`. The core evidence record
+also has no verified host block number or activation epoch. Choosing a Cordial
+content hash or filling the epoch with zero would produce a slash deploy that
+the host cannot authorize.
 
-During replay, F1R3FLY stores and replays the block-body form as
-`ProcessedSystemDeployProto` containing:
+## Required integration work
 
-```text
-SystemDeployDataProto::slashSystemDeploy {
-  invalidBlockHash,
-  issuerPublicKey
-}
-```
+To enable real slash formatting, carry a verified host wire hash and host DAG
+metadata for each relevant Cordial block across the adapter boundary. Derive
+the target epoch from the host's epoch rules and confirm it matches the current
+proposal epoch. The formatter must then choose an invalid host block, include
+the correct issuer public key, and encode all three protobuf fields. The
+execution request must retain the target epoch through RSpace translation.
 
-The Cordial adapter emits that exact protobuf byte payload.
+Keep the original conflicting Cordial blocks available for proof transport
+and audits. The host slash protobuf contains a block reference, not the full
+conflicting signatures. Tests should cover wire hash mapping, epoch boundaries,
+restarts, and receive-side host authorization before enabling slash emission.
 
-## Formatter API
+## Tiered formatter API
 
-`SlashDeployFormatter<V, P, Id>` exposes:
+`SlashDeployFormatter<V, P, Id>` exposes `to_slash_system_deploys` and
+`to_tiered_slash_deploys(evidence, penalty_ratio_bps)`. The tiered API retains
+adapter metadata in `FormattedSlashEvidence`: the ratio, host bytes, and raw
+conflicting blocks. It does not calculate penalties or depend on PoR mathematics.
 
-```rust
-to_slash_system_deploys(
-    evidence: &[EquivocationEvidence<V, P, Id>],
-) -> anyhow::Result<Vec<Vec<u8>>>
-```
+`F1r3SlashDeployFormatter` accepts `0..=10_000` basis points, where `2500`
+means 25% and `10000` means 100%. It validates this range before invoking the
+same host authorization boundary as the byte API. Both tiers reject nonempty
+evidence without verified host metadata; empty evidence produces no envelopes.
+`to_slash_evidence_envelopes` delegates with `10000`. The trait's default tiered
+method returns an unsupported error, so legacy implementations keep compiling.
 
-For Cordial Miners, `F1r3SlashDeployFormatter` implements the trait for:
+The ratio remains adapter metadata and is not encoded into the host protobuf.
+The envelope type retains space for serialized conflicting blocks, preserving
+their signatures when an authorized formatter is available. See
+[Slashing Integration](./16-slashing-integration.md) for issue #234's scope and
+the prepared request interface.
 
-```rust
-EquivocationEvidence<NodeId, Block, BlockIdentity>
-```
+## Proposer behavior
 
-The formatter is constructed with the issuer public key. This mirrors CBC
-Casper: the slash deploy identifies the invalid block being reported, while the
-issuer key is the validator proposing the system deploy.
-
-## Evidence Mapping
-
-For each evidence record:
-
-1. Require at least two conflicting blocks.
-2. Require every conflicting block to be from the evidence validator.
-3. Sort the conflicting block identities deterministically.
-4. Select the first sorted content hash as the `invalidBlockHash`.
-5. Encode a successful `ProcessedSystemDeployProto` with a slash system deploy.
-
-The deterministic selection keeps repeated formatting stable even if the same
-evidence arrives in a different block order.
-
-## Signature Preservation
-
-The F1R3FLY slash protobuf carries only `invalidBlockHash` and
-`issuerPublicKey`; it does not carry raw conflicting block signatures. For that
-reason, the adapter also exposes an evidence envelope containing:
-
-- the byte-identical F1R3FLY slash system deploy bytes,
-- serialized raw Cordial blocks from the evidence record.
-
-Those raw block bytes preserve the original signatures and payloads for later
-proof transport, auditing, and cryptographic verification. RSpace consumes the
-slash system deploy bytes; proof packaging can consume the retained block bytes.
-
-## Boundary Rules
-
-- The core evidence pool remains pure and has no dependency on F1R3FLY models.
-- The adapter uses real F1R3FLY protobuf/model types for slash deploy encoding.
-- The formatter does not re-sign, re-hash, or mutate the original Cordial
-  blocks.
-- The protobuf encoding is deterministic and covered by byte-for-byte tests.
-
+The proposer asks the formatter for deploys before execution. If evidence is
+present and lacks verified host metadata, formatting returns `SlashFormat` and
+the proposer does not execute, sign, or broadcast that proposed block. Tests
+can supply a test formatter to exercise the proposer's ordering independently
+of production slash authorization.

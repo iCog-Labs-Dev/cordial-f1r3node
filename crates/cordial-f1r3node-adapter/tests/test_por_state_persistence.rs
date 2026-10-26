@@ -1,8 +1,10 @@
 use cordial_f1r3node_adapter::por::{PorStateStore, PorStateStoreError};
 use cordial_miners_core::NodeId;
 use cordial_por::{
-    MissingEntryPolicy, PorConfig, PorError, RatingRecord, ReputationBlockContext, ReputationState,
-    ReputationVector, build_rating_batch, build_reputation_block, replay_reputation_transition,
+    CheckpointReputationBlockContext, MissingEntryPolicy, PorConfig, PorError, RatingRecord,
+    RatingSourceCheckpoint, ReputationBlockContext, ReputationState, ReputationVector,
+    build_checkpoint_reputation_block, build_rating_batch, build_reputation_block,
+    replay_reputation_transition,
 };
 use tempfile::tempdir;
 
@@ -67,6 +69,38 @@ fn audited_state() -> ReputationState {
     state
 }
 
+fn checkpoint_audited_state() -> ReputationState {
+    let config = config();
+    let ratings = ratings();
+    let mut state = initial_state();
+    let previous = ReputationVector {
+        round: state.round(),
+        values: state.reputation_list().entries.clone(),
+    };
+    let list = replay_reputation_transition(&previous, &ratings, ROUND, &config).unwrap();
+    let batch = build_rating_batch(ROUND, ratings.clone(), &config).unwrap();
+    let source = RatingSourceCheckpoint {
+        round: ROUND,
+        finalized_prefix_len: 16,
+        finalized_prefix_hash: [0x31; 32],
+    };
+    let block = build_checkpoint_reputation_block(
+        CheckpointReputationBlockContext {
+            shard_id: SHARD_ID,
+            source,
+            previous_block: None,
+        },
+        &batch,
+        list,
+        &config,
+    )
+    .unwrap();
+    state
+        .apply_checkpoint_reputation_block(SHARD_ID, source, &ratings, block, &config)
+        .unwrap();
+    state
+}
+
 #[test]
 fn fresh_store_has_no_reputation_state() {
     let directory = tempdir().unwrap();
@@ -91,6 +125,18 @@ fn complete_state_and_latest_block_survive_reopen() {
     assert_eq!(restored, expected);
     assert_eq!(restored.latest_block(), expected.latest_block());
     assert!(restored.is_ejected(&node(1)));
+}
+
+#[test]
+fn checkpoint_state_survives_reopen() {
+    let directory = tempdir().unwrap();
+    let store = PorStateStore::open(directory.path()).unwrap();
+    let expected = checkpoint_audited_state();
+    store.persist(&expected).unwrap();
+    drop(store);
+
+    let reopened = PorStateStore::open(directory.path()).unwrap();
+    assert_eq!(reopened.restore().unwrap(), Some(expected));
 }
 
 #[test]

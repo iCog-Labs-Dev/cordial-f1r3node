@@ -38,7 +38,7 @@ If you only want the consensus protocol, depend on `cordial-miners-core`. If you
 ```bash
 git clone  https://github.com/iCog-Labs-Dev/cordial-f1r3node.git
 cd cordial-f1r3node
-cargo +nightly-2025-06-15 test -p cordial-miners-core
+cargo +nightly-2026-02-09 test -p cordial-miners-core
 ```
 
 This builds and tests the standalone core crate. No f1r3node checkout is required for this step.
@@ -48,19 +48,21 @@ This builds and tests the standalone core crate. No f1r3node checkout is require
 You'll need:
 
 - `protoc` on PATH — `sudo apt install protobuf-compiler` (Linux) or `brew install protobuf` (Mac)
-- the Cordial integration f1r3node fork checked out at `../f1r3node` relative to this repo (i.e. they're sibling directories):
+- `f1r3node-rust` checked out at `../f1r3node-rust` relative to this repo:
 
 ```bash
-git clone git@github.com:Nama21yo/f1r3node.git ../f1r3node
+git clone https://github.com/F1R3FLY-io/f1r3node-rust.git ../f1r3node-rust
 ```
 
 Then:
 
 ```bash
-cargo +nightly-2025-06-15 test --workspace
+cargo +nightly-2026-02-09 test --workspace
 ```
 
-First build takes about 5 minutes — it compiles f1r3node's full Rholang interpreter and RSpace tuplespace. Incremental builds are fast.
+The first build compiles the node's Rholang interpreter and RSpace tuplespace. Incremental builds are faster.
+
+For the native-node Docker image and connected four-node cluster, see [docker/README.md](docker/README.md).
 
 If something breaks during build, see the troubleshooting table in [`docs/INTEGRATION_NEXT_STEPS.md`](docs/INTEGRATION_NEXT_STEPS.md).
 
@@ -77,6 +79,12 @@ just test-consensus-flag
 just check-core-boundaries
 just ci
 ```
+
+## Benchmarking
+
+See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for component coverage, small/large
+workloads, real RSpace execution, reproducible baselines, validation commands, and
+the separate multi-node load harness. Live monitoring is tracked separately.
 
 ## Documentation
 

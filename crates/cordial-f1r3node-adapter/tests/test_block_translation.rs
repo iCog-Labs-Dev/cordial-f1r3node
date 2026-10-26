@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use cordial_miners_core::Block;
-use cordial_miners_core::crypto::hash_content;
+use cordial_miners_core::crypto::block_hash;
 use cordial_miners_core::execution::{
     BlockState, Bond as CmBond, CordialBlockPayload, Deploy as CmDeploy, DeploySignatureAlgorithm,
     ProcessedDeploy as CmProcessed, ProcessedSystemDeploy as CmSystem,
@@ -34,7 +34,7 @@ fn build_block(
     };
     Block {
         identity: BlockIdentity {
-            content_hash: hash_content(&content),
+            content_hash: block_hash(&creator, &content),
             creator,
             signature,
         },
@@ -44,6 +44,7 @@ fn build_block(
 
 fn sample_payload() -> CordialBlockPayload {
     CordialBlockPayload {
+        por_authorizations: vec![],
         state: BlockState {
             pre_state_hash: vec![0x11; 32],
             post_state_hash: vec![0x22; 32],
@@ -176,7 +177,7 @@ fn block_to_message_and_back_preserves_payload_and_creator() {
     assert_eq!(original.system_deploys.len(), round.system_deploys.len());
 
     // Recovered content_hash is deterministic from the new content
-    let expected_hash = hash_content(&recovered.content);
+    let expected_hash = block_hash(&recovered.identity.creator, &recovered.content);
     assert_eq!(recovered.identity.content_hash, expected_hash);
 }
 
@@ -197,6 +198,25 @@ fn child_block_roundtrips_predecessor_set() {
     let rec_pred = recovered.content.predecessors.iter().next().unwrap();
     assert_eq!(rec_pred.content_hash, parent_id.content_hash);
     assert_eq!(rec_pred.creator, parent_id.creator);
+}
+
+#[test]
+fn roundtrip_preserves_creator_bound_identity_across_distinct_creators() {
+    let payload = sample_payload();
+    let b1 = build_block(node(1), payload.clone(), HashSet::new(), vec![0x01; 64]);
+    let b2 = build_block(node(2), payload, HashSet::new(), vec![0x02; 64]);
+
+    assert_ne!(b1.identity.content_hash, b2.identity.content_hash);
+
+    let msg1 = block_to_message(&b1, "root").unwrap();
+    let msg2 = block_to_message(&b2, "root").unwrap();
+
+    let rec1 = message_to_block(&msg1).unwrap();
+    let rec2 = message_to_block(&msg2).unwrap();
+
+    assert_eq!(rec1.identity.content_hash, b1.identity.content_hash);
+    assert_eq!(rec2.identity.content_hash, b2.identity.content_hash);
+    assert_ne!(rec1.identity.content_hash, rec2.identity.content_hash);
 }
 
 // ── Predecessor union (f1r3node → blocklace) ─────────────────────────────
@@ -311,10 +331,11 @@ fn invalid_payload_bytes_fails_translation() {
         payload: vec![0xff, 0x00, 0xab], // not a valid CordialBlockPayload
         predecessors: HashSet::new(),
     };
+    let creator = node(1);
     let block = Block {
         identity: BlockIdentity {
-            content_hash: hash_content(&content),
-            creator: node(1),
+            content_hash: block_hash(&creator, &content),
+            creator,
             signature: vec![],
         },
         content,

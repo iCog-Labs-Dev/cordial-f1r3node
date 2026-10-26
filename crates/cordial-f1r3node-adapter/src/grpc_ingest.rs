@@ -15,6 +15,7 @@
 //! 2. **Validator** (pure, deterministic, no side effects):
 //!    - Validates structural integrity (hashes, signatures)
 //!    - Uses `sig_algorithm` from protobuf message
+//!    - Resolves native parent hashes through accepted Cordial identities
 //!    - Rejects invalid blocks with specific error reasons
 //!
 //! 3. **Adapter** (stateful, handles side effects):
@@ -27,11 +28,14 @@
 //! - **Protobuf-first**: Accepts f1r3node wire format directly
 //! - **Algorithm-driven**: Signature verification dispatched from protobuf `sig_algorithm`
 //! - **Fail-fast**: Invalid blocks rejected immediately with clear errors
-//! - **Pure validation**: No database writes, no state mutations in mapper
+//! - **Pure validation**: No database writes or state mutations in mapper;
+//!   accepted identity mappings are maintained separately
 //! - **Type-generic**: `<V, P, Id>` parameters allow future extensibility
 //! - **Trust boundary**: Mapper validates structure; adapter handles semantics
 
-use anyhow::{Result, anyhow};
+use std::collections::{HashMap, HashSet};
+
+use anyhow::{Result, anyhow, bail};
 use cordial_miners_core::Block;
 use cordial_miners_core::crypto::{self, Ed25519Scheme, Secp256k1Scheme, SignatureScheme};
 #[allow(unused)]
@@ -85,13 +89,82 @@ pub struct GrpcBlockMapper<V = (), P = (), Id = ()> {
 /// The wire signature is valid for [`Self::wire_hash`] (`Hf`), not for the
 /// translated block's Cordial content hash (`Hc`). Keeping the attestation
 /// separate prevents downstream Cordial verifiers from interpreting an `Hf`
-/// signature as an `Hc` signature.
+/// signature as an `Hc` signature. The translated identity has an empty
+/// signature and must be inserted only after this wire validation succeeds.
 #[derive(Debug, Clone)]
 pub struct ValidatedF1r3nodeBlock {
     pub block: Block,
     pub wire_hash: [u8; 32],
     pub wire_signature: Vec<u8>,
     pub signature_algorithm: String,
+}
+
+/// Native wire hashes for host blocks already accepted into the Cordial view.
+///
+/// Record a block only after its translated Cordial block has been accepted.
+/// The two hash domains must remain separate: native parent hashes are looked
+/// up here and replaced with complete Cordial identities before content hashing.
+/// Persistent ingress restores this index from the block repository at startup.
+#[derive(Debug, Clone, Default)]
+pub struct NativeBlockIdentityIndex {
+    by_wire_hash: HashMap<[u8; 32], BlockIdentity>,
+    by_cordial_identity: HashMap<BlockIdentity, [u8; 32]>,
+}
+
+impl NativeBlockIdentityIndex {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn get(&self, wire_hash: &[u8; 32]) -> Option<&BlockIdentity> {
+        self.by_wire_hash.get(wire_hash)
+    }
+
+    /// Check a translated block before inserting it into the Cordial view.
+    /// Distinct wire blocks can collapse to one Cordial identity because the
+    /// host-to-Cordial translation omits some host fields.
+    pub fn check_candidate(&self, block: &ValidatedF1r3nodeBlock) -> Result<()> {
+        let identity = &block.block.identity;
+        if !identity.signature.is_empty()
+            || identity.content_hash != crypto::block_hash(&identity.creator, &block.block.content)
+        {
+            bail!("native block has an invalid translated Cordial identity");
+        }
+        if let Some(existing) = self.by_wire_hash.get(&block.wire_hash)
+            && existing != identity
+        {
+            bail!("native wire hash already maps to another Cordial identity");
+        }
+        if let Some(existing) = self.by_cordial_identity.get(identity)
+            && existing != &block.wire_hash
+        {
+            bail!("distinct native wire blocks collapse to one Cordial identity");
+        }
+        Ok(())
+    }
+
+    /// Register a checked block after the caller has accepted it. Call
+    /// [`Self::check_candidate`] before insertion so collisions cannot alter
+    /// the blocklace before they are rejected.
+    pub fn record_accepted(&mut self, block: &ValidatedF1r3nodeBlock) -> Result<()> {
+        self.check_candidate(block)?;
+        let identity = &block.block.identity;
+        self.by_wire_hash.insert(block.wire_hash, identity.clone());
+        self.by_cordial_identity
+            .insert(identity.clone(), block.wire_hash);
+        Ok(())
+    }
+
+    /// Rebuild an accepted mapping from a block that survived verified recovery.
+    pub fn record_recovered(&mut self, wire_hash: [u8; 32], block: &Block) -> Result<()> {
+        let recovered = ValidatedF1r3nodeBlock {
+            block: block.clone(),
+            wire_hash,
+            wire_signature: Vec::new(),
+            signature_algorithm: String::new(),
+        };
+        self.record_accepted(&recovered)
+    }
 }
 
 impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
@@ -111,7 +184,8 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
     /// 2. **Signature validation**: Verifies the signature over that wire hash
     /// 3. **Translation**: Converts the validated message into Cordial's internal
     ///    [`Block`] and independently derives its content hash
-    /// 4. **Parent integrity**: Ensures all parent references are well-formed
+    /// 4. **Parent integrity**: Rejects unresolved native parents; use
+    ///    [`Self::from_protobuf_with_parents`] with accepted mappings for children
     ///
     /// Returns an error if any step fails. Errors are detailed and actionable
     /// for logging and debugging.
@@ -127,6 +201,57 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
     pub fn from_protobuf(
         &self,
         block_msg: &F1r3nodeBlockMessage,
+    ) -> Result<ValidatedF1r3nodeBlock> {
+        self.from_protobuf_with_parents(block_msg, &NativeBlockIdentityIndex::new())
+    }
+
+    /// Translate the unsigned host genesis obtained from the trusted local
+    /// node store. No later block may use this exception to signature checks.
+    pub fn from_trusted_unsigned_genesis(
+        &self,
+        block_msg: &F1r3nodeBlockMessage,
+    ) -> Result<ValidatedF1r3nodeBlock> {
+        if block_msg.body.state.block_number != 0
+            || !block_msg.header.parents_hash_list.is_empty()
+            || !block_msg.justifications.is_empty()
+            || !block_msg.sender.is_empty()
+            || !block_msg.sig.is_empty()
+            || !block_msg.sig_algorithm.is_empty()
+            || block_msg.seq_num != 0
+        {
+            bail!("unsigned native block is not the host genesis shape");
+        }
+        let wire_hash = casper::rust::util::proto_util::hash_block(block_msg);
+        if block_msg.block_hash.as_ref() != wire_hash.as_ref() {
+            bail!("unsigned host genesis has an invalid wire hash");
+        }
+        let adapter_msg = message_from_f1r3node(block_msg)
+            .map_err(|error| anyhow!("Failed to convert host genesis: {error:?}"))?;
+        let block = message_to_block(&adapter_msg)
+            .map_err(|error| anyhow!("Failed to translate host genesis: {error:?}"))?;
+        self.validate_internal_content_hash(&block)?;
+        self.validate_parents(&block)?;
+        if !block.content.predecessors.is_empty() {
+            bail!("unsigned host genesis has predecessors");
+        }
+        Ok(ValidatedF1r3nodeBlock {
+            block,
+            wire_hash: wire_hash
+                .as_ref()
+                .try_into()
+                .map_err(|_| anyhow!("invalid genesis hash length"))?,
+            wire_signature: Vec::new(),
+            signature_algorithm: String::new(),
+        })
+    }
+
+    /// Validate a native block and resolve every native predecessor hash to
+    /// an accepted Cordial identity. Missing parents are errors, not silently
+    /// treated as Cordial content hashes or removed from the blocklace.
+    pub fn from_protobuf_with_parents(
+        &self,
+        block_msg: &F1r3nodeBlockMessage,
+        accepted: &NativeBlockIdentityIndex,
     ) -> Result<ValidatedF1r3nodeBlock> {
         // Validate the original f1r3node model before the intentionally lossy
         // translation drops execution-event details.
@@ -152,7 +277,39 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
             .map_err(|e| anyhow!("Failed to translate BlockMessage to Block: {e:?}"))?;
 
         self.validate_internal_content_hash(&block)?;
-        self.validate_parents(&block)?;
+
+        let mut predecessors = HashSet::with_capacity(block.content.predecessors.len());
+        for parent in &block.content.predecessors {
+            let resolved = accepted.get(&parent.content_hash).ok_or_else(|| {
+                anyhow!(
+                    "native parent {} has no accepted Cordial identity",
+                    hex::encode(parent.content_hash)
+                )
+            })?;
+            let key_len = resolved.creator.0.len();
+            if key_len != 0 && key_len != 33 && key_len != 65 {
+                bail!("accepted native parent has invalid creator key length: {key_len}");
+            }
+            for justification in &block_msg.justifications {
+                if justification.latest_block_hash.as_ref() != parent.content_hash.as_slice() {
+                    continue;
+                }
+                let validator_len = justification.validator.len();
+                if validator_len != 33 && validator_len != 65 {
+                    bail!("native justification has invalid validator key length: {validator_len}");
+                }
+                if key_len != 0 && justification.validator.as_ref() != resolved.creator.0.as_slice()
+                {
+                    bail!(
+                        "native parent {} justification creator does not match accepted block",
+                        hex::encode(parent.content_hash)
+                    );
+                }
+            }
+            predecessors.insert(resolved.clone());
+        }
+        block.content.predecessors = predecessors;
+        block.identity.content_hash = crypto::block_hash(&block.identity.creator, &block.content);
 
         let wire_hash: [u8; 32] = wire_hash
             .as_ref()
@@ -203,7 +360,7 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
 
     /// Verify the adapter message's block_hash matches either the snapshot hash
     /// computed from the `BlockMessage` fields via [`compute_adapter_snapshot_hash`], or the
-    /// internal Cordial `hash_content` (when constructed by `block_to_message`).
+    /// internal Cordial `block_hash` (when constructed by `block_to_message`).
     /// Also verifies that the translated block's internal content_hash is self-consistent.
     fn validate_adapter_content_hash(
         &self,
@@ -219,7 +376,7 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
         let mut declared_hash = [0u8; 32];
         declared_hash.copy_from_slice(&block_msg.block_hash);
 
-        let recomputed_internal = crypto::hash_content(&block.content);
+        let recomputed_internal = crypto::block_hash(&block.identity.creator, &block.content);
         let recomputed_adapter = compute_adapter_snapshot_hash(block_msg);
 
         // Both accepted hashes belong to local adapter messages. Real f1r3node
@@ -232,11 +389,11 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
         }
 
         // Sanity-check that the translated block's internal content_hash
-        // matches what hash_content() produces over the translated content.
+        // matches what block_hash() produces over the translated content.
         if block.identity.content_hash != recomputed_internal {
             return Err(anyhow!(
                 "Internal content hash mismatch: translated identity {:?} \
-                 does not match recomputed hash_content {:?}",
+                 does not match recomputed block_hash {:?}",
                 block.identity.content_hash,
                 recomputed_internal
             ));
@@ -246,7 +403,7 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
     }
 
     fn validate_internal_content_hash(&self, block: &Block) -> Result<()> {
-        let recomputed = crypto::hash_content(&block.content);
+        let recomputed = crypto::block_hash(&block.identity.creator, &block.content);
         if block.identity.content_hash != recomputed {
             return Err(anyhow!(
                 "Content hash mismatch: translated identity {:?} does not match recomputed {recomputed:?}",
@@ -325,9 +482,9 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
 
     /// Verify that all parent references are structurally valid.
     ///
-    /// This is a **pure, stateless, byte-level** check only. Parent *existence* is not
-    /// verified here — that is a semantic concern belonging to the consensus layer which
-    /// has access to the full blocklace. No external lookups or state mutations occur.
+    /// This is a **pure, stateless, byte-level** check only. Native parent
+    /// existence is checked separately against the accepted identity index in
+    /// `from_protobuf_with_parents`. No state mutations occur here.
     ///
     /// Checks performed per predecessor [`BlockIdentity`]:
     /// - `content_hash`: statically `[u8; 32]` — no runtime check needed.

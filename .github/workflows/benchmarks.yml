@@ -28,11 +28,12 @@ jobs:
         with:
           path: blocklace
 
-      - name: Checkout f1r3node
+      - name: Checkout f1r3node-rust
         uses: actions/checkout@v4
         with:
-          repository: F1R3FLY-io/f1r3node
-          path: f1r3node
+          repository: F1R3FLY-io/f1r3node-rust
+          ref: 525f8e8b5419bac7b36a354c2325ef61ed73201f
+          path: f1r3node-rust
 
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -52,12 +53,12 @@ jobs:
 
       - name: Compile benchmarks
         working-directory: blocklace
-        run: cargo bench -p cordial-miners-core --no-run
+        run: cargo bench -p cordial-miners-core -p cordial-por -p cordial-app-runtime --no-run
 
       - name: Run cordial-miners-core benchmarks
         working-directory: blocklace
         run: |
-          cargo bench -p cordial-miners-core 2>&1 | tee bench-miners-core.txt
+          python3 scripts/benchmark.py --package cordial-miners-core --package cordial-por --package cordial-app-runtime
 
       - name: Upload benchmark results
         if: always()
@@ -65,7 +66,7 @@ jobs:
         with:
           name: criterion-miners-core-${{ github.sha }}
           path: |
-            blocklace/bench-miners-core.txt
+            blocklace/target/benchmark-runs/
             blocklace/target/criterion/
           retention-days: 90
           if-no-files-found: warn
@@ -81,11 +82,12 @@ jobs:
         with:
           path: blocklace
 
-      - name: Checkout f1r3node
+      - name: Checkout f1r3node-rust
         uses: actions/checkout@v4
         with:
-          repository: F1R3FLY-io/f1r3node
-          path: f1r3node
+          repository: F1R3FLY-io/f1r3node-rust
+          ref: 525f8e8b5419bac7b36a354c2325ef61ed73201f
+          path: f1r3node-rust
 
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -110,7 +112,7 @@ jobs:
       - name: Run cordial-f1r3node-adapter benchmarks
         working-directory: blocklace
         run: |
-          cargo bench -p cordial-f1r3node-adapter 2>&1 | tee bench-adapter.txt
+          python3 scripts/benchmark.py --package cordial-f1r3node-adapter
 
       - name: Upload benchmark results
         if: always()
@@ -118,7 +120,7 @@ jobs:
         with:
           name: criterion-adapter-${{ github.sha }}
           path: |
-            blocklace/bench-adapter.txt
+            blocklace/target/benchmark-runs/
             blocklace/target/criterion/
           retention-days: 90
           if-no-files-found: warn

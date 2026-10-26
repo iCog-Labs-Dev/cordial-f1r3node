@@ -11,7 +11,7 @@ use std::{collections::BTreeMap, fmt};
 use cordial_miners_core::NodeId;
 use cordial_por::{
     PorConfig, PorError, ReputationBlock, ReputationState, ReputationVector, reputation_block_hash,
-    verify_reputation_transition,
+    verify_reputation_transition_with_penalties,
 };
 use thiserror::Error;
 
@@ -389,11 +389,13 @@ impl<'a> PorCheckpointCollector<'a> {
     }
 
     fn audit(&self, block: &ReputationBlock) -> Result<(), PorError> {
+        self.completed
+            .validate_complete_authorizations(self.shard_id)?;
         let previous = ReputationVector {
             round: self.state.round(),
             values: self.state.reputation_list().entries.clone(),
         };
-        verify_reputation_transition(
+        verify_reputation_transition_with_penalties(
             &previous,
             &self.completed.batch().ratings,
             block,
@@ -403,6 +405,7 @@ impl<'a> PorCheckpointCollector<'a> {
                 previous_block: self.state.latest_block(),
             },
             self.config,
+            self.completed.penalties(),
         )
     }
 }

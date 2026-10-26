@@ -83,6 +83,7 @@ fn sample_grpc_proto(sig_byte: u8) -> DeployDataProto {
         shard_id: "root".to_string(),
         language: "rholang".to_string(),
         expiration_timestamp: 0,
+        parameters: Vec::new(),
     }
 }
 

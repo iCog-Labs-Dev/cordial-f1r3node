@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use casper::rust::util::construct_deploy;
 use clap::Parser;
+use crypto::rust::private_key::PrivateKey;
 use models::casper::v1::{deploy_response, deploy_service_client::DeployServiceClient};
 use models::rust::casper::protocol::casper_message::DeployData as ModelDeployData;
 use tonic::transport::Endpoint;
@@ -29,6 +30,9 @@ struct Args {
 
     #[arg(long, default_value_t = 0)]
     valid_after_block_number: i64,
+
+    #[arg(long)]
+    private_key_env: String,
 }
 
 #[tokio::main]
@@ -56,11 +60,21 @@ async fn main() -> Result<()> {
         valid_after_block_number = light.block_number;
     }
 
+    let key_value = std::env::var(&args.private_key_env).with_context(|| {
+        format!(
+            "private key environment variable {} is not set",
+            args.private_key_env
+        )
+    })?;
+    let key_bytes = hex::decode(key_value).context("private key is not valid hex")?;
+    anyhow::ensure!(key_bytes.len() == 32, "private key must be 32 bytes");
+    let private_key = PrivateKey::from_bytes(&key_bytes);
+
     let signed = construct_deploy::source_deploy_now_full(
         args.term,
         Some(args.phlo_limit),
         Some(args.phlo_price),
-        None,
+        Some(private_key),
         Some(valid_after_block_number),
         Some(args.shard_id.clone()),
     )

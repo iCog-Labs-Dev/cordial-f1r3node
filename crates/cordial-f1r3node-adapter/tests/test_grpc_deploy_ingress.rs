@@ -2,8 +2,8 @@ use cordial_f1r3node_adapter::casper_adapter::DeployError;
 use cordial_f1r3node_adapter::grpc_deploy_ingress::{AdmitFn, GrpcDeployIngressHandler};
 use cordial_f1r3node_adapter::live_deploy_ingress::LiveDeployIngress;
 use either::Either;
-use models::casper::DeployDataProto;
 use models::casper::v1::deploy_service_server::DeployService;
+use models::casper::{DeployDataProto, PendingDeploysQuery};
 
 fn sample_proto(sig_byte: u8) -> DeployDataProto {
     DeployDataProto {
@@ -18,6 +18,7 @@ fn sample_proto(sig_byte: u8) -> DeployDataProto {
         shard_id: "root".to_string(),
         language: "rholang".to_string(),
         expiration_timestamp: 0,
+        parameters: Vec::new(),
     }
 }
 
@@ -142,4 +143,14 @@ async fn grpc_direct_handler_status_returns_node_info() {
     let response = handler.status(tonic::Request::new(())).await.unwrap();
 
     assert!(response.into_inner().message.is_some());
+}
+
+#[tokio::test]
+async fn grpc_direct_handler_rejects_unsupported_pending_deploy_query() {
+    let handler = GrpcDeployIngressHandler::new(LiveDeployIngress::new(), accepting_admit_fn());
+    let result = handler
+        .get_pending_deploys(tonic::Request::new(PendingDeploysQuery::default()))
+        .await;
+
+    assert_eq!(result.unwrap_err().code(), tonic::Code::Unimplemented);
 }

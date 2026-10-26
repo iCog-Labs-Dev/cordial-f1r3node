@@ -5,23 +5,28 @@ use cordial_miners_core::{
 
 use crate::{
     commitments::{
-        config_commitment, penalty_events_commitment, rating_batch_commitment,
-        reputation_block_hash, reputation_list_commitment, validate_reputation_entries,
+        checkpoint_rating_batch_commitment, config_commitment, penalty_events_commitment,
+        rating_batch_commitment, reputation_block_hash, reputation_list_commitment,
+        validate_reputation_entries,
     },
     config::PorConfig,
     error::PorError,
-    ratings::rating_round_from_finalized_wave,
+    ratings::{RatingSourceCheckpoint, rating_round_from_finalized_wave},
     types::{RatingBatch, ReputationBlock, ReputationBlockHeader, ReputationEntry, ReputationList},
 };
 
-/// Canonical reputation-block format emitted by this crate.
+/// Wave-based reputation block with penalty commitments.
 pub const REPUTATION_BLOCK_VERSION: u16 = 2;
+/// Checkpoint-bound reputation-block format.
+pub const CHECKPOINT_REPUTATION_BLOCK_VERSION: u16 = 3;
 
 /// Fixed prefix identifying a canonical reputation-block wire envelope.
 pub const POR_REPUTATION_BLOCK_MAGIC: &[u8; 17] = b"cordial-por-block";
 
-/// Canonical reputation-block wire format emitted by this crate.
+/// Wave-based reputation-block wire format.
 pub const POR_REPUTATION_BLOCK_WIRE_VERSION: u16 = 2;
+/// Checkpoint-bound reputation-block wire format.
+pub const POR_CHECKPOINT_REPUTATION_BLOCK_WIRE_VERSION: u16 = 3;
 
 /// Maximum accepted encoded reputation-block envelope size (64 MiB).
 pub const MAX_REPUTATION_BLOCK_WIRE_LEN: usize = 64 * 1024 * 1024;
@@ -33,6 +38,8 @@ pub const MAX_REPUTATION_BLOCK_ENTRIES: usize = 1_000_000;
 pub const MAX_REPUTATION_BLOCK_NODE_ID_LEN: usize = 4 * 1024;
 
 const REPUTATION_BLOCK_CHECKSUM_DOMAIN: &[u8] = b"cordial-por:reputation-block-envelope:v2";
+const CHECKPOINT_REPUTATION_BLOCK_CHECKSUM_DOMAIN: &[u8] =
+    b"cordial-por:reputation-block-envelope:v3";
 const CHECKSUM_LEN: usize = 32;
 const FIXED_ENVELOPE_LEN: usize = POR_REPUTATION_BLOCK_MAGIC.len() + 2 + 8 + CHECKSUM_LEN;
 const MAX_REPUTATION_BLOCK_PAYLOAD_LEN: usize = MAX_REPUTATION_BLOCK_WIRE_LEN - FIXED_ENVELOPE_LEN;
@@ -45,6 +52,14 @@ pub const MAX_REPUTATION_BLOCK_SHARD_ID_LEN: usize = 256;
 pub struct ReputationBlockContext<'a> {
     pub shard_id: &'a [u8],
     pub source_finalized_wave: u64,
+    pub previous_block: Option<&'a ReputationBlock>,
+}
+
+/// Finalized-prefix context for a checkpoint-driven reputation block.
+#[derive(Debug, Clone, Copy)]
+pub struct CheckpointReputationBlockContext<'a> {
+    pub shard_id: &'a [u8],
+    pub source: RatingSourceCheckpoint,
     pub previous_block: Option<&'a ReputationBlock>,
 }
 
@@ -73,6 +88,7 @@ pub fn build_reputation_block_with_penalties(
     penalties: Option<&crate::types::ReputationPenaltyEvents>,
 ) -> Result<ReputationBlock, PorError> {
     config.validate()?;
+    crate::evidence::validate_penalty_context(penalties, context)?;
     validate_shard_id(context.shard_id)?;
     let round = rating_round_from_finalized_wave(context.source_finalized_wave)?;
     if ratings.round != round {
@@ -103,6 +119,7 @@ pub fn build_reputation_block_with_penalties(
             version: REPUTATION_BLOCK_VERSION,
             shard_id: context.shard_id.to_vec(),
             source_finalized_wave: context.source_finalized_wave,
+            source_checkpoint: None,
             round,
             previous_reputation_hash,
             config_hash,
@@ -117,20 +134,116 @@ pub fn build_reputation_block_with_penalties(
     Ok(block)
 }
 
+/// Build a v3 block whose round is identified by a finalized-prefix checkpoint.
+pub fn build_checkpoint_reputation_block(
+    context: CheckpointReputationBlockContext<'_>,
+    ratings: &RatingBatch,
+    reputation_list: ReputationList,
+    config: &PorConfig,
+) -> Result<ReputationBlock, PorError> {
+    build_checkpoint_reputation_block_with_penalties(
+        context,
+        ratings,
+        reputation_list,
+        config,
+        None,
+    )
+}
+
+/// Build a checkpoint block with authenticated, source-bound penalty events.
+pub fn build_checkpoint_reputation_block_with_penalties(
+    context: CheckpointReputationBlockContext<'_>,
+    ratings: &RatingBatch,
+    reputation_list: ReputationList,
+    config: &PorConfig,
+    penalties: Option<&crate::ReputationPenaltyEvents>,
+) -> Result<ReputationBlock, PorError> {
+    config.validate()?;
+    validate_shard_id(context.shard_id)?;
+    context.source.validate()?;
+    crate::evidence::validate_checkpoint_penalty_context(penalties, context)?;
+    let round = context.source.round;
+    if ratings.round != round {
+        return Err(PorError::InvalidRatingRound);
+    }
+    if reputation_list.round != round {
+        return Err(PorError::InvalidReputationBlockRound);
+    }
+    let previous_reputation_hash =
+        previous_reputation_hash(context.shard_id, round, context.previous_block)?;
+    let block = ReputationBlock {
+        header: ReputationBlockHeader {
+            version: CHECKPOINT_REPUTATION_BLOCK_VERSION,
+            shard_id: context.shard_id.to_vec(),
+            source_finalized_wave: 0,
+            source_checkpoint: Some(context.source),
+            round,
+            previous_reputation_hash,
+            config_hash: config_commitment(config),
+            ratings_hash: checkpoint_rating_batch_commitment(ratings, &context.source, config)?,
+            penalties_hash: penalty_events_commitment(round, penalties)?,
+            reputation_root: reputation_list_commitment(&reputation_list)?,
+        },
+        reputation_list,
+    };
+    validate_reputation_block(&block)?;
+    Ok(block)
+}
+
+fn previous_reputation_hash(
+    shard_id: &[u8],
+    round: u64,
+    previous_block: Option<&ReputationBlock>,
+) -> Result<Option<[u8; 32]>, PorError> {
+    match previous_block {
+        Some(previous) => {
+            if previous.header.shard_id != shard_id {
+                return Err(PorError::PreviousReputationBlockShardMismatch);
+            }
+            if previous.header.round.checked_add(1) != Some(round) {
+                return Err(PorError::InvalidPreviousReputationBlockRound);
+            }
+            Ok(Some(reputation_block_hash(previous)?))
+        }
+        None => Ok(None),
+    }
+}
+
 /// Validate the self-contained structural commitments of a reputation block.
 ///
 /// Full audit additionally requires the expected shard, finalized wave,
-/// previous block, rating batch, previous reputation, and protocol config;
-/// [`crate::verify_reputation_transition`] performs those checks.
+/// previous block, rating batch, previous reputation, and protocol config.
+/// [`crate::verify_reputation_transition`] performs those checks for v1 blocks.
 pub fn validate_reputation_block(block: &ReputationBlock) -> Result<(), PorError> {
     let header = &block.header;
-    if header.version != REPUTATION_BLOCK_VERSION {
+    if header.version != REPUTATION_BLOCK_VERSION
+        && header.version != CHECKPOINT_REPUTATION_BLOCK_VERSION
+    {
         return Err(PorError::UnsupportedReputationBlockVersion(header.version));
     }
     validate_shard_id(&header.shard_id)?;
-
-    if rating_round_from_finalized_wave(header.source_finalized_wave) != Ok(header.round) {
-        return Err(PorError::InvalidReputationBlockSourceWave);
+    match header.version {
+        REPUTATION_BLOCK_VERSION => {
+            if header.source_checkpoint.is_some()
+                || rating_round_from_finalized_wave(header.source_finalized_wave)
+                    != Ok(header.round)
+            {
+                return Err(PorError::InvalidReputationBlockSourceWave);
+            }
+        }
+        CHECKPOINT_REPUTATION_BLOCK_VERSION => {
+            if header.source_finalized_wave != 0
+                || header.source_checkpoint.map(|source| source.round) != Some(header.round)
+            {
+                return Err(PorError::InvalidReputationBlockSourceCheckpoint);
+            }
+            header
+                .source_checkpoint
+                .expect("checkpoint source was checked")
+                .validate()
+                .map_err(|_| PorError::InvalidReputationBlockSourceCheckpoint)?;
+        }
+        _ => return Err(PorError::UnsupportedReputationBlockVersion(header.version)),
     }
     if header.round != block.reputation_list.round {
         return Err(PorError::InvalidReputationBlockRound);
@@ -154,17 +267,17 @@ fn validate_shard_id(shard_id: &[u8]) -> Result<(), PorError> {
     Ok(())
 }
 
-/// Encode a reputation block into the canonical v2 publication envelope.
+/// Encode a reputation block into its versioned publication envelope.
 pub fn encode_reputation_block(block: &ReputationBlock) -> Result<Vec<u8>, PorError> {
     let payload = encode_reputation_block_payload(block)?;
+    let wire_version = block.header.version;
     let payload_len =
         u64::try_from(payload.len()).map_err(|_| PorError::ReputationBlockWireTooLarge)?;
-    let checksum =
-        reputation_block_checksum(POR_REPUTATION_BLOCK_WIRE_VERSION, payload_len, &payload);
+    let checksum = reputation_block_checksum(wire_version, payload_len, &payload);
 
     let mut encoded = Vec::with_capacity(FIXED_ENVELOPE_LEN + payload.len());
     encoded.extend_from_slice(POR_REPUTATION_BLOCK_MAGIC);
-    encoded.extend_from_slice(&POR_REPUTATION_BLOCK_WIRE_VERSION.to_be_bytes());
+    encoded.extend_from_slice(&wire_version.to_be_bytes());
     encoded.extend_from_slice(&payload_len.to_be_bytes());
     encoded.extend_from_slice(&payload);
     encoded.extend_from_slice(&checksum);
@@ -185,7 +298,9 @@ pub fn decode_reputation_block(bytes: &[u8]) -> Result<ReputationBlock, PorError
         return Err(PorError::MalformedReputationBlockWire);
     }
     let wire_version = envelope.read_u16()?;
-    if wire_version != POR_REPUTATION_BLOCK_WIRE_VERSION {
+    if wire_version != POR_REPUTATION_BLOCK_WIRE_VERSION
+        && wire_version != POR_CHECKPOINT_REPUTATION_BLOCK_WIRE_VERSION
+    {
         return Err(PorError::UnsupportedReputationBlockWireVersion(
             wire_version,
         ));
@@ -207,7 +322,11 @@ pub fn decode_reputation_block(bytes: &[u8]) -> Result<ReputationBlock, PorError
         return Err(PorError::ReputationBlockWireChecksumMismatch);
     }
 
-    decode_reputation_block_payload(payload)
+    let block = decode_reputation_block_payload(payload)?;
+    if block.header.version != wire_version {
+        return Err(PorError::MalformedReputationBlockWire);
+    }
+    Ok(block)
 }
 
 pub(crate) fn encode_reputation_block_payload(
@@ -220,6 +339,10 @@ pub(crate) fn encode_reputation_block_payload(
     put_bytes(&mut output, &header.shard_id)?;
     put_u64(&mut output, header.source_finalized_wave)?;
     put_u64(&mut output, header.round)?;
+    if let Some(source) = header.source_checkpoint {
+        put_u64(&mut output, source.finalized_prefix_len)?;
+        put_fixed(&mut output, &source.finalized_prefix_hash)?;
+    }
     match header.previous_reputation_hash {
         Some(hash) => {
             put_byte(&mut output, 1)?;
@@ -245,6 +368,15 @@ pub(crate) fn decode_reputation_block_payload(bytes: &[u8]) -> Result<Reputation
     let shard_id = decoder.read_bytes(MAX_REPUTATION_BLOCK_SHARD_ID_LEN)?;
     let source_finalized_wave = decoder.read_u64()?;
     let round = decoder.read_u64()?;
+    let source_checkpoint = match version {
+        REPUTATION_BLOCK_VERSION => None,
+        CHECKPOINT_REPUTATION_BLOCK_VERSION => Some(RatingSourceCheckpoint {
+            round,
+            finalized_prefix_len: decoder.read_u64()?,
+            finalized_prefix_hash: decoder.read_array::<32>()?,
+        }),
+        _ => return Err(PorError::UnsupportedReputationBlockVersion(version)),
+    };
     let previous_reputation_hash = match decoder.read_discriminant()? {
         false => None,
         true => Some(decoder.read_array::<32>()?),
@@ -254,6 +386,7 @@ pub(crate) fn decode_reputation_block_payload(bytes: &[u8]) -> Result<Reputation
             version,
             shard_id,
             source_finalized_wave,
+            source_checkpoint,
             round,
             previous_reputation_hash,
             config_hash: decoder.read_array::<32>()?,
@@ -351,14 +484,14 @@ fn put_fixed(output: &mut Vec<u8>, bytes: &[u8]) -> Result<(), PorError> {
 }
 
 fn reputation_block_checksum(version: u16, payload_len: u64, payload: &[u8]) -> [u8; 32] {
-    let mut checksum_input = Vec::with_capacity(
-        REPUTATION_BLOCK_CHECKSUM_DOMAIN.len()
-            + POR_REPUTATION_BLOCK_MAGIC.len()
-            + 2
-            + 8
-            + payload.len(),
-    );
-    checksum_input.extend_from_slice(REPUTATION_BLOCK_CHECKSUM_DOMAIN);
+    let domain = match version {
+        POR_REPUTATION_BLOCK_WIRE_VERSION => REPUTATION_BLOCK_CHECKSUM_DOMAIN,
+        POR_CHECKPOINT_REPUTATION_BLOCK_WIRE_VERSION => CHECKPOINT_REPUTATION_BLOCK_CHECKSUM_DOMAIN,
+        _ => unreachable!("wire version was validated"),
+    };
+    let mut checksum_input =
+        Vec::with_capacity(domain.len() + POR_REPUTATION_BLOCK_MAGIC.len() + 2 + 8 + payload.len());
+    checksum_input.extend_from_slice(domain);
     checksum_input.extend_from_slice(POR_REPUTATION_BLOCK_MAGIC);
     checksum_input.extend_from_slice(&version.to_be_bytes());
     checksum_input.extend_from_slice(&payload_len.to_be_bytes());

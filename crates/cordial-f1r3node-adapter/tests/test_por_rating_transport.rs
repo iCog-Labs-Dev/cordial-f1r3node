@@ -6,16 +6,20 @@ use cordial_f1r3node_adapter::{
     por_rating_collector::{BlockProductionRatingCollector, PorRatingCollectorError},
     por_rating_transport::{
         PorRatingTransportError, RatingEnvelopeBroadcaster, broadcast_rating_batch,
-        encode_rating_batch, receive_rating_envelope,
+        encode_checkpoint_rating_batch, encode_rating_batch, receive_rating_envelope,
     },
-    por_rating_wire::{BlockProductionRatingEnvelopeV1, PorRatingWireError},
-    por_ratings::{build_finalized_block_production_rating_batch, rating_signing_hash},
+    por_rating_wire::{
+        BlockProductionRatingEnvelopeV1, BlockProductionRatingEnvelopeV2, PorRatingWireError,
+    },
+    por_ratings::{
+        build_finalized_block_production_rating_batch, rating_signing_hash, sign_checkpoint_rating,
+    },
 };
 use cordial_miners_core::{
     Block, BlockContent, BlockIdentity, Blocklace, NodeId,
     crypto::{CryptoVerifier, Secp256k1Scheme, SignatureScheme},
 };
-use cordial_por::{PorConfig, RatingBatch, ReputationState};
+use cordial_por::{PorConfig, RatingBatch, RatingSourceCheckpoint, ReputationState};
 use k256::ecdsa::SigningKey;
 
 const WAVELENGTH: u64 = 3;
@@ -166,6 +170,63 @@ fn collector<'a>(fixture: &'a Fixture) -> BlockProductionRatingCollector<'a> {
         &fixture.config,
     )
     .unwrap()
+}
+
+fn checkpoint_source() -> RatingSourceCheckpoint {
+    RatingSourceCheckpoint {
+        round: 1,
+        finalized_prefix_len: 16,
+        finalized_prefix_hash: [7; 32],
+    }
+}
+
+#[test]
+fn checkpoint_batch_encodes_each_source_bound_rating_in_order() {
+    let fixture = fixture();
+    let source = checkpoint_source();
+    let mut batch = local_batch(&fixture);
+    for rating in &mut batch.ratings {
+        rating.signature.clear();
+        *rating = sign_checkpoint_rating(rating.clone(), &source, &fixture.config, &private_key(9))
+            .unwrap();
+    }
+
+    let encoded = encode_checkpoint_rating_batch(source, &batch).unwrap();
+    assert_eq!(encoded.len(), batch.ratings.len());
+    for (bytes, rating) in encoded.iter().zip(&batch.ratings) {
+        let decoded = BlockProductionRatingEnvelopeV2::decode(bytes).unwrap();
+        assert_eq!(decoded.source(), source);
+        assert_eq!(decoded.rating(), rating);
+    }
+}
+
+#[test]
+fn checkpoint_batch_rejects_invalid_source_and_round_even_when_empty() {
+    let source = checkpoint_source();
+    let batch = RatingBatch {
+        round: source.round,
+        ratings: Vec::new(),
+    };
+    let invalid_source = RatingSourceCheckpoint {
+        finalized_prefix_len: 15,
+        ..source
+    };
+    assert_eq!(
+        encode_checkpoint_rating_batch(invalid_source, &batch),
+        Err(PorRatingTransportError::Wire(
+            PorRatingWireError::InvalidSourceCheckpoint
+        ))
+    );
+    assert_eq!(
+        encode_checkpoint_rating_batch(
+            source,
+            &RatingBatch {
+                round: source.round + 1,
+                ratings: Vec::new(),
+            },
+        ),
+        Err(PorRatingTransportError::InvalidCheckpointBatchRound)
+    );
 }
 
 #[test]

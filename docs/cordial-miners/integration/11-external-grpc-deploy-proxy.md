@@ -42,7 +42,7 @@ inside the node itself.
 
 ## Run
 
-Start a local `f1r3node` first so the proxy has a real upstream deploy
+Start a local `f1r3node-rust` first so the proxy has a real upstream deploy
 service to forward into.
 
 Then start the proxy:
@@ -58,17 +58,20 @@ proxy forwards those deploys to the real node on `127.0.0.1:40401`.
 
 ## Submit a live deploy
 
-Use the deploy submitter binary to send a valid secp256k1-signed deploy
-through the proxy:
+Use the standalone development account from the sibling checkout's fixture.
+The submitter reads its key from an environment variable and never prints it:
 
 ```bash
+export STANDALONE_PRIVATE_KEY="$(sed -n 's/^STANDALONE_PRIVATE_KEY=//p' ../f1r3node-rust/docker/.env.example)"
 cargo run -p cordial-f1r3node-adapter --bin submit_live_deploy -- \
-  --grpc-url http://127.0.0.1:40411
+  --grpc-url http://127.0.0.1:40411 \
+  --private-key-env STANDALONE_PRIVATE_KEY
 ```
 
-By default this uses the same canonical secp256k1 deploy construction path as
-`f1r3node`, so the upstream node can accept it as a real deploy rather than
-rejecting it as a malformed test payload.
+The same command can submit directly to the standalone node with
+`--grpc-url http://127.0.0.1:40401`. The key must belong to an account funded
+in that node's genesis. The submitter constructs and signs the deploy with the
+same Casper helper used by `f1r3node-rust`.
 
 Useful optional flags:
 
@@ -83,6 +86,7 @@ Example:
 ```bash
 cargo run -p cordial-f1r3node-adapter --bin submit_live_deploy -- \
   --grpc-url http://127.0.0.1:40411 \
+  --private-key-env STANDALONE_PRIVATE_KEY \
   --term '@0!("hello cordial")'
 ```
 
@@ -102,6 +106,31 @@ This proves:
 - the proxy observed the `doDeploy` request
 - the proxy forwarded the request upstream
 - the upstream `f1r3node` accepted the deploy
+
+Acceptance does not prove execution or canonical finalization. Copy the
+returned deploy ID and check both endpoints:
+
+```bash
+DEPLOY_ID="paste-the-hex-id-printed-by-submit_live_deploy"
+curl -fsS "http://127.0.0.1:40403/api/deploy/$DEPLOY_ID" | jq '{blockHash, blockNumber, errored, cost}'
+curl -fsS "http://127.0.0.1:40403/api/deploy-finalization-status/$DEPLOY_ID" | jq .
+```
+
+Wait for `state` to become `Finalized`. A `Failed` state can follow a
+successful `doDeploy` response when the account cannot pay. To check the
+native mirror, run `live_native_mirror --once` with the same `--data-dir` used
+before the deploy, then run it again to verify recovery. On 2026-10-17, a
+funded standalone deploy sent through direct gRPC executed with cost 200 in
+block 127 and reached canonical `Finalized` status. The mirror persisted that
+block and its deploy signature, then recovered them after restart.
+
+The proxy path was checked on the same node on 2026-10-17. A funded deploy
+submitted to `127.0.0.1:40411` executed with cost 197 in block 161 and
+reached canonical `Finalized` status. The native mirror persisted the block's
+hash mapping and deploy signature and retained both after restart. The four
+`test_live_deploy_proxy` tests pass, including the observer and forwarding
+test. The live proxy currently has no endpoint to inspect its in-memory
+observed-deploy list.
 
 ## Why this matters
 

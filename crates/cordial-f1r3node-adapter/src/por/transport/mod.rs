@@ -5,16 +5,23 @@
 //! checkpoint-attestation policy, transition replay, or collection deadline.
 
 pub mod channel;
+pub mod file_exchange;
+pub mod outbox;
 pub mod reputation_block;
 pub mod reputation_block_channel;
 pub mod wire;
 
 use std::fmt;
 
-use cordial_por::RatingBatch;
+use cordial_por::{RatingBatch, RatingSourceCheckpoint};
 
-use self::wire::{BlockProductionRatingEnvelopeV1, PorRatingWireError};
-use super::collector::{BlockProductionRatingCollector, PorRatingCollectorError};
+use self::wire::{
+    BlockProductionRatingEnvelopeV1, BlockProductionRatingEnvelopeV2, PorRatingWireError,
+};
+use super::collector::{
+    BlockProductionRatingCollector, CheckpointBlockProductionRatingCollector,
+    PorRatingCollectorError,
+};
 
 /// Synchronous delivery boundary for one already-encoded rating envelope.
 pub trait RatingEnvelopeBroadcaster {
@@ -51,6 +58,7 @@ where
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PorRatingTransportError {
     InvalidBatchRound,
+    InvalidCheckpointBatchRound,
     Wire(PorRatingWireError),
     Collector(PorRatingCollectorError),
     Broadcast { delivered: usize, message: String },
@@ -63,6 +71,9 @@ impl fmt::Display for PorRatingTransportError {
                 f,
                 "rating batch round does not immediately follow the finalized wave"
             ),
+            Self::InvalidCheckpointBatchRound => {
+                write!(f, "rating batch round does not match its source checkpoint")
+            }
             Self::Wire(error) => error.fmt(f),
             Self::Collector(error) => error.fmt(f),
             Self::Broadcast { delivered, message } => write!(
@@ -78,7 +89,9 @@ impl std::error::Error for PorRatingTransportError {
         match self {
             Self::Wire(error) => Some(error),
             Self::Collector(error) => Some(error),
-            Self::InvalidBatchRound | Self::Broadcast { .. } => None,
+            Self::InvalidBatchRound
+            | Self::InvalidCheckpointBatchRound
+            | Self::Broadcast { .. } => None,
         }
     }
 }
@@ -112,6 +125,25 @@ pub fn encode_rating_batch(
         .collect()
 }
 
+/// Encode a checkpoint batch before any transport side effect occurs.
+pub fn encode_checkpoint_rating_batch(
+    source: RatingSourceCheckpoint,
+    batch: &RatingBatch,
+) -> Result<Vec<Vec<u8>>, PorRatingTransportError> {
+    source
+        .validate()
+        .map_err(|_| PorRatingWireError::InvalidSourceCheckpoint)?;
+    if batch.round != source.round {
+        return Err(PorRatingTransportError::InvalidCheckpointBatchRound);
+    }
+    batch
+        .ratings
+        .iter()
+        .cloned()
+        .map(|rating| Ok(BlockProductionRatingEnvelopeV2::new(source, rating)?.encode()))
+        .collect()
+}
+
 /// Pre-encode and broadcast all ratings in batch order.
 ///
 /// Encoding is atomic: no envelope is sent unless the complete batch can be
@@ -139,6 +171,16 @@ pub fn receive_rating_envelope(
     encoded: &[u8],
 ) -> Result<(), PorRatingTransportError> {
     let envelope = BlockProductionRatingEnvelopeV1::decode(encoded)?;
+    collector.insert_envelope(envelope)?;
+    Ok(())
+}
+
+/// Decode a v2 envelope and admit it against one finalized source checkpoint.
+pub fn receive_checkpoint_rating_envelope(
+    collector: &mut CheckpointBlockProductionRatingCollector<'_>,
+    encoded: &[u8],
+) -> Result<(), PorRatingTransportError> {
+    let envelope = BlockProductionRatingEnvelopeV2::decode(encoded)?;
     collector.insert_envelope(envelope)?;
     Ok(())
 }

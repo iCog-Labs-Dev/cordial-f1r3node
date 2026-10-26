@@ -34,18 +34,18 @@ blocklace's own consensus rules.
 
 ### Block-hash format compatibility
 
-`cordial-meta` stores `block_hash_format_version = 2`. Version 2 hashes a
-predecessor by its signature-independent `(content_hash, creator)` consensus
-identity. Earlier, unversioned stores included predecessor signature bytes in
-the descendant hash, so their non-genesis signatures authenticate a different
-hash and cannot be replayed safely under version 2.
+`cordial-meta` stores `block_hash_format_version = 3`. Version 3 binds native
+block hashes to their creator via domain-separated `cordial-block-hash-v3` with
+a length-prefixed creator `NodeId` ahead of the block content. Earlier version 2
+stores hashed predecessor blocks by `(content_hash, creator)` but did not bind
+the block's own creator into its native hash.
 
-Opening a non-empty store without the version marker, or with an unsupported
-version, fails with `RepoError::IncompatibleStorage`. The operator must remove
-and resynchronize that adapter-level blocklace store. Recovery deliberately
-fails before replay instead of silently skipping legacy blocks and exposing a
-partial DAG. Empty stores are initialized with the current marker, and current
-versioned stores reopen normally.
+Opening a non-empty store without the version marker, or with an older version
+(such as version 2), fails closed with `RepoError::IncompatibleStorage`. The
+operator must remove and resynchronize that adapter-level blocklace store.
+Recovery deliberately fails before replay instead of silently skipping legacy
+blocks and exposing an incompatible or partial DAG. Empty stores are initialized
+with the current marker (version 3), and current versioned stores reopen normally.
 
 ---
 

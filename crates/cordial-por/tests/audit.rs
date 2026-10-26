@@ -1,9 +1,11 @@
 use cordial_miners_core::NodeId;
 use cordial_por::{
-    MissingEntryPolicy, PorConfig, PorError, RatingRecord, ReputationBlock, ReputationBlockContext,
-    ReputationEntry, ReputationList, ReputationVector, build_rating_batch, build_reputation_block,
+    CHECKPOINT_REPUTATION_BLOCK_VERSION, CheckpointReputationBlockContext, MissingEntryPolicy,
+    PorConfig, PorError, REPUTATION_BLOCK_VERSION, RatingRecord, RatingSourceCheckpoint,
+    ReputationBlock, ReputationBlockContext, ReputationEntry, ReputationList, ReputationVector,
+    build_checkpoint_reputation_block, build_rating_batch, build_reputation_block,
     clamp_reputation_value, replay_reputation_transition, reputation_list_commitment,
-    verify_reputation_transition,
+    verify_checkpoint_reputation_transition, verify_reputation_transition,
 };
 
 const ROUND: u64 = 7;
@@ -90,6 +92,43 @@ fn context() -> ReputationBlockContext<'static> {
     }
 }
 
+fn checkpoint_source() -> RatingSourceCheckpoint {
+    RatingSourceCheckpoint {
+        round: ROUND,
+        finalized_prefix_len: 16 * ROUND,
+        finalized_prefix_hash: [7; 32],
+    }
+}
+
+fn checkpoint_context<'a>(
+    previous_block: Option<&'a ReputationBlock>,
+) -> CheckpointReputationBlockContext<'a> {
+    CheckpointReputationBlockContext {
+        shard_id: SHARD_ID,
+        source: checkpoint_source(),
+        previous_block,
+    }
+}
+
+fn checkpoint_block_for(
+    ratings: &[RatingRecord],
+    entries: Vec<ReputationEntry>,
+    previous_block: Option<&ReputationBlock>,
+) -> ReputationBlock {
+    let config = config();
+    let batch = build_rating_batch(ROUND, ratings.to_vec(), &config).unwrap();
+    build_checkpoint_reputation_block(
+        checkpoint_context(previous_block),
+        &batch,
+        ReputationList {
+            round: ROUND,
+            entries,
+        },
+        &config,
+    )
+    .unwrap()
+}
+
 fn block_for(
     ratings: &[RatingRecord],
     entries: Vec<ReputationEntry>,
@@ -106,6 +145,174 @@ fn block_for(
         config,
     )
     .unwrap()
+}
+
+#[test]
+fn wave_audit_does_not_accept_a_checkpoint_block() {
+    let ratings = ratings();
+    let config = config();
+    let batch = build_rating_batch(ROUND, ratings.clone(), &config).unwrap();
+    let block = build_checkpoint_reputation_block(
+        checkpoint_context(None),
+        &batch,
+        ReputationList {
+            round: ROUND,
+            entries: expected_entries(),
+        },
+        &config,
+    )
+    .unwrap();
+    assert_eq!(
+        verify_reputation_transition(&previous_reputation(), &ratings, &block, context(), &config),
+        Err(PorError::UnsupportedReputationBlockAuditVersion(
+            CHECKPOINT_REPUTATION_BLOCK_VERSION
+        ))
+    );
+}
+
+#[test]
+fn checkpoint_audit_replays_the_transition_independent_of_rating_arrival_order() {
+    let block = checkpoint_block_for(&ratings(), expected_entries(), None);
+    for received in [ratings(), shuffled_ratings()] {
+        assert_eq!(
+            verify_checkpoint_reputation_transition(
+                &previous_reputation(),
+                &received,
+                &block,
+                checkpoint_context(None),
+                &config(),
+            ),
+            Ok(())
+        );
+    }
+    assert_eq!(
+        verify_checkpoint_reputation_transition(
+            &previous_reputation(),
+            &ratings(),
+            &proposed_block(),
+            checkpoint_context(None),
+            &config(),
+        ),
+        Err(PorError::UnsupportedReputationBlockAuditVersion(
+            REPUTATION_BLOCK_VERSION
+        ))
+    );
+}
+
+#[test]
+fn checkpoint_audit_rejects_another_prefix_and_changed_evidence() {
+    let block = checkpoint_block_for(&ratings(), expected_entries(), None);
+    let mut other_source = checkpoint_context(None);
+    other_source.source.finalized_prefix_hash = [8; 32];
+    assert_eq!(
+        verify_checkpoint_reputation_transition(
+            &previous_reputation(),
+            &ratings(),
+            &block,
+            other_source,
+            &config(),
+        ),
+        Err(PorError::ReputationBlockSourceCheckpointMismatch)
+    );
+    other_source.source.finalized_prefix_len += 1;
+    assert_eq!(
+        verify_checkpoint_reputation_transition(
+            &previous_reputation(),
+            &ratings(),
+            &block,
+            other_source,
+            &config(),
+        ),
+        Err(PorError::InvalidRatingSourceCheckpoint)
+    );
+
+    let mut changed_ratings = ratings();
+    changed_ratings[0].score -= 1;
+    assert_eq!(
+        verify_checkpoint_reputation_transition(
+            &previous_reputation(),
+            &changed_ratings,
+            &block,
+            checkpoint_context(None),
+            &config(),
+        ),
+        Err(PorError::ReputationBlockRatingsHashMismatch)
+    );
+
+    assert_eq!(
+        verify_checkpoint_reputation_transition(
+            &previous_reputation(),
+            &ratings(),
+            &block,
+            checkpoint_context(None),
+            &config_with_initial_reputation(1),
+        ),
+        Err(PorError::ReputationBlockConfigHashMismatch)
+    );
+
+    let wrong_result = checkpoint_block_for(
+        &ratings(),
+        vec![entry(1, 65), entry(2, 61), entry(3, 61)],
+        None,
+    );
+    assert_eq!(
+        verify_checkpoint_reputation_transition(
+            &previous_reputation(),
+            &ratings(),
+            &wrong_result,
+            checkpoint_context(None),
+            &config(),
+        ),
+        Err(PorError::ReputationValueMismatch)
+    );
+}
+
+#[test]
+fn checkpoint_audit_checks_the_previous_block_even_across_versions() {
+    let config = config();
+    let previous_ratings: Vec<_> = ratings()
+        .into_iter()
+        .map(|mut rating| {
+            rating.round = ROUND - 1;
+            rating
+        })
+        .collect();
+    let previous_batch = build_rating_batch(ROUND - 1, previous_ratings, &config).unwrap();
+    let previous = build_reputation_block(
+        ReputationBlockContext {
+            shard_id: SHARD_ID,
+            source_finalized_wave: SOURCE_WAVE - 1,
+            previous_block: None,
+        },
+        &previous_batch,
+        ReputationList {
+            round: ROUND - 1,
+            entries: previous_reputation().values,
+        },
+        &config,
+    )
+    .unwrap();
+    let block = checkpoint_block_for(&ratings(), expected_entries(), Some(&previous));
+    assert_eq!(
+        verify_checkpoint_reputation_transition(
+            &previous_reputation(),
+            &ratings(),
+            &block,
+            checkpoint_context(Some(&previous)),
+            &config,
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        verify_checkpoint_reputation_transition(
+            &previous_reputation(),
+            &ratings(),
+            &block,
+            checkpoint_context(None),
+            &config,
+        ),
+        Err(PorError::ReputationBlockPreviousHashMismatch)
+    );
 }
 
 fn block(round: u64, entries: Vec<ReputationEntry>) -> ReputationBlock {

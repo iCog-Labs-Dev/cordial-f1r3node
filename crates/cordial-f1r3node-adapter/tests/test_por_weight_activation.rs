@@ -96,6 +96,22 @@ fn block(tag: u8, creator_seed: u8, predecessor: Option<&BlockIdentity>) -> Bloc
     }
 }
 
+fn block_with_predecessors(tag: u8, creator_seed: u8, predecessors: &[BlockIdentity]) -> Block {
+    let mut content_hash = [0; 32];
+    content_hash[0] = tag;
+    Block {
+        identity: BlockIdentity {
+            content_hash,
+            creator: node(creator_seed),
+            signature: vec![tag],
+        },
+        content: BlockContent {
+            payload: vec![tag],
+            predecessors: predecessors.iter().cloned().collect(),
+        },
+    }
+}
+
 fn round_fixture() -> RoundFixture {
     let leader = block(1, 1, None);
     let second = block(2, 2, Some(&leader.identity));
@@ -185,6 +201,9 @@ fn activation_records_exact_projection_without_changing_membership() {
         "root",
     );
 
+    ingress
+        .validate_por_weights(runtime.state().unwrap())
+        .unwrap();
     assert!(runtime.has_unactivated_committed_round().unwrap());
     assert_eq!(
         runtime.activate_weights(&mut ingress).unwrap(),
@@ -336,6 +355,66 @@ fn activation_rejection_is_retryable_and_does_not_record_success() {
         PorWeightActivationOutcome::Activated
     );
     assert_eq!(ingress.bonds(), &HashMap::from([(validator_a, 100)]));
+}
+
+#[test]
+fn weight_activation_preserves_the_published_final_leader() {
+    let mut seeds: Vec<u8> = (1..=5).collect();
+    seeds.sort_by_key(|seed| node(*seed));
+    let initial_weights: HashMap<_, _> = seeds
+        .iter()
+        .enumerate()
+        .map(|(index, seed)| (node(*seed), if index == 4 { 1 } else { 100 }))
+        .collect();
+    let mut ingress = LiveIngress::with_consensus_view(
+        AcceptingAdapter,
+        initial_weights.clone(),
+        CasperShardConf::default(),
+        "root",
+    );
+    let leader = block_with_predecessors(11, seeds[0], &[]);
+    let round_one: Vec<_> = seeds[1..4]
+        .iter()
+        .enumerate()
+        .map(|(index, seed)| {
+            block_with_predecessors(
+                12 + index as u8,
+                *seed,
+                std::slice::from_ref(&leader.identity),
+            )
+        })
+        .collect();
+    let frontier: Vec<_> = round_one
+        .iter()
+        .map(|block| block.identity.clone())
+        .collect();
+    let round_two: Vec<_> = seeds[1..4]
+        .iter()
+        .enumerate()
+        .map(|(index, seed)| block_with_predecessors(15 + index as u8, *seed, &frontier))
+        .collect();
+    for block in std::iter::once(&leader)
+        .chain(round_one.iter())
+        .chain(round_two.iter())
+    {
+        ingress.ingest_trusted_block(block.clone()).unwrap();
+    }
+    let published = ingress.latest_finalized_ordered_output(WAVELENGTH).unwrap();
+    assert_eq!(published.anchor, Some(leader.identity.consensus_identity()));
+
+    let mut state = ReputationState::new(0);
+    for (index, seed) in seeds.iter().enumerate() {
+        state.set_reputation(node(*seed), if index == 4 { 100 } else { 1 });
+    }
+    assert!(matches!(
+        ingress.validate_por_weights(&state),
+        Err(PorWeightActivationError::WouldRewriteFinalizedLeader)
+    ));
+    assert!(matches!(
+        ingress.apply_por_weights(&state),
+        Err(PorWeightActivationError::WouldRewriteFinalizedLeader)
+    ));
+    assert_eq!(ingress.bonds(), &initial_weights);
 }
 
 #[test]

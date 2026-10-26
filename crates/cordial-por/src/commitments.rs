@@ -7,10 +7,15 @@
 use cordial_miners_core::crypto::{Blake2b256Hasher, Hasher};
 
 use crate::{
-    block::validate_reputation_block,
+    block::{
+        CHECKPOINT_REPUTATION_BLOCK_VERSION, REPUTATION_BLOCK_VERSION, validate_reputation_block,
+    },
     config::{MissingEntryPolicy, PorConfig},
     error::PorError,
-    ratings::{build_rating_batch, canonical_rating_payload},
+    ratings::{
+        RatingSourceCheckpoint, build_rating_batch, canonical_checkpoint_rating_payload,
+        canonical_rating_payload,
+    },
     types::{RatingBatch, ReputationBlock, ReputationCommitment, ReputationList, ReputationVector},
 };
 
@@ -18,10 +23,14 @@ use crate::{
 /// interchangeable with this replay policy.
 pub const POR_CONFIG_COMMITMENT_DOMAIN: &[u8] = b"cordial-por:config-commitment:v2";
 pub const POR_RATING_BATCH_COMMITMENT_DOMAIN: &[u8] = b"cordial-por:rating-batch-commitment:v1";
+pub const POR_CHECKPOINT_RATING_BATCH_COMMITMENT_DOMAIN: &[u8] =
+    b"cordial-por:rating-batch-commitment:v2";
 pub const POR_REPUTATION_LIST_COMMITMENT_DOMAIN: &[u8] =
     b"cordial-por:reputation-list-commitment:v2";
 pub const POR_REPUTATION_BLOCK_COMMITMENT_DOMAIN: &[u8] =
     b"cordial-por:reputation-block-commitment:v2";
+pub const POR_CHECKPOINT_REPUTATION_BLOCK_COMMITMENT_DOMAIN: &[u8] =
+    b"cordial-por:reputation-block-commitment:v3";
 
 /// Commit to every protocol parameter consumed by reputation replay.
 pub fn config_commitment(config: &PorConfig) -> ReputationCommitment {
@@ -108,6 +117,7 @@ pub fn penalty_events_commitment(
     payload.extend_from_slice(&round.to_be_bytes());
     put_len(&mut payload, equivocations.len())?;
     for event in equivocations {
+        event.validate_authorization(round)?;
         if !seen.insert(&event.offender)
             || event.offender.0.len() > MAX_REPUTATION_BLOCK_NODE_ID_LEN
             || event.evidence.is_empty()
@@ -151,6 +161,34 @@ pub fn penalty_events_commitment(
     Ok(Blake2b256Hasher.hash(&payload))
 }
 
+/// Commit to checkpoint-bound signed ratings in canonical batch order.
+pub fn checkpoint_rating_batch_commitment(
+    batch: &RatingBatch,
+    source: &RatingSourceCheckpoint,
+    config: &PorConfig,
+) -> Result<ReputationCommitment, PorError> {
+    let canonical = build_rating_batch(batch.round, batch.ratings.clone(), config)?;
+    if canonical.round != source.round {
+        return Err(PorError::InvalidRatingRound);
+    }
+    source.validate()?;
+    let mut payload = Vec::new();
+    payload.extend_from_slice(POR_CHECKPOINT_RATING_BATCH_COMMITMENT_DOMAIN);
+    payload.extend_from_slice(&canonical.round.to_be_bytes());
+    payload.extend_from_slice(&source.finalized_prefix_len.to_be_bytes());
+    payload.extend_from_slice(&source.finalized_prefix_hash);
+    put_len(&mut payload, canonical.ratings.len())?;
+
+    for rating in &canonical.ratings {
+        put_bytes(
+            &mut payload,
+            &canonical_checkpoint_rating_payload(rating, source)?,
+        )?;
+        put_bytes(&mut payload, &rating.signature)?;
+    }
+    Ok(Blake2b256Hasher.hash(&payload))
+}
+
 /// Commit to a canonically ordered reputation list.
 pub fn reputation_list_commitment(list: &ReputationList) -> Result<ReputationCommitment, PorError> {
     validate_reputation_entries(&list.entries)?;
@@ -179,11 +217,19 @@ pub fn reputation_block_hash(block: &ReputationBlock) -> Result<ReputationCommit
 
     let header = &block.header;
     let mut payload = Vec::new();
-    payload.extend_from_slice(POR_REPUTATION_BLOCK_COMMITMENT_DOMAIN);
+    payload.extend_from_slice(match header.version {
+        REPUTATION_BLOCK_VERSION => POR_REPUTATION_BLOCK_COMMITMENT_DOMAIN,
+        CHECKPOINT_REPUTATION_BLOCK_VERSION => POR_CHECKPOINT_REPUTATION_BLOCK_COMMITMENT_DOMAIN,
+        _ => unreachable!("block version was validated"),
+    });
     payload.extend_from_slice(&header.version.to_be_bytes());
     put_bytes(&mut payload, &header.shard_id)?;
     payload.extend_from_slice(&header.source_finalized_wave.to_be_bytes());
     payload.extend_from_slice(&header.round.to_be_bytes());
+    if let Some(source) = header.source_checkpoint {
+        payload.extend_from_slice(&source.finalized_prefix_len.to_be_bytes());
+        payload.extend_from_slice(&source.finalized_prefix_hash);
+    }
     match header.previous_reputation_hash {
         Some(previous) => {
             payload.push(1);

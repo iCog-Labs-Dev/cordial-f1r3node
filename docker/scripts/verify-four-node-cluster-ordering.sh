@@ -11,13 +11,20 @@ node_timeout="${CORDIAL_ORDER_NODE_TIMEOUT:-300}"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-nodes_file="$tmp_dir/nodes.txt"
-cat >"$nodes_file" <<'NODES'
+nodes_file="${CORDIAL_ORDER_NODES_FILE:-$tmp_dir/nodes.txt}"
+if [ -n "${CORDIAL_ORDER_NODES_FILE:-}" ]; then
+  if [ ! -r "$nodes_file" ]; then
+    echo "ERROR: cannot read CORDIAL_ORDER_NODES_FILE=$nodes_file" >&2
+    exit 1
+  fi
+else
+  cat >"$nodes_file" <<'NODES'
 cordial-validator-1 http://127.0.0.1:51401 http://127.0.0.1:51403
 cordial-validator-2 http://127.0.0.1:52401 http://127.0.0.1:52403
 cordial-validator-3 http://127.0.0.1:53401 http://127.0.0.1:53403
 cordial-validator-4 http://127.0.0.1:54401 http://127.0.0.1:54403
 NODES
+fi
 
 baseline="$tmp_dir/baseline.ordered.json"
 reference_node=""

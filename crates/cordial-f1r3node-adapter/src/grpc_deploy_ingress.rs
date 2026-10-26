@@ -12,15 +12,15 @@ use models::casper::v1::ListeningNameDataResponse;
 use models::casper::v1::{
     BlockInfoResponse, BlockResponse, BondStatusResponse, ContinuationAtNameResponse,
     DeployResponse, EventInfoResponse, ExploratoryDeployResponse, FindDeployResponse,
-    IsFinalizedResponse, LastFinalizedBlockResponse, MachineVerifyResponse,
+    IsFinalizedResponse, LastFinalizedBlockResponse, MachineVerifyResponse, PendingDeploysResponse,
     PrivateNamePreviewResponse, RhoDataResponse, StatusResponse, VisualizeBlocksResponse,
     deploy_response, deploy_service_server::DeployService,
 };
 use models::casper::{
     BlockQuery, BlocksQuery, BlocksQueryByHeight, BondStatusQuery, ContinuationAtNameQuery,
     DataAtNameByBlockQuery, DeployDataProto, ExploratoryDeployQuery, FindDeployQuery,
-    IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery, PrivateNamePreviewQuery,
-    ReportQuery, VisualizeDagQuery,
+    IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery, PendingDeploysQuery,
+    PrivateNamePreviewQuery, ReportQuery, VisualizeDagQuery,
 };
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
@@ -170,6 +170,13 @@ impl DeployService for GrpcDeployIngressHandler {
         _request: tonic::Request<DeployFinalizationStatusQuery>,
     ) -> Result<tonic::Response<DeployFinalizationStatusResponse>, tonic::Status> {
         Err(tonic::Status::unimplemented("deployFinalizationStatus"))
+    }
+
+    async fn get_pending_deploys(
+        &self,
+        _request: tonic::Request<PendingDeploysQuery>,
+    ) -> Result<tonic::Response<PendingDeploysResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("getPendingDeploys"))
     }
 
     async fn get_data_at_name(

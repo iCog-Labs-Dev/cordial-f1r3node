@@ -111,7 +111,7 @@ The cryptographic identity of a block: `i = signedhash((v, P), k_p)`.
 
 | Field          | Type       | Description                                |
 |----------------|------------|--------------------------------------------|
-| `content_hash` | `[u8; 32]` | Blake2b-256 hash of the serialized BlockContent (default) |
+| `content_hash` | `[u8; 32]` | Format-v3 Blake2b-256 hash of the domain, creator, and serialized `BlockContent` |
 | `creator`      | `NodeId`   | The node that signed this block            |
 | `signature`    | `Vec<u8>`  | `sign(content_hash, creator_private_key)`  |
 
@@ -191,7 +191,7 @@ The central data structure -- a set of blocks stored as `HashMap<BlockIdentity, 
 
 | Function         | Description                                                       |
 |------------------|-------------------------------------------------------------------|
-| `hash_content()` | Deterministic Blake2b-256 hash: length-prefixed payload + sorted predecessors (default) |
+| `block_hash()`   | Deterministic Blake2b-256 hash: creator + length-prefixed payload + sorted predecessors (default, format v3) |
 | `sign()`         | Secp256k1 DER signature (70-72 bytes) over a content hash (default) |
 | `verify()`       | Verify a Secp256k1 signature against a public key (default) |
 
@@ -415,7 +415,7 @@ Pluggable hashing / signing / verification traits with f1r3node-compatible imple
 
 `SigAlgorithm` enum carries the wire identifier strings (`"ed25519"`, `"secp256k1"`) f1r3node puts in `BlockMessage.sig_algorithm`. `CryptoError` covers wrong-length keys/signatures and bad curve points without panicking.
 
-`compute_adapter_snapshot_hash(&BlockMessage) -> [u8; 32]` produces an adapter-local Blake2b-256 hash over a deterministic, selected-field layout including the sender. It distinguishes otherwise identical snapshots from different validators, but does not commit to every message field and is not f1r3node's protobuf wire hash. `GrpcBlockMapper::from_adapter_message` accepts this hash or Cordial's internal `hash_content` and verifies signatures over the internal content hash. Network messages use `from_protobuf`, which calls f1r3node's `proto_util::hash_block` on the original message and verifies the wire signature before translation.
+`compute_adapter_snapshot_hash(&BlockMessage) -> [u8; 32]` produces an adapter-local Blake2b-256 hash over a deterministic, selected-field layout including the sender. It distinguishes otherwise identical snapshots from different validators, but does not commit to every message field and is not f1r3node's protobuf wire hash. `GrpcBlockMapper::from_adapter_message` accepts this hash or Cordial's internal `block_hash` and verifies signatures over the internal content hash. Network messages use `from_protobuf`, which calls f1r3node's `proto_util::hash_block` on the original message and verifies the wire signature before translation.
 
 ### Phase 3.1 & 3.2 — Casper trait adapter (casper_adapter.rs)
 

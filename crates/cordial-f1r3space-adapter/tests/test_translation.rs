@@ -125,6 +125,7 @@ fn signed_deploy_translates_preserving_signature() {
     assert_eq!(f1.data.valid_after_block_number, 0);
     assert_eq!(f1.data.shard_id, "root");
     assert_eq!(f1.data.expiration_timestamp, None);
+    assert!(f1.data.parameters.is_empty());
 
     // Signature and pubkey preserved verbatim
     assert_eq!(f1.sig.to_vec(), expected_signature);
@@ -144,6 +145,7 @@ fn signed_deploy_with_expiration_timestamp_verifies_and_preserves_it() {
             valid_after_block_number: 0,
             shard_id: "root".to_owned(),
             expiration_timestamp: Some(expiration_timestamp),
+            parameters: Vec::new(),
         },
         Box::new(Secp256k1),
         casper::rust::util::construct_deploy::DEFAULT_SEC.clone(),
@@ -228,28 +230,25 @@ fn signature_over_different_deploy_data_is_rejected_at_the_boundary() {
 #[test]
 fn close_block_translates_to_close_variant() {
     let pre_state = [0x42u8; 32];
-    let f1 = system_deploy_to_f1r3node(&SystemDeployRequest::CloseBlock, &pre_state);
+    let f1 = system_deploy_to_f1r3node(&SystemDeployRequest::CloseBlock, &pre_state).unwrap();
     assert!(matches!(f1, SystemDeployEnum::Close(_)));
 }
 
 #[test]
-fn slash_translates_to_slash_variant_with_validator_pk() {
+fn slash_without_verified_epoch_fails_closed() {
     let pre_state = [0x42u8; 32];
-    let f1 = system_deploy_to_f1r3node(
+    let result = system_deploy_to_f1r3node(
         &SystemDeployRequest::Slash {
             validator: node(7),
             invalid_block_hash: vec![0x07; 32],
         },
         &pre_state,
     );
-    match f1 {
-        SystemDeployEnum::Slash(s) => {
-            assert_eq!(s.pk.bytes.to_vec(), vec![7u8]);
-            // invalid_block_hash is now the real hash passed in the request
-            assert_eq!(s.invalid_block_hash.to_vec(), vec![0x07; 32]);
-        }
-        _ => panic!("expected Slash variant"),
-    }
+    assert!(matches!(
+        result,
+        Err(RuntimeError::InternalError(message))
+            if message.contains("verified target activation epoch")
+    ));
 }
 
 // ── build_block_data ─────────────────────────────────────────────────────
@@ -378,6 +377,7 @@ fn succeeded_slash_translates_with_validator() {
         system_deploy: SystemDeployData::Slash {
             invalid_block_hash: prost::bytes::Bytes::from(vec![0u8; 32]),
             issuer_public_key: PublicKey::from_bytes(&validator_bytes),
+            target_activation_epoch: 7,
         },
     };
     let ours = system_deploy_from_f1r3node(&f1);

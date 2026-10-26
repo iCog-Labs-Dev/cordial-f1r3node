@@ -9,11 +9,14 @@
 //! or perform networking.
 
 use crate::{
-    block::{ReputationBlockContext, validate_reputation_block},
+    block::{
+        CHECKPOINT_REPUTATION_BLOCK_VERSION, CheckpointReputationBlockContext,
+        REPUTATION_BLOCK_VERSION, ReputationBlockContext, validate_reputation_block,
+    },
     clamp::clamp_reputation_transition,
     commitments::{
-        config_commitment, penalty_events_commitment, rating_batch_commitment,
-        reputation_block_hash,
+        checkpoint_rating_batch_commitment, config_commitment, penalty_events_commitment,
+        rating_batch_commitment, reputation_block_hash,
     },
     config::PorConfig,
     error::PorError,
@@ -45,7 +48,8 @@ pub fn replay_reputation_transition(
     replay_reputation_transition_with_penalties(previous_reputation, ratings, round, config, None)
 }
 
-/// Replay with optional, externally authenticated penalty events for this round.
+/// Replay with optional penalty events for this round. Equivocations require
+/// intact proof authorization; inactivity authentication remains caller-owned.
 /// Penalties are applied after clamp, using previous-round weights. Missing
 /// ratings alone do not trigger decay. `None` preserves the no-penalty path.
 pub fn replay_reputation_transition_with_penalties(
@@ -97,6 +101,7 @@ pub fn replay_reputation_transition_with_penalties(
 /// previous block, configuration, and signed rating batch. Finally, the
 /// replayed list is compared entry for entry, so a validator accepts the block
 /// only when the recorded ratings and previous reputation actually produce it.
+/// Rating signatures must be authenticated by the caller before admission.
 pub fn verify_reputation_transition(
     previous_reputation: &ReputationVector,
     ratings: &[RatingRecord],
@@ -115,7 +120,7 @@ pub fn verify_reputation_transition(
 }
 
 /// Verify a penalty-inclusive block against the same finalized events used by
-/// its producer. Events must be authenticated out of band, just like ratings;
+/// its producer. Equivocation authorization is checked against this context;
 /// the exact event set is bound by the block's penalties hash. Substitution or
 /// omission fails even when the resulting reputation values are identical.
 pub fn verify_reputation_transition_with_penalties(
@@ -128,8 +133,14 @@ pub fn verify_reputation_transition_with_penalties(
 ) -> Result<(), PorError> {
     config.validate()?;
     validate_reputation_block(proposed_block)?;
+    crate::evidence::validate_penalty_context(penalties, context)?;
 
     let header = &proposed_block.header;
+    if header.version != REPUTATION_BLOCK_VERSION {
+        return Err(PorError::UnsupportedReputationBlockAuditVersion(
+            header.version,
+        ));
+    }
     if header.shard_id != context.shard_id {
         return Err(PorError::ReputationBlockShardMismatch);
     }
@@ -177,6 +188,97 @@ pub fn verify_reputation_transition_with_penalties(
     )?;
 
     compare_reputation_lists(&expected, proposed)
+}
+
+/// Audit a v3 block against an externally verified finalized-prefix checkpoint.
+///
+/// The caller must establish that `context.source` is the canonical checkpoint
+/// in Cordial's finalized order and authenticate the rating signatures before
+/// using this result to apply state. This function binds the block and batch
+/// commitments to that source and replays the reputation calculation.
+pub fn verify_checkpoint_reputation_transition(
+    previous_reputation: &ReputationVector,
+    ratings: &[RatingRecord],
+    proposed_block: &ReputationBlock,
+    context: CheckpointReputationBlockContext<'_>,
+    config: &PorConfig,
+) -> Result<(), PorError> {
+    verify_checkpoint_reputation_transition_with_penalties(
+        previous_reputation,
+        ratings,
+        proposed_block,
+        context,
+        config,
+        None,
+    )
+}
+
+/// Audit the exact authorized penalty set against the finalized checkpoint.
+pub fn verify_checkpoint_reputation_transition_with_penalties(
+    previous_reputation: &ReputationVector,
+    ratings: &[RatingRecord],
+    proposed_block: &ReputationBlock,
+    context: CheckpointReputationBlockContext<'_>,
+    config: &PorConfig,
+    penalties: Option<&crate::ReputationPenaltyEvents>,
+) -> Result<(), PorError> {
+    context.source.validate()?;
+    crate::evidence::validate_checkpoint_penalty_context(penalties, context)?;
+    validate_reputation_block(proposed_block)?;
+
+    let header = &proposed_block.header;
+    if header.version != CHECKPOINT_REPUTATION_BLOCK_VERSION {
+        return Err(PorError::UnsupportedReputationBlockAuditVersion(
+            header.version,
+        ));
+    }
+    if header.shard_id != context.shard_id {
+        return Err(PorError::ReputationBlockShardMismatch);
+    }
+    if header.source_checkpoint != Some(context.source) {
+        return Err(PorError::ReputationBlockSourceCheckpointMismatch);
+    }
+
+    let expected_previous_hash = match context.previous_block {
+        Some(previous) => {
+            if previous.header.shard_id != context.shard_id {
+                return Err(PorError::PreviousReputationBlockShardMismatch);
+            }
+            if previous.header.round.checked_add(1) != Some(header.round) {
+                return Err(PorError::InvalidPreviousReputationBlockRound);
+            }
+            Some(reputation_block_hash(previous)?)
+        }
+        None => None,
+    };
+    if header.previous_reputation_hash != expected_previous_hash {
+        return Err(PorError::ReputationBlockPreviousHashMismatch);
+    }
+    if header.config_hash != config_commitment(config) {
+        return Err(PorError::ReputationBlockConfigHashMismatch);
+    }
+
+    let rating_batch = RatingBatch {
+        round: header.round,
+        ratings: ratings.to_vec(),
+    };
+    if header.ratings_hash
+        != checkpoint_rating_batch_commitment(&rating_batch, &context.source, config)?
+    {
+        return Err(PorError::ReputationBlockRatingsHashMismatch);
+    }
+    if header.penalties_hash != penalty_events_commitment(header.round, penalties)? {
+        return Err(PorError::ReputationBlockPenaltiesHashMismatch);
+    }
+
+    let expected = replay_reputation_transition_with_penalties(
+        previous_reputation,
+        ratings,
+        header.round,
+        config,
+        penalties,
+    )?;
+    compare_reputation_lists(&expected, &proposed_block.reputation_list)
 }
 
 fn compare_reputation_lists(

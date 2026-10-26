@@ -22,17 +22,17 @@ use models::casper::v1::ListeningNameDataResponse;
 use models::casper::v1::{
     BlockInfoResponse, BlockResponse, BondStatusResponse, ContinuationAtNameResponse,
     DeployResponse, EventInfoResponse, ExploratoryDeployResponse, FindDeployResponse,
-    IsFinalizedResponse, LastFinalizedBlockResponse, MachineVerifyResponse,
+    IsFinalizedResponse, LastFinalizedBlockResponse, MachineVerifyResponse, PendingDeploysResponse,
     PrivateNamePreviewResponse, RhoDataResponse, StatusResponse, VisualizeBlocksResponse,
     deploy_response,
     deploy_service_server::{DeployService, DeployServiceServer},
-    status_response,
+    pending_deploys_response, status_response,
 };
 use models::casper::{
     BlockQuery, BlocksQuery, BlocksQueryByHeight, BondStatusQuery, ContinuationAtNameQuery,
     DataAtNameByBlockQuery, DeployDataProto, ExploratoryDeployQuery, FindDeployQuery,
-    IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery, PrivateNamePreviewQuery,
-    ReportQuery, Status, VisualizeDagQuery,
+    IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery, PendingDeploysQuery,
+    PendingDeploysResponsePayload, PrivateNamePreviewQuery, ReportQuery, Status, VisualizeDagQuery,
 };
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
@@ -41,11 +41,16 @@ use tonic::transport::Server;
 #[derive(Clone, Default)]
 struct RecordingUpstream {
     deploys: Arc<Mutex<Vec<DeployDataProto>>>,
+    pending_queries: Arc<Mutex<Vec<PendingDeploysQuery>>>,
 }
 
 impl RecordingUpstream {
     async fn recorded_deploys(&self) -> Vec<DeployDataProto> {
         self.deploys.lock().await.clone()
+    }
+
+    async fn recorded_pending_queries(&self) -> Vec<PendingDeploysQuery> {
+        self.pending_queries.lock().await.clone()
     }
 }
 
@@ -115,6 +120,21 @@ impl DeployService for RecordingUpstream {
         _request: tonic::Request<DeployFinalizationStatusQuery>,
     ) -> Result<tonic::Response<DeployFinalizationStatusResponse>, tonic::Status> {
         Err(tonic::Status::unimplemented("deployFinalizationStatus"))
+    }
+
+    async fn get_pending_deploys(
+        &self,
+        request: tonic::Request<PendingDeploysQuery>,
+    ) -> Result<tonic::Response<PendingDeploysResponse>, tonic::Status> {
+        self.pending_queries.lock().await.push(request.into_inner());
+        Ok(tonic::Response::new(PendingDeploysResponse {
+            message: Some(pending_deploys_response::Message::Payload(
+                PendingDeploysResponsePayload {
+                    deploys: Vec::new(),
+                    total_available: 7,
+                },
+            )),
+        }))
     }
 
     async fn get_data_at_name(
@@ -232,6 +252,7 @@ fn sample_proto(sig_byte: u8) -> DeployDataProto {
         shard_id: "root".to_string(),
         language: "rholang".to_string(),
         expiration_timestamp: 0,
+        parameters: Vec::new(),
     }
 }
 
@@ -283,6 +304,31 @@ async fn proxy_preserves_status_method_name_and_passthrough() {
         }
         other => panic!("unexpected status response: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn proxy_forwards_pending_deploy_filter_and_response() {
+    let upstream = RecordingUpstream::default();
+    let addr = spawn_upstream(upstream.clone()).await;
+    let proxy = LiveDeployProxy::connect(format!("http://{addr}"))
+        .await
+        .unwrap();
+    let query = PendingDeploysQuery {
+        deployer_pubkey: vec![0x42; 33].into(),
+    };
+
+    let response = proxy
+        .get_pending_deploys(tonic::Request::new(query.clone()))
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(upstream.recorded_pending_queries().await, vec![query]);
+    assert!(matches!(
+        response.message,
+        Some(pending_deploys_response::Message::Payload(payload))
+            if payload.total_available == 7 && payload.deploys.is_empty()
+    ));
 }
 
 // ── Helpers for cross-protocol test ──────────────────────────────────────

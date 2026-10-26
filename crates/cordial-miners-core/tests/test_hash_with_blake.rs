@@ -1,4 +1,4 @@
-use cordial_miners_core::crypto::{Sha256Hasher, hash_content, hash_content_ext};
+use cordial_miners_core::crypto::{Sha256Hasher, block_hash, block_hash_ext};
 use cordial_miners_core::{BlockContent, BlockIdentity, NodeId};
 use std::collections::HashSet;
 
@@ -6,17 +6,19 @@ use std::collections::HashSet;
 
 #[test]
 fn blake_hash_of_empty_genesis_is_deterministic() {
+    let creator = NodeId(vec![1]);
     let content = BlockContent {
         payload: vec![],
         predecessors: HashSet::new(),
     };
-    let h1 = hash_content(&content);
-    let h2 = hash_content(&content);
+    let h1 = block_hash(&creator, &content);
+    let h2 = block_hash(&creator, &content);
     assert_eq!(h1, h2);
 }
 
 #[test]
 fn blake_different_payloads_produce_different_hashes() {
+    let creator = NodeId(vec![1]);
     let c1 = BlockContent {
         payload: vec![1, 2, 3],
         predecessors: HashSet::new(),
@@ -25,11 +27,12 @@ fn blake_different_payloads_produce_different_hashes() {
         payload: vec![4, 5, 6],
         predecessors: HashSet::new(),
     };
-    assert_ne!(hash_content(&c1), hash_content(&c2));
+    assert_ne!(block_hash(&creator, &c1), block_hash(&creator, &c2));
 }
 
 #[test]
 fn blake_different_predecessors_produce_different_hashes() {
+    let creator = NodeId(vec![1]);
     let pred_a = BlockIdentity {
         content_hash: [0x01; 32],
         creator: NodeId(vec![1]),
@@ -48,11 +51,12 @@ fn blake_different_predecessors_produce_different_hashes() {
         payload: vec![],
         predecessors: HashSet::from([pred_b]),
     };
-    assert_ne!(hash_content(&c1), hash_content(&c2));
+    assert_ne!(block_hash(&creator, &c1), block_hash(&creator, &c2));
 }
 
 #[test]
 fn blake_hash_is_independent_of_predecessor_insertion_order() {
+    let creator = NodeId(vec![1]);
     let pred_a = BlockIdentity {
         content_hash: [0x01; 32],
         creator: NodeId(vec![1]),
@@ -77,11 +81,12 @@ fn blake_hash_is_independent_of_predecessor_insertion_order() {
         payload: vec![10],
         predecessors: set2,
     };
-    assert_eq!(hash_content(&c1), hash_content(&c2));
+    assert_eq!(block_hash(&creator, &c1), block_hash(&creator, &c2));
 }
 
 #[test]
 fn content_hash_is_independent_of_predecessor_signature_proof() {
+    let creator = NodeId(vec![1]);
     let first = BlockIdentity {
         content_hash: [0x01; 32],
         creator: NodeId(vec![1]),
@@ -100,39 +105,42 @@ fn content_hash_is_independent_of_predecessor_signature_proof() {
     };
 
     assert_eq!(
-        hash_content(&first_content),
-        hash_content(&alternate_content)
+        block_hash(&creator, &first_content),
+        block_hash(&creator, &alternate_content)
     );
     assert_eq!(
-        hash_content_ext(&first_content, &Sha256Hasher),
-        hash_content_ext(&alternate_content, &Sha256Hasher)
+        block_hash_ext(&creator, &first_content, &Sha256Hasher),
+        block_hash_ext(&creator, &alternate_content, &Sha256Hasher)
     );
 }
 
 #[test]
 fn blake_hash_output_is_32_bytes() {
+    let creator = NodeId(vec![1]);
     let content = BlockContent {
         payload: vec![0xff; 100],
         predecessors: HashSet::new(),
     };
-    assert_eq!(hash_content(&content).len(), 32);
+    assert_eq!(block_hash(&creator, &content).len(), 32);
 }
 
 // SHA256 Tests (Legacy Algorithm)
 
 #[test]
 fn sha256_hash_of_empty_genesis_is_deterministic() {
+    let creator = NodeId(vec![1]);
     let content = BlockContent {
         payload: vec![],
         predecessors: HashSet::new(),
     };
-    let h1 = hash_content_ext(&content, &Sha256Hasher);
-    let h2 = hash_content_ext(&content, &Sha256Hasher);
+    let h1 = block_hash_ext(&creator, &content, &Sha256Hasher);
+    let h2 = block_hash_ext(&creator, &content, &Sha256Hasher);
     assert_eq!(h1, h2);
 }
 
 #[test]
 fn sha256_different_payloads_produce_different_hashes() {
+    let creator = NodeId(vec![1]);
     let c1 = BlockContent {
         payload: vec![1, 2, 3],
         predecessors: HashSet::new(),
@@ -142,13 +150,14 @@ fn sha256_different_payloads_produce_different_hashes() {
         predecessors: HashSet::new(),
     };
     assert_ne!(
-        hash_content_ext(&c1, &Sha256Hasher),
-        hash_content_ext(&c2, &Sha256Hasher)
+        block_hash_ext(&creator, &c1, &Sha256Hasher),
+        block_hash_ext(&creator, &c2, &Sha256Hasher)
     );
 }
 
 #[test]
 fn sha256_different_predecessors_produce_different_hashes() {
+    let creator = NodeId(vec![1]);
     let pred_a = BlockIdentity {
         content_hash: [0x01; 32],
         creator: NodeId(vec![1]),
@@ -168,13 +177,14 @@ fn sha256_different_predecessors_produce_different_hashes() {
         predecessors: HashSet::from([pred_b]),
     };
     assert_ne!(
-        hash_content_ext(&c1, &Sha256Hasher),
-        hash_content_ext(&c2, &Sha256Hasher)
+        block_hash_ext(&creator, &c1, &Sha256Hasher),
+        block_hash_ext(&creator, &c2, &Sha256Hasher)
     );
 }
 
 #[test]
 fn sha256_hash_is_independent_of_predecessor_insertion_order() {
+    let creator = NodeId(vec![1]);
     let pred_a = BlockIdentity {
         content_hash: [0x01; 32],
         creator: NodeId(vec![1]),
@@ -200,16 +210,17 @@ fn sha256_hash_is_independent_of_predecessor_insertion_order() {
         predecessors: set2,
     };
     assert_eq!(
-        hash_content_ext(&c1, &Sha256Hasher),
-        hash_content_ext(&c2, &Sha256Hasher)
+        block_hash_ext(&creator, &c1, &Sha256Hasher),
+        block_hash_ext(&creator, &c2, &Sha256Hasher)
     );
 }
 
 #[test]
 fn sha256_hash_output_is_32_bytes() {
+    let creator = NodeId(vec![1]);
     let content = BlockContent {
         payload: vec![0xff; 100],
         predecessors: HashSet::new(),
     };
-    assert_eq!(hash_content_ext(&content, &Sha256Hasher).len(), 32);
+    assert_eq!(block_hash_ext(&creator, &content, &Sha256Hasher).len(), 32);
 }

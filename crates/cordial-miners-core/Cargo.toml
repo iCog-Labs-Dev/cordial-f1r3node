@@ -8,6 +8,8 @@ edition.workspace = true
 # Activate with: cargo test --features trace
 [features]
 trace = []
+# Enabled through dev-dependencies for benchmark fixture reuse only.
+bench-support = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(cordial_trace_threshold_mutation)"] }
@@ -24,6 +26,7 @@ k256.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+cordial-miners-core = { path = ".", features = ["bench-support"] }
 proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 
@@ -53,4 +56,12 @@ harness = false
 
 [[bench]]
 name = "proposer_selection"
+harness = false
+
+[[bench]]
+name = "consensus_scenarios"
+harness = false
+
+[[bench]]
+name = "deploy_pool"
 harness = false

@@ -4,12 +4,12 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-if [[ ! -d "../f1r3node" ]]; then
+if [[ ! -d "../f1r3node-rust" ]]; then
   cat >&2 <<'EOF'
-Missing ../f1r3node checkout.
+Missing ../f1r3node-rust checkout.
 
-The GitHub workflow checks out F1R3FLY-io/f1r3node next to this repository
-because the adapter crates use f1r3node path dependencies. Clone f1r3node as a
+The GitHub workflow checks out F1R3FLY-io/f1r3node-rust next to this repository
+because the adapter crates use f1r3node-rust path dependencies. Clone it as a
 sibling directory before pushing.
 EOF
   exit 1

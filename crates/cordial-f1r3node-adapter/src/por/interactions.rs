@@ -12,13 +12,18 @@ use cordial_miners_core::{
     types::{BlockIdentity, NodeId},
 };
 use cordial_por::{
-    AdmittedInteraction, InteractionEvidence, InteractionKind, PorError, ReputationState,
-    admit_interaction_evidence, rating_round_from_finalized_wave,
+    AdmittedCheckpointInteraction, AdmittedInteraction, CheckpointInteractionEvidence,
+    InteractionEvidence, InteractionKind, PorError, ReputationState,
+    admit_checkpoint_interaction_evidence, admit_interaction_evidence,
+    rating_round_from_finalized_wave,
 };
 
 use crate::ordered_output::OrderedFinalizedOutput;
 
-use super::finality::FinalizedRatingRound;
+use super::finality::{
+    FinalizedPrefixCheckpoint, FinalizedRatingRound, POR_FINALIZED_BLOCKS_PER_CHECKPOINT,
+    PorFinalityError, finalized_wave_from_output, validate_finalized_prefix_checkpoint,
+};
 
 /// Errors while extracting PoR evidence from finalized adapter output.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +33,7 @@ pub enum PorInteractionError {
     UnknownFinalLeader,
     UnknownFinalizedBlock,
     FinalizedRoundMismatch,
+    Checkpoint(PorFinalityError),
     RatingRound(PorError),
     Admission(PorError),
 }
@@ -50,6 +56,7 @@ impl fmt::Display for PorInteractionError {
                 f,
                 "opened PoR round does not match the finalized output wave"
             ),
+            Self::Checkpoint(error) => error.fmt(f),
             Self::RatingRound(error) => error.fmt(f),
             Self::Admission(error) => write!(f, "PoR interaction admission failed: {error}"),
         }
@@ -60,9 +67,99 @@ impl std::error::Error for PorInteractionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::RatingRound(error) | Self::Admission(error) => Some(error),
+            Self::Checkpoint(error) => Some(error),
             _ => None,
         }
     }
+}
+
+/// Select one block-production reference per recipient from the checkpoint's
+/// exact 16-block finalized window. Earlier and later blocks are excluded.
+pub fn extract_checkpoint_block_production_evidence(
+    blocklace: &Blocklace,
+    output: &OrderedFinalizedOutput,
+    checkpoint: &FinalizedPrefixCheckpoint,
+    rater: &NodeId,
+) -> Result<Vec<CheckpointInteractionEvidence>, PorInteractionError> {
+    validate_finalized_checkpoint_window(blocklace, output, checkpoint)?;
+
+    let end = usize::try_from(checkpoint.finalized_prefix_len).map_err(|_| {
+        PorInteractionError::Checkpoint(PorFinalityError::InvalidPrefixCheckpointRound)
+    })?;
+    let window_len = usize::try_from(POR_FINALIZED_BLOCKS_PER_CHECKPOINT).expect("fixed window");
+    let mut canonical_blocks: BTreeMap<&NodeId, &BlockIdentity> = BTreeMap::new();
+    for block in &output.blocks[end - window_len..end] {
+        if &block.creator == rater {
+            continue;
+        }
+        canonical_blocks
+            .entry(&block.creator)
+            .and_modify(|canonical| {
+                if block < *canonical {
+                    *canonical = block;
+                }
+            })
+            .or_insert(block);
+    }
+
+    Ok(canonical_blocks
+        .into_iter()
+        .map(|(recipient, block)| CheckpointInteractionEvidence {
+            source: checkpoint.rating_source(),
+            kind: InteractionKind::BlockProduction,
+            rater: rater.clone(),
+            recipient: recipient.clone(),
+            evidence_ref: block.content_hash.to_vec(),
+        })
+        .collect())
+}
+
+/// Check the source commitment, final leader anchor, and every window block.
+///
+/// A collector calls this even when no ratings arrive, so an empty batch never
+/// bypasses the finalized-evidence boundary.
+pub fn validate_finalized_checkpoint_window(
+    blocklace: &Blocklace,
+    output: &OrderedFinalizedOutput,
+    checkpoint: &FinalizedPrefixCheckpoint,
+) -> Result<(), PorInteractionError> {
+    validate_finalized_prefix_checkpoint(output, checkpoint)
+        .map_err(PorInteractionError::Checkpoint)?;
+    if finalized_wave_from_output(blocklace, output)
+        .map_err(PorInteractionError::Checkpoint)?
+        .is_none()
+    {
+        return Err(PorInteractionError::MissingFinalLeader);
+    }
+
+    let end = usize::try_from(checkpoint.finalized_prefix_len).map_err(|_| {
+        PorInteractionError::Checkpoint(PorFinalityError::InvalidPrefixCheckpointRound)
+    })?;
+    let window_len = usize::try_from(POR_FINALIZED_BLOCKS_PER_CHECKPOINT).expect("fixed window");
+    for block in &output.blocks[end - window_len..end] {
+        depth(blocklace, block).ok_or(PorInteractionError::UnknownFinalizedBlock)?;
+    }
+    Ok(())
+}
+
+/// Extract and admit checkpoint-window production evidence as one operation.
+/// Finalized blocks from genesis, system senders, or ejected producers do not
+/// become PoR rating recipients unless they are active in the preceding state.
+pub fn admit_checkpoint_block_production_interactions(
+    blocklace: &Blocklace,
+    output: &OrderedFinalizedOutput,
+    checkpoint: &FinalizedPrefixCheckpoint,
+    rater: &NodeId,
+    state: &ReputationState,
+) -> Result<Vec<AdmittedCheckpointInteraction>, PorInteractionError> {
+    extract_checkpoint_block_production_evidence(blocklace, output, checkpoint, rater)?
+        .into_iter()
+        .filter(|evidence| is_active_recipient(state, &evidence.recipient))
+        .map(|evidence| {
+            admit_checkpoint_interaction_evidence(evidence, state)
+                .map_err(PorInteractionError::Admission)
+        })
+        .collect()
 }
 
 /// Extract one deterministic block-production interaction per recipient.
@@ -173,20 +270,18 @@ pub fn admit_finalized_block_production_interactions(
 ) -> Result<Vec<AdmittedInteraction>, PorInteractionError> {
     extract_block_production_evidence(blocklace, output, opened, rater)?
         .into_iter()
-        .filter(|evidence| {
-            // Ejected or non-member recipients produce no admissible rating in
-            // this round. Filtering here rather than propagating the admission
-            // error keeps the honest rater's batch for all remaining valid
-            // recipients intact.
-            let is_member = state
-                .reputation_list()
-                .entries
-                .binary_search_by(|entry| entry.node_id.cmp(&evidence.recipient))
-                .is_ok();
-            is_member && !state.is_ejected(&evidence.recipient)
-        })
+        .filter(|evidence| is_active_recipient(state, &evidence.recipient))
         .map(|evidence| {
             admit_interaction_evidence(evidence, state).map_err(PorInteractionError::Admission)
         })
         .collect()
+}
+
+fn is_active_recipient(state: &ReputationState, recipient: &NodeId) -> bool {
+    state
+        .reputation_list()
+        .entries
+        .binary_search_by(|entry| entry.node_id.cmp(recipient))
+        .is_ok()
+        && !state.is_ejected(recipient)
 }

@@ -9,6 +9,7 @@ pub mod ordering;
 pub mod pruning;
 pub mod round;
 pub mod validation;
+pub mod verified_evidence;
 pub mod wave;
 pub mod weight_snapshot;
 
@@ -40,8 +41,10 @@ pub use finality::{
 };
 pub use fork_choice::{ForkChoice, collect_validator_tips, fork_choice, is_cordial};
 pub use ordering::{
-    OrderingCache, OrderingError, approved_blocks_for_leader, previous_final_leader, tau,
-    tau_with_cache, weighted_previous_final_leader, weighted_tau, weighted_tau_with_cache, xsort,
+    OrderingCache, OrderingError, WeightedEpochBoundary, WeightedEpochError,
+    approved_blocks_for_leader, previous_final_leader, tau, tau_with_cache,
+    weighted_previous_final_leader, weighted_tau, weighted_tau_after_epoch_boundary,
+    weighted_tau_at_leader, weighted_tau_with_cache, xsort,
 };
 pub use pruning::{
     CheckpointGc, PruneError, PruneReport, checkpoint_after_finality,
@@ -53,6 +56,10 @@ pub use round::{
 };
 pub use validation::{
     InvalidBlock, ValidationConfig, ValidationResult, validate_block, validated_insert,
+};
+pub use verified_evidence::{
+    EvidenceVerificationError, VerifiedEquivocationEvidence, decode_equivocation_evidence,
+    verify_equivocation_evidence,
 };
 pub use wave::{
     first_round_of_wave, is_first_round_of_wave, last_round_of_wave, leader_blocks_of_wave,

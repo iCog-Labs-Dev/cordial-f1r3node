@@ -33,6 +33,7 @@ fn block(round: u64, previous: Option<&ReputationBlock>, shard_id: &[u8]) -> Rep
             version: REPUTATION_BLOCK_VERSION,
             shard_id: shard_id.to_vec(),
             source_finalized_wave: round - 1,
+            source_checkpoint: None,
             round,
             previous_reputation_hash: previous.map(|block| reputation_block_hash(block).unwrap()),
             config_hash: [0x11; 32],

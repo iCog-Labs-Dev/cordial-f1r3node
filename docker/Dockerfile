@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
-# Builds the local f1r3node binary with the sibling cordial-f1r3node checkout.
-# Build context is the rho-calculus parent directory so the Dockerfile can copy:
-#   ./f1r3node
+# Builds the native f1r3node-rust binary beside the Cordial adapter workspace.
+# Build context is the parent directory so the Dockerfile can copy:
+#   ./f1r3node-rust
 #   ./cordial-f1r3node
 #
 # The companion Dockerfile.dockerignore keeps the context restricted to those
@@ -44,13 +44,13 @@ RUN --mount=type=cache,target=/usr/local/rustup/downloads \
 
 WORKDIR /build
 
-COPY f1r3node/ /build/f1r3node/
+COPY f1r3node-rust/ /build/f1r3node-rust/
 COPY cordial-f1r3node/ /build/cordial-f1r3node/
 
 # The source trees pin local developer toolchains. The demo image installs the
-# f1r3node pinned nightly once in this shared source layer and removes local
+# f1r3node-rust pinned nightly once in this shared source layer and removes local
 # overrides so both checkouts compile through the same compiler inside Docker.
-RUN rm -f /build/f1r3node/rust-toolchain.toml /build/cordial-f1r3node/rust-toolchain.toml
+RUN rm -f /build/f1r3node-rust/rust-toolchain.toml /build/cordial-f1r3node/rust-toolchain.toml
 
 FROM source AS cordial-conformance
 
@@ -59,13 +59,13 @@ CMD ["bash", "-lc", "/usr/local/cargo/bin/cargo test -p cordial-f1r3node-adapter
 
 FROM source AS node-builder
 
-WORKDIR /build/f1r3node
+WORKDIR /build/f1r3node-rust
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/f1r3node/target \
-    /usr/local/cargo/bin/cargo build --release -p node && \
-    cp /build/f1r3node/target/release/node /build/node-binary
+    --mount=type=cache,target=/build/f1r3node-rust/target \
+    /usr/local/cargo/bin/cargo build --locked --release -p node && \
+    cp /build/f1r3node-rust/target/release/node /build/node-binary
 
 FROM debian:bookworm-slim AS runtime
 
@@ -86,10 +86,7 @@ RUN mkdir -p /opt/docker/bin /var/lib/rnode && \
     chown -R daemon:daemon /opt/docker /var/lib/rnode
 
 COPY --from=node-builder --chmod=755 /build/node-binary /opt/docker/bin/node
-COPY --from=node-builder --chmod=755 /build/f1r3node/node/docker-entrypoint-rust.sh /opt/docker/bin/docker-entrypoint.sh
-COPY --from=node-builder /build/f1r3node/node/src/main/resources /opt/docker/node/src/main/resources
-COPY --from=node-builder /build/f1r3node/casper/src/main/resources /opt/docker/casper/src/main/resources
-COPY --from=node-builder /build/f1r3node/rholang/examples /opt/docker/rholang/examples
+COPY --from=node-builder --chmod=755 /build/f1r3node-rust/node/docker-entrypoint-rust.sh /opt/docker/bin/docker-entrypoint.sh
 
 EXPOSE 40400 40401 40402 40403 40404 40405
 

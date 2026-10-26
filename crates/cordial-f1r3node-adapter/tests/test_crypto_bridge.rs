@@ -9,7 +9,7 @@ use cordial_f1r3node_adapter::crypto_bridge::{
     SigAlgorithm, Signer, Verifier, compute_adapter_snapshot_hash,
 };
 
-use cordial_miners_core::crypto::{CryptoVerifier, hash_content as core_hash};
+use cordial_miners_core::crypto::{CryptoVerifier, block_hash as core_hash};
 use cordial_miners_core::types::{BlockContent, NodeId};
 use std::collections::HashSet;
 
@@ -379,7 +379,7 @@ fn block_hash_includes_system_deploys() {
 
 // ── F1r3flyCryptoAdapter tests ───────────────────────────────────────────
 // sk means private key and pk means public key
-// I used core_hash since it comes from cordial_miners_core::crypto::hash_content
+// I used core_hash since it comes from cordial_miners_core::crypto::block_hash
 fn make_content(payload: &[u8]) -> BlockContent {
     BlockContent {
         payload: payload.to_vec(),
@@ -392,9 +392,9 @@ fn make_content(payload: &[u8]) -> BlockContent {
 fn adapter_secp256k1_valid_signature_returns_ok() {
     let (sk, pk) = secp256k1_keypair();
     let content = make_content(b"test block");
-    let hash = core_hash(&content);
-    let signature = Secp256k1.sign(&hash, &sk).unwrap();
     let creator = NodeId(pk);
+    let hash = core_hash(&creator, &content);
+    let signature = Secp256k1.sign(&hash, &sk).unwrap();
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Secp256k1);
     assert!(adapter.verify_block(&content, &signature, &creator).is_ok());
 }
@@ -404,10 +404,10 @@ fn adapter_secp256k1_valid_signature_returns_ok() {
 fn adapter_secp256k1_corrupted_signature_returns_err() {
     let (sk, pk) = secp256k1_keypair();
     let content = make_content(b"test block");
-    let hash = core_hash(&content);
+    let creator = NodeId(pk);
+    let hash = core_hash(&creator, &content);
     let mut signature = Secp256k1.sign(&hash, &sk).unwrap();
     *signature.last_mut().unwrap() ^= 0xff; //flip last byte
-    let creator = NodeId(pk);
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Secp256k1);
     assert!(
         adapter
@@ -421,12 +421,12 @@ fn adapter_secp256k1_corrupted_signature_returns_err() {
 fn adapter_secp256k1_forged_signature_returns_err() {
     let (sk, pk) = secp256k1_keypair();
     let content = make_content(b"test block");
-    let hash = core_hash(&content);
+    let creator = NodeId(pk); //real creator
+    let hash = core_hash(&creator, &content);
     let _signature = Secp256k1.sign(&hash, &sk).unwrap();
     // let try our fake creater trying forging the content
     let (forger_sk, _forger_pk) = secp256k1_keypair();
     let forged_signature = Secp256k1.sign(&hash, &forger_sk).unwrap();
-    let creator = NodeId(pk); //real creator
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Secp256k1);
     assert!(
         adapter
@@ -450,11 +450,11 @@ fn adapter_secp256k1_empty_signature_returns_err() {
 fn adapter_secp256k1_tampered_content_returns_err() {
     let (sk, pk) = secp256k1_keypair();
     let content = make_content(b"test block");
-    let hash = core_hash(&content);
+    let creator = NodeId(pk);
+    let hash = core_hash(&creator, &content);
     let signature = Secp256k1.sign(&hash, &sk).unwrap();
 
     let tampered_content = make_content(b"I changed but I used the previous signature");
-    let creator = NodeId(pk);
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Secp256k1);
     assert!(
         adapter
@@ -469,9 +469,9 @@ fn adapter_secp256k1_tampered_content_returns_err() {
 fn adapter_ed25519_valid_signature_returns_ok() {
     let (sk, pk) = ed25519_keypair();
     let content = make_content(b"test block for ed25519");
-    let hash = core_hash(&content);
-    let signature = Ed25519.sign(&hash, &sk).unwrap();
     let creator = NodeId(pk.to_vec());
+    let hash = core_hash(&creator, &content);
+    let signature = Ed25519.sign(&hash, &sk).unwrap();
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Ed25519);
     assert!(adapter.verify_block(&content, &signature, &creator).is_ok());
 }
@@ -481,10 +481,10 @@ fn adapter_ed25519_valid_signature_returns_ok() {
 fn adapter_ed25519_corrupted_signature_returns_err() {
     let (sk, pk) = ed25519_keypair();
     let content = make_content(b"test block for ed25519");
-    let hash = core_hash(&content);
+    let creator = NodeId(pk.to_vec());
+    let hash = core_hash(&creator, &content);
     let mut signature = Ed25519.sign(&hash, &sk).unwrap();
     signature[0] ^= 0xff; //flip the first byte
-    let creator = NodeId(pk.to_vec());
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Ed25519);
     assert!(
         adapter
@@ -498,13 +498,13 @@ fn adapter_ed25519_corrupted_signature_returns_err() {
 fn adapter_ed25519_forged_signature_returns_err() {
     let (_sk, pk) = ed25519_keypair();
     let content = make_content(b"test block");
-    let hash = core_hash(&content);
+    let creator = NodeId(pk.to_vec()); // real creator
+    let hash = core_hash(&creator, &content);
 
     // let try our fake creator trying forging the content
     let (forger_sk, _forger_private_key) = ed25519_keypair();
     let forged_signature = Ed25519.sign(&hash, &forger_sk).unwrap();
 
-    let creator = NodeId(pk.to_vec()); // real creator
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Ed25519);
     assert!(
         adapter
@@ -529,12 +529,12 @@ fn ed25519_empty_signature_returns_err() {
 fn ed25519_tampered_content_returns_err() {
     let (sk, pk) = ed25519_keypair();
     let orginal_content = make_content(b"test block");
-    let hash = core_hash(&orginal_content);
+    let creator = NodeId(pk.to_vec());
+    let hash = core_hash(&creator, &orginal_content);
     let signature = Ed25519.sign(&hash, &sk).unwrap();
 
     // Try to verify same signature but with tampered content
     let tampered_content = make_content(b"Tampered content");
-    let creator = NodeId(pk.to_vec());
     let adapter = F1r3flyCryptoAdapter::new(SigAlgorithm::Ed25519);
     assert!(
         adapter
