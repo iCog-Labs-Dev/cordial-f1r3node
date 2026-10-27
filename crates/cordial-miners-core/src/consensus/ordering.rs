@@ -2,11 +2,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 
 use crate::block::Block;
-use crate::blocklace::Blocklace;
+use crate::blocklace::{Blocklace, CheckpointOrigin};
 use crate::consensus::approval::{ApprovalMemo, approves_with_memo};
 use crate::consensus::cordiality::{ratifies, weighted_ratifies};
 use crate::consensus::finality::{
-    final_leader_for_wave, latest_final_leader, latest_weighted_final_leader,
+    FinalityRule, final_leader_for_wave, latest_final_leader, latest_weighted_final_leader,
     leader_block_for_wave, weighted_final_leader_for_wave,
 };
 use crate::consensus::round::depth;
@@ -107,6 +107,10 @@ where
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OrderingError {
     CycleDetected,
+    IncompatibleCheckpointRule {
+        checkpoint_origin: CheckpointOrigin,
+        requested_rule: FinalityRule,
+    },
 }
 
 /// A previously finalized weighted output that a new weight epoch must retain.
@@ -388,6 +392,7 @@ where
 /// checkpoint) is not used as a floor.
 fn checkpoint_floor<F>(
     blocklace: &Blocklace,
+    rule: FinalityRule,
     current_leader: &BlockIdentity,
     wavelength: u64,
     leader_selection: F,
@@ -395,7 +400,7 @@ fn checkpoint_floor<F>(
 where
     F: Fn(u64) -> Option<NodeId>,
 {
-    let checkpoint = blocklace.checkpoint()?;
+    let checkpoint = blocklace.trusted_checkpoint(rule)?;
     if checkpoint == current_leader || !blocklace.precedes(checkpoint, current_leader) {
         return None;
     }
@@ -437,8 +442,13 @@ where
         return None;
     }
 
-    let checkpoint_floor =
-        checkpoint_floor(blocklace, current_leader, wavelength, leader_selection);
+    let checkpoint_floor = checkpoint_floor(
+        blocklace,
+        FinalityRule::Paper,
+        current_leader,
+        wavelength,
+        leader_selection,
+    );
     for wave in (0..current_wave).rev() {
         if let Some((checkpoint, checkpoint_wave)) = &checkpoint_floor
             && wave <= *checkpoint_wave
@@ -485,8 +495,13 @@ where
         return None;
     }
 
-    let checkpoint_floor =
-        checkpoint_floor(blocklace, current_leader, wavelength, leader_selection);
+    let checkpoint_floor = checkpoint_floor(
+        blocklace,
+        FinalityRule::Weighted,
+        current_leader,
+        wavelength,
+        leader_selection,
+    );
     for wave in (0..current_wave).rev() {
         if let Some((checkpoint, checkpoint_wave)) = &checkpoint_floor
             && wave <= *checkpoint_wave
@@ -526,6 +541,13 @@ pub fn tau<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    if blocklace.checkpoint_origin() == Some(CheckpointOrigin::WeightedFinal) {
+        return Err(OrderingError::IncompatibleCheckpointRule {
+            checkpoint_origin: CheckpointOrigin::WeightedFinal,
+            requested_rule: FinalityRule::Paper,
+        });
+    }
+
     let Some(latest_leader) = latest_final_leader(blocklace, wavelength, n, f, leader_selection)
     else {
         return Ok(Vec::new());
@@ -599,6 +621,13 @@ pub fn tau_with_cache<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    if blocklace.checkpoint_origin() == Some(CheckpointOrigin::WeightedFinal) {
+        return Err(OrderingError::IncompatibleCheckpointRule {
+            checkpoint_origin: CheckpointOrigin::WeightedFinal,
+            requested_rule: FinalityRule::Paper,
+        });
+    }
+
     sync_cache_generation(blocklace, cache);
 
     let Some(latest_leader) = latest_final_leader(blocklace, wavelength, n, f, leader_selection)
@@ -654,6 +683,13 @@ pub fn weighted_tau<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    if blocklace.checkpoint_origin() == Some(CheckpointOrigin::PaperFinal) {
+        return Err(OrderingError::IncompatibleCheckpointRule {
+            checkpoint_origin: CheckpointOrigin::PaperFinal,
+            requested_rule: FinalityRule::Weighted,
+        });
+    }
+
     let Some(latest_leader) =
         latest_weighted_final_leader(blocklace, wavelength, bonds, leader_selection)
     else {
@@ -684,6 +720,13 @@ pub fn weighted_tau_at_leader<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    if blocklace.checkpoint_origin() == Some(CheckpointOrigin::PaperFinal) {
+        return Err(OrderingError::IncompatibleCheckpointRule {
+            checkpoint_origin: CheckpointOrigin::PaperFinal,
+            requested_rule: FinalityRule::Weighted,
+        });
+    }
+
     let weights = WeightSnapshot::from_bonds(bonds);
     let config = WeightedTauConfig {
         wavelength,
@@ -884,6 +927,13 @@ pub fn weighted_tau_with_cache<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    if blocklace.checkpoint_origin() == Some(CheckpointOrigin::PaperFinal) {
+        return Err(OrderingError::IncompatibleCheckpointRule {
+            checkpoint_origin: CheckpointOrigin::PaperFinal,
+            requested_rule: FinalityRule::Weighted,
+        });
+    }
+
     sync_cache_generation(blocklace, cache);
 
     let Some(latest_leader) =
@@ -952,7 +1002,8 @@ where
         config.leader_selection,
     ) {
         tau_from_leader(blocklace, &previous, config, state)?;
-    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, leader) {
+    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, FinalityRule::Paper, leader)
+    {
         emit_checkpoint_prefix(blocklace, checkpoint, state);
     }
 
@@ -986,7 +1037,8 @@ where
 
     if let Some(previous) = previous_final_leader_cached(blocklace, leader, config, cache) {
         tau_from_leader_cached(blocklace, &previous, config, cache, state)?;
-    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, leader) {
+    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, FinalityRule::Paper, leader)
+    {
         emit_checkpoint_prefix(blocklace, checkpoint, state);
     }
 
@@ -1020,7 +1072,9 @@ where
         config.leader_selection,
     ) {
         weighted_tau_from_leader(blocklace, &previous, config, state)?;
-    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, leader) {
+    } else if let Some(checkpoint) =
+        checkpoint_predecessor(blocklace, FinalityRule::Weighted, leader)
+    {
         emit_weighted_checkpoint_prefix(blocklace, checkpoint, state);
     }
 
@@ -1055,7 +1109,9 @@ where
     if let Some(previous) = weighted_previous_final_leader_cached(blocklace, leader, config, cache)
     {
         weighted_tau_from_leader_cached(blocklace, &previous, config, cache, state)?;
-    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, leader) {
+    } else if let Some(checkpoint) =
+        checkpoint_predecessor(blocklace, FinalityRule::Weighted, leader)
+    {
         emit_weighted_checkpoint_prefix(blocklace, checkpoint, state);
     }
 
@@ -1073,7 +1129,9 @@ fn emit_checkpoint_prefix(
     leader: &BlockIdentity,
     state: &mut TauState,
 ) -> bool {
-    if blocklace.checkpoint() != Some(leader) || blocklace.checkpoint_order_prefix().is_empty() {
+    if blocklace.trusted_checkpoint(FinalityRule::Paper) != Some(leader)
+        || blocklace.checkpoint_order_prefix().is_empty()
+    {
         return false;
     }
 
@@ -1092,7 +1150,7 @@ fn emit_weighted_checkpoint_prefix(
     leader: &BlockIdentity,
     state: &mut TauState,
 ) -> bool {
-    if blocklace.checkpoint() != Some(leader)
+    if blocklace.trusted_checkpoint(FinalityRule::Weighted) != Some(leader)
         || blocklace.checkpoint_weighted_order_prefix().is_empty()
     {
         return false;
@@ -1110,9 +1168,10 @@ fn emit_weighted_checkpoint_prefix(
 
 fn checkpoint_predecessor<'a>(
     blocklace: &'a Blocklace,
+    rule: FinalityRule,
     leader: &BlockIdentity,
 ) -> Option<&'a BlockIdentity> {
-    let checkpoint = blocklace.checkpoint()?;
+    let checkpoint = blocklace.trusted_checkpoint(rule)?;
     if checkpoint == leader || !blocklace.precedes(checkpoint, leader) {
         return None;
     }

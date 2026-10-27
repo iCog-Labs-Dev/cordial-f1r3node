@@ -7,6 +7,15 @@ use crate::trace::{self, BlockLifecycleEvent, TraceEvent};
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CheckpointOrigin {
+    PaperFinal,
+    WeightedFinal,
+    Explicit,
+}
+
 // The blocklace B - a set of blocks satisfying the closure and axioms
 // From definition 2.3, A blocklace B is a set of blocks subject to some invariants.
 // since each block has a unique identity, we can represent the blocklace as a HashMap from BlockIdentity to Block content.
@@ -23,6 +32,7 @@ pub struct Blocklace {
     /// when a block was admitted.
     trusted_boundary_predecessors: HashMap<BlockIdentity, HashSet<BlockIdentity>>,
     pub(crate) checkpoint: Option<BlockIdentity>,
+    pub(crate) checkpoint_origin: Option<CheckpointOrigin>,
     pub(crate) checkpoint_depth: Option<u64>,
     pub(crate) checkpoint_order_prefix: Vec<BlockIdentity>,
     pub(crate) checkpoint_weighted_order_prefix: Vec<BlockIdentity>,
@@ -37,6 +47,7 @@ impl Blocklace {
             blocks: HashMap::new(),
             trusted_boundary_predecessors: HashMap::new(),
             checkpoint: None,
+            checkpoint_origin: None,
             checkpoint_depth: None,
             checkpoint_order_prefix: Vec::new(),
             checkpoint_weighted_order_prefix: Vec::new(),
@@ -129,11 +140,13 @@ impl Blocklace {
     pub(crate) fn set_checkpoint_state(
         &mut self,
         checkpoint: BlockIdentity,
+        origin: CheckpointOrigin,
         depth: u64,
         order_prefix: Vec<BlockIdentity>,
         weighted_order_prefix: Vec<BlockIdentity>,
     ) {
         self.checkpoint = Some(checkpoint);
+        self.checkpoint_origin = Some(origin);
         self.checkpoint_depth = Some(depth);
         self.checkpoint_order_prefix = order_prefix;
         self.checkpoint_weighted_order_prefix = weighted_order_prefix;
@@ -229,6 +242,27 @@ impl Blocklace {
         self.checkpoint.as_ref()
     }
 
+    pub fn checkpoint_origin(&self) -> Option<CheckpointOrigin> {
+        self.checkpoint_origin
+    }
+
+    /// Return the checkpoint identity only if its origin matches the requested finality rule.
+    /// Explicit checkpoints are not trusted as consensus final leaders.
+    pub fn trusted_checkpoint(
+        &self,
+        rule: crate::consensus::FinalityRule,
+    ) -> Option<&BlockIdentity> {
+        match (self.checkpoint_origin?, rule) {
+            (CheckpointOrigin::PaperFinal, crate::consensus::FinalityRule::Paper) => {
+                self.checkpoint.as_ref()
+            }
+            (CheckpointOrigin::WeightedFinal, crate::consensus::FinalityRule::Weighted) => {
+                self.checkpoint.as_ref()
+            }
+            _ => None,
+        }
+    }
+
     /// Logical depth of the checkpoint in the original, unpruned DAG.
     ///
     /// Consensus depth remains monotonic after pruning: descendants of the
@@ -237,11 +271,11 @@ impl Blocklace {
         self.checkpoint_depth
     }
 
-    pub(crate) fn checkpoint_order_prefix(&self) -> &[BlockIdentity] {
+    pub fn checkpoint_order_prefix(&self) -> &[BlockIdentity] {
         &self.checkpoint_order_prefix
     }
 
-    pub(crate) fn checkpoint_weighted_order_prefix(&self) -> &[BlockIdentity] {
+    pub fn checkpoint_weighted_order_prefix(&self) -> &[BlockIdentity] {
         &self.checkpoint_weighted_order_prefix
     }
 

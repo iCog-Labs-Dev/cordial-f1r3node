@@ -17,6 +17,14 @@ use crate::types::{BlockIdentity, NodeId};
 
 type RoundIndex = HashMap<u64, Vec<Block>>;
 
+/// Finality rule discriminator used to enforce that checkpoints proven under
+/// one rule are never trusted by another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FinalityRule {
+    Paper,
+    Weighted,
+}
+
 /// Return the unique leader block for a wave when exactly one exists.
 ///
 /// Per Definition A.10 of arXiv:2205.09174, a leader block is a block by
@@ -179,11 +187,12 @@ where
         else {
             continue;
         };
-        // Issue #170: the checkpoint records a leader already proven final.
+        // Issue #170 & #287: the checkpoint records a leader already proven final.
         // After pruning, `observe()` stops at the checkpoint boundary, so
         // re-deriving via `super_ratifies` undercounts approving creators and
-        // can regress finality. Trust the checkpoint instead of re-verifying it.
-        if blocklace.checkpoint() == Some(&leader.identity) {
+        // can regress finality. Trust the checkpoint only if its origin matches
+        // the paper finality rule.
+        if blocklace.trusted_checkpoint(FinalityRule::Paper) == Some(&leader.identity) {
             return Some(leader.identity);
         }
 
@@ -364,10 +373,11 @@ where
         else {
             continue;
         };
-        // Issue #170: same checkpoint-trust reasoning as latest_final_leader —
+        // Issue #170 & #287: same checkpoint-trust reasoning as latest_final_leader —
         // re-deriving against post-pruning collapsed evidence can regress the
-        // weighted final leader below its own checkpoint.
-        if blocklace.checkpoint() == Some(&leader.identity) {
+        // weighted final leader below its own checkpoint. Trust the checkpoint
+        // only if its origin matches the weighted finality rule.
+        if blocklace.trusted_checkpoint(FinalityRule::Weighted) == Some(&leader.identity) {
             return Some(leader.identity);
         }
 
