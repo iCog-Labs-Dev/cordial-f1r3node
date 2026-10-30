@@ -6,9 +6,9 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use crate::blocklace::Blocklace;
-use crate::consensus::finality::{latest_final_leader, latest_weighted_final_leader};
-use crate::consensus::ordering::{tau, weighted_tau, xsort};
+use crate::blocklace::{Blocklace, CheckpointOrigin};
+use crate::consensus::finality::{FinalityRule, latest_final_leader, latest_weighted_final_leader};
+use crate::consensus::ordering::{OrderingError, tau, weighted_tau, xsort};
 use crate::consensus::round::depth;
 use crate::types::{BlockIdentity, NodeId};
 
@@ -71,7 +71,12 @@ impl CheckpointGc<BlockIdentity> for Blocklace {
         checkpoint: &BlockIdentity,
     ) -> Result<PruneReport<BlockIdentity>, PruneError<BlockIdentity>> {
         let checkpoint_order_prefix = checkpoint_order_prefix(self, checkpoint);
-        self.prune_below_checkpoint_with_prefix(checkpoint, checkpoint_order_prefix, Vec::new())
+        self.prune_below_checkpoint_with_prefix(
+            checkpoint,
+            CheckpointOrigin::Explicit,
+            checkpoint_order_prefix,
+            Vec::new(),
+        )
     }
 }
 
@@ -79,6 +84,7 @@ impl Blocklace {
     fn prune_below_checkpoint_with_prefix(
         &mut self,
         checkpoint: &BlockIdentity,
+        origin: CheckpointOrigin,
         checkpoint_order_prefix: Vec<BlockIdentity>,
         checkpoint_weighted_order_prefix: Vec<BlockIdentity>,
     ) -> Result<PruneReport<BlockIdentity>, PruneError<BlockIdentity>> {
@@ -138,6 +144,7 @@ impl Blocklace {
 
         self.set_checkpoint_state(
             checkpoint.clone(),
+            origin,
             checkpoint_depth,
             checkpoint_order_prefix,
             checkpoint_weighted_order_prefix,
@@ -165,20 +172,33 @@ pub fn checkpoint_after_finality<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    // Do not advance a paper checkpoint on a DAG already pruned under weighted finality.
+    if blocklace.checkpoint_origin() == Some(CheckpointOrigin::WeightedFinal) {
+        return Ok(None);
+    }
+
     let Some(final_leader) = latest_final_leader(blocklace, wavelength, n, f, leader_selection)
     else {
         return Ok(None);
     };
 
-    if blocklace.checkpoint() == Some(&final_leader) {
+    if blocklace.trusted_checkpoint(FinalityRule::Paper) == Some(&final_leader) {
         return Ok(None);
     }
 
-    let checkpoint_order_prefix = tau(blocklace, wavelength, n, f, leader_selection)
-        .unwrap_or_else(|_| checkpoint_order_prefix(blocklace, &final_leader));
+    let checkpoint_order_prefix = match tau(blocklace, wavelength, n, f, leader_selection) {
+        Ok(prefix) => prefix,
+        Err(OrderingError::IncompatibleCheckpointRule { .. }) => return Ok(None),
+        Err(OrderingError::CycleDetected) => checkpoint_order_prefix(blocklace, &final_leader),
+    };
 
     blocklace
-        .prune_below_checkpoint_with_prefix(&final_leader, checkpoint_order_prefix, Vec::new())
+        .prune_below_checkpoint_with_prefix(
+            &final_leader,
+            CheckpointOrigin::PaperFinal,
+            checkpoint_order_prefix,
+            Vec::new(),
+        )
         .map(Some)
 }
 
@@ -196,23 +216,32 @@ pub fn checkpoint_after_weighted_finality<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    // Do not advance a weighted checkpoint on a DAG already pruned under paper finality.
+    if blocklace.checkpoint_origin() == Some(CheckpointOrigin::PaperFinal) {
+        return Ok(None);
+    }
+
     let Some(final_leader) =
         latest_weighted_final_leader(blocklace, wavelength, bonds, leader_selection)
     else {
         return Ok(None);
     };
 
-    if blocklace.checkpoint() == Some(&final_leader) {
+    if blocklace.trusted_checkpoint(FinalityRule::Weighted) == Some(&final_leader) {
         return Ok(None);
     }
 
     let checkpoint_weighted_order_prefix =
-        weighted_tau(blocklace, wavelength, bonds, leader_selection)
-            .unwrap_or_else(|_| checkpoint_order_prefix(blocklace, &final_leader));
+        match weighted_tau(blocklace, wavelength, bonds, leader_selection) {
+            Ok(prefix) => prefix,
+            Err(OrderingError::IncompatibleCheckpointRule { .. }) => return Ok(None),
+            Err(OrderingError::CycleDetected) => checkpoint_order_prefix(blocklace, &final_leader),
+        };
 
     blocklace
         .prune_below_checkpoint_with_prefix(
             &final_leader,
+            CheckpointOrigin::WeightedFinal,
             Vec::new(),
             checkpoint_weighted_order_prefix,
         )

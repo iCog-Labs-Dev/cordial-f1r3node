@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use cordial_miners_core::blocklace::Blocklace;
+use cordial_miners_core::blocklace::{Blocklace, CheckpointOrigin};
 use cordial_miners_core::consensus::finality::leader_block_for_wave;
 use cordial_miners_core::consensus::{
     CheckpointGc, checkpoint_after_finality, checkpoint_after_weighted_finality, depth,
@@ -709,4 +709,222 @@ fn legitimate_checkpoint_is_still_the_previous_final_leader_floor() {
         reached_c,
         "previous_final_leader search should have reached checkpoint floor C"
     );
+}
+
+#[test]
+fn mismatched_checkpoint_rule_between_paper_and_weighted_fails_closed() {
+    let wavelength = 3;
+    let n = 4;
+    let f = 1;
+    let weights = bonds(&[(1, 1), (2, 1), (3, 1), (4, 1), (5, 100)]);
+
+    // 1. Install a weighted finality checkpoint.
+    let mut weighted_lace = Blocklace::new();
+    let graph = insert_weighted_two_wave_checkpoint_graph(&mut weighted_lace);
+    let weighted_report =
+        checkpoint_after_weighted_finality(&mut weighted_lace, wavelength, &weights, leader_node1)
+            .expect("checkpoint_after_weighted_finality should not fail")
+            .expect("should establish a weighted checkpoint");
+    assert_eq!(weighted_report.checkpoint, graph.w1_leader.identity);
+
+    // Defect: Calling paper tau() on a blocklace checkpointed under weighted finality
+    // currently succeeds and silently drops/misorders pruned blocks because paper tau prefix is empty.
+    // It must fail closed with an error.
+    let paper_result = tau(&weighted_lace, wavelength, n, f, leader_node1);
+    assert!(
+        paper_result.is_err(),
+        "tau() on a weighted checkpoint must fail closed, but got Ok({paper_result:?})"
+    );
+
+    // 2. Install a paper finality checkpoint.
+    let mut paper_lace = Blocklace::new();
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+
+    let w0_leader = genesis(&v1, 1);
+    insert(&mut paper_lace, &w0_leader);
+    let w0_r1_v2 = child(&v2, 2, &[&w0_leader]);
+    let w0_r1_v3 = child(&v3, 3, &[&w0_leader]);
+    let w0_r1_v4 = child(&v4, 4, &[&w0_leader]);
+    for b in [&w0_r1_v2, &w0_r1_v3, &w0_r1_v4] {
+        insert(&mut paper_lace, b);
+    }
+    let w0_r2_v2 = child(&v2, 5, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    let w0_r2_v3 = child(&v3, 6, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    let w0_r2_v4 = child(&v4, 7, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    for b in [&w0_r2_v2, &w0_r2_v3, &w0_r2_v4] {
+        insert(&mut paper_lace, b);
+    }
+    let w1_leader = child(&v1, 8, &[&w0_r2_v2, &w0_r2_v3, &w0_r2_v4]);
+    insert(&mut paper_lace, &w1_leader);
+    let w1_r1_v2 = child(&v2, 9, &[&w1_leader]);
+    let w1_r1_v3 = child(&v3, 10, &[&w1_leader]);
+    let w1_r1_v4 = child(&v4, 11, &[&w1_leader]);
+    for b in [&w1_r1_v2, &w1_r1_v3, &w1_r1_v4] {
+        insert(&mut paper_lace, b);
+    }
+    let w1_r2_v2 = child(&v2, 12, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    let w1_r2_v3 = child(&v3, 13, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    let w1_r2_v4 = child(&v4, 14, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    for b in [&w1_r2_v2, &w1_r2_v3, &w1_r2_v4] {
+        insert(&mut paper_lace, b);
+    }
+
+    let paper_report = checkpoint_after_finality(&mut paper_lace, wavelength, n, f, leader_node1)
+        .expect("checkpoint_after_finality should not fail")
+        .expect("should establish a paper checkpoint");
+    assert_eq!(paper_report.checkpoint, w1_leader.identity);
+
+    // Defect: Calling weighted_tau() on a blocklace checkpointed under paper finality
+    // currently succeeds and silently drops/misorders pruned blocks because weighted tau prefix is empty.
+    // It must fail closed with an error.
+    let weighted_result = weighted_tau(&paper_lace, wavelength, &weights, leader_node1);
+    assert!(
+        weighted_result.is_err(),
+        "weighted_tau() on a paper checkpoint must fail closed, but got Ok({weighted_result:?})"
+    );
+}
+
+#[test]
+fn explicit_checkpoint_is_not_trusted_as_a_final_leader_by_either_rule() {
+    let mut lace = Blocklace::new();
+    let wavelength = 3;
+    let n = 4;
+    let f = 1;
+    let weights = bonds(&[(1, 1), (2, 1), (3, 1), (4, 1)]);
+
+    // Create an unratified leader block with just a single child.
+    // It has never been proven final under either paper or weighted finality.
+    let v1 = node(1);
+    let v2 = node(2);
+    let unratified_leader = genesis(&v1, 1);
+    let child_block = child(&v2, 2, &[&unratified_leader]);
+    insert(&mut lace, &unratified_leader);
+    insert(&mut lace, &child_block);
+
+    // Prior to checkpoint pruning, neither rule considers it final.
+    assert_eq!(
+        latest_final_leader(&lace, wavelength, n, f, leader_node1),
+        None,
+        "unratified leader must not be final before pruning"
+    );
+    assert_eq!(
+        latest_weighted_final_leader(&lace, wavelength, &weights, leader_node1),
+        None,
+        "unratified leader must not be weighted final before pruning"
+    );
+
+    // Prune with explicit prune_below_checkpoint.
+    lace.prune_below_checkpoint(&unratified_leader.identity)
+        .expect("explicit checkpoint pruning should succeed");
+
+    // Defect: An explicit checkpoint proves neither finality rule.
+    // Neither rule should blindly trust it as a final leader.
+    assert_eq!(
+        latest_final_leader(&lace, wavelength, n, f, leader_node1),
+        None,
+        "explicit checkpoint must not be trusted as a paper final leader"
+    );
+    assert_eq!(
+        latest_weighted_final_leader(&lace, wavelength, &weights, leader_node1),
+        None,
+        "explicit checkpoint must not be trusted as a weighted final leader"
+    );
+}
+
+#[test]
+fn checkpoint_after_finality_does_not_clobber_weighted_checkpoint() {
+    let wavelength = 3;
+    let weights = bonds(&[(1, 1), (2, 1), (3, 1), (4, 1), (5, 100)]);
+
+    let mut lace = Blocklace::new();
+    let graph = insert_weighted_two_wave_checkpoint_graph(&mut lace);
+    let weighted_report =
+        checkpoint_after_weighted_finality(&mut lace, wavelength, &weights, leader_node1)
+            .expect("checkpoint_after_weighted_finality should not fail")
+            .expect("should establish a weighted checkpoint");
+    assert_eq!(weighted_report.checkpoint, graph.w1_leader.identity);
+    assert_eq!(
+        lace.checkpoint_origin(),
+        Some(CheckpointOrigin::WeightedFinal)
+    );
+
+    // Attempting to advance a paper checkpoint on a weighted-checkpoint blocklace must be a no-op
+    // and must NOT overwrite the origin or clobber the weighted prefix.
+    let paper_result = checkpoint_after_finality(&mut lace, wavelength, 4, 1, leader_node1)
+        .expect("checkpoint_after_finality should not panic or error");
+    assert_eq!(paper_result, None);
+    assert_eq!(
+        lace.checkpoint_origin(),
+        Some(CheckpointOrigin::WeightedFinal)
+    );
+    assert_eq!(lace.checkpoint(), Some(&graph.w1_leader.identity));
+    assert!(!lace.checkpoint_weighted_order_prefix().is_empty());
+}
+
+#[test]
+fn checkpoint_after_weighted_finality_does_not_clobber_paper_checkpoint() {
+    let wavelength = 3;
+    let n = 4;
+    let f = 1;
+    let weights = bonds(&[(1, 1), (2, 1), (3, 1), (4, 1)]);
+
+    let mut paper_lace = Blocklace::new();
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+
+    let w0_leader = genesis(&v1, 1);
+    insert(&mut paper_lace, &w0_leader);
+    let w0_r1_v2 = child(&v2, 2, &[&w0_leader]);
+    let w0_r1_v3 = child(&v3, 3, &[&w0_leader]);
+    let w0_r1_v4 = child(&v4, 4, &[&w0_leader]);
+    for b in [&w0_r1_v2, &w0_r1_v3, &w0_r1_v4] {
+        insert(&mut paper_lace, b);
+    }
+    let w0_r2_v2 = child(&v2, 5, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    let w0_r2_v3 = child(&v3, 6, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    let w0_r2_v4 = child(&v4, 7, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    for b in [&w0_r2_v2, &w0_r2_v3, &w0_r2_v4] {
+        insert(&mut paper_lace, b);
+    }
+    let w1_leader = child(&v1, 8, &[&w0_r2_v2, &w0_r2_v3, &w0_r2_v4]);
+    insert(&mut paper_lace, &w1_leader);
+    let w1_r1_v2 = child(&v2, 9, &[&w1_leader]);
+    let w1_r1_v3 = child(&v3, 10, &[&w1_leader]);
+    let w1_r1_v4 = child(&v4, 11, &[&w1_leader]);
+    for b in [&w1_r1_v2, &w1_r1_v3, &w1_r1_v4] {
+        insert(&mut paper_lace, b);
+    }
+    let w1_r2_v2 = child(&v2, 12, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    let w1_r2_v3 = child(&v3, 13, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    let w1_r2_v4 = child(&v4, 14, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    for b in [&w1_r2_v2, &w1_r2_v3, &w1_r2_v4] {
+        insert(&mut paper_lace, b);
+    }
+
+    let paper_report = checkpoint_after_finality(&mut paper_lace, wavelength, n, f, leader_node1)
+        .expect("checkpoint_after_finality should not fail")
+        .expect("should establish a paper checkpoint");
+    assert_eq!(paper_report.checkpoint, w1_leader.identity);
+    assert_eq!(
+        paper_lace.checkpoint_origin(),
+        Some(CheckpointOrigin::PaperFinal)
+    );
+
+    // Attempting to advance a weighted checkpoint on a paper-checkpoint blocklace must be a no-op
+    // and must NOT overwrite the origin or clobber the paper prefix.
+    let weighted_result =
+        checkpoint_after_weighted_finality(&mut paper_lace, wavelength, &weights, leader_node1)
+            .expect("checkpoint_after_weighted_finality should not panic or error");
+    assert_eq!(weighted_result, None);
+    assert_eq!(
+        paper_lace.checkpoint_origin(),
+        Some(CheckpointOrigin::PaperFinal)
+    );
+    assert_eq!(paper_lace.checkpoint(), Some(&w1_leader.identity));
+    assert!(!paper_lace.checkpoint_order_prefix().is_empty());
 }
