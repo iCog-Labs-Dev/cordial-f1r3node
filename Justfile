@@ -52,6 +52,10 @@ ci:
     just test
     just check-core-boundaries
 
+# Issue #285: validate Rust slashing fixtures and replay the Lean reference.
+slashing-conformance:
+    bash scripts/slashing_conformance.sh
+
 lean-build:
     cd lean && lake build
 

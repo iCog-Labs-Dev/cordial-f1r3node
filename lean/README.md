@@ -94,3 +94,11 @@ before opening or updating a PR, not just `just lean-build`.
    `finality.rs`, `ordering.rs`, `blocklace.rs` — the code being verified.
 
 Each individual issue lists additional issue-specific reading.
+
+## PoR slashing conformance
+
+`just slashing-conformance` validates deterministic production Rust fixtures and
+replays them through `SlashingRef`, including schema and result mutation tests.
+See [the versioned schema and trust boundary](../docs/lean/11-slashing-conformance.md).
+These fixtures cover structural penalty transitions; they do not verify semantic
+evidence authentication or the rating/blend/clamp pipeline in Lean.

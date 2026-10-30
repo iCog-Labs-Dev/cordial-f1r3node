@@ -6,6 +6,7 @@ on:
     paths:
       - "lean/**"
       - "crates/cordial-miners-core/**"
+      - "crates/cordial-por/**"
       - "docs/lean/*.md"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -15,12 +16,15 @@ on:
       - "Justfile"
       - "scripts/issue188_mutation_test.sh"
       - "scripts/issue188_benchmark.sh"
+      - "scripts/slashing_conformance.sh"
+      - "scripts/tests/test_slashing_replay.py"
       - ".github/workflows/lean.yml"
   pull_request:
     branches: ["lean-q1", "dev", "master"]
     paths:
       - "lean/**"
       - "crates/cordial-miners-core/**"
+      - "crates/cordial-por/**"
       - "docs/lean/*.md"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -30,6 +34,8 @@ on:
       - "Justfile"
       - "scripts/issue188_mutation_test.sh"
       - "scripts/issue188_benchmark.sh"
+      - "scripts/slashing_conformance.sh"
+      - "scripts/tests/test_slashing_replay.py"
       - ".github/workflows/lean.yml"
     types: [opened, synchronize, reopened]
 
@@ -107,6 +113,12 @@ jobs:
       - name: Reject parser and semantic negative traces
         working-directory: blocklace/lean
         run: lake exe conformance_tests
+
+      - name: Install pinned slashing conformance toolchain
+        run: rustup toolchain install nightly-2026-02-09 --profile minimal
+
+      - name: Replay production PoR slashing fixtures
+        run: bash scripts/slashing_conformance.sh
 
       - name: Reject actual weakened Rust threshold
         run: bash scripts/issue188_mutation_test.sh
