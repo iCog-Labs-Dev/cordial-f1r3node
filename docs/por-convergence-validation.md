@@ -77,10 +77,10 @@ python3 -B -m unittest \
 Export multi-round trajectories:
 
 ```bash
-POR_CONVERGENCE_OUTPUT=/tmp/por-convergence \
+POR_CONVERGENCE_OUTPUT="$PWD/docs/demos/traces" \
   cargo test -j 1 -p cordial-f1r3node-adapter \
   --test test_por_checkpoint_penalties \
-  multi_round_ranking_and_slashing_convergence -- --exact
+  multi_round_ranking_and_slashing_convergence -- --exact --ignored
 ```
 
 Each scenario writes JSON with checkpoint identity, active and retained

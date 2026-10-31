@@ -1,4 +1,14 @@
 //! Checkpoint carriers must be verified, complete, and confined to their window.
+#[path = "support/por_event_trace.rs"]
+mod por_event_trace;
+macro_rules! trace_event {
+    ($kind:expr, $round:expr, $payload:expr $(,)?) => {
+        if por_event_trace::enabled() {
+            por_event_trace::emit($kind, $round, $payload);
+        }
+    };
+}
+
 use cordial_f1r3node_adapter::{
     ordered_output::OrderedFinalizedOutput,
     por::{
@@ -64,6 +74,15 @@ fn raw(seed: u8, tag: u8) -> CordialEquivocationEvidence {
 }
 fn carrier(claim: &CordialEquivocationEvidence, round: u64) -> PorEquivocationAuthorization {
     let proof = verify_equivocation_evidence(claim, &Blocklace::new()).unwrap();
+    trace_event!(
+        "equivocation_verified",
+        round,
+        serde_json::json!({
+            "validator": (1..=4u8).find(|seed| node(*seed) == claim.validator).map(|seed| format!("validator-{seed}")),
+            "evidence_round": claim.round,
+            "blocks": claim.blocks.iter().map(|block| serde_json::json!({"id": hex::encode(block.identity.content_hash), "parents": block.content.predecessors.iter().map(|parent| hex::encode(parent.content_hash)).collect::<Vec<_>>()})).collect::<Vec<_>>(),
+        })
+    );
     PorEquivocationAuthorization {
         shard_id: b"root".to_vec(),
         source_finalized_wave: 0,
@@ -113,6 +132,15 @@ impl Fixture {
             let block = signed(1, payload, ids.last().cloned().into_iter().collect());
             lace.insert(block.clone(), &crypto::Secp256k1Scheme)
                 .unwrap();
+            trace_event!(
+                "block_added",
+                index / 16 + 1,
+                serde_json::json!({
+                    "id": hex::encode(block.identity.content_hash), "creator": "validator-1", "height": index,
+                    "parents": block.content.predecessors.iter().map(|parent| hex::encode(parent.content_hash)).collect::<Vec<_>>(),
+                    "authorization_count": if index % 16 == 8 { windows[(index / 16) as usize].len() } else { 0 },
+                }),
+            );
             ids.push(block.identity);
         }
         let output = OrderedFinalizedOutput::new(ids.clone(), ids.last().cloned(), 3, 4, ids.len())
@@ -157,6 +185,11 @@ impl Fixture {
             &outbox,
         )
         .unwrap();
+        trace_event!(
+            "ratings_staged",
+            round,
+            serde_json::json!({"observer": local, "count": count, "ejected": state.is_ejected(&node(local))}),
+        );
         if state.is_ejected(&node(local)) {
             assert_eq!(count, 0);
             assert!(
@@ -179,7 +212,8 @@ impl Fixture {
             );
         }
         // Each observer has its own exchange and delivery schedule. Closure
-        // must wait for the missing peers rather than accepting a local subset.
+        // must wait for missing required ratings, but empty peer batches are
+        // already complete under the checkpoint collector contract.
         let mut peers: Vec<u8> = (1..=4).collect();
         peers.rotate_left(usize::from(local - 1));
         if local.is_multiple_of(2) {
@@ -198,9 +232,31 @@ impl Fixture {
             &exchange,
         )
         .unwrap();
-        assert!(
+        trace_event!(
+            "closure_checked",
+            round,
+            serde_json::json!({"observer": local, "complete": pending.is_some()}),
+        );
+        let mut missing_peer_ratings = false;
+        for &seed in &peers {
+            if seed == local || state.is_ejected(&node(seed)) {
+                continue;
+            }
+            let required = cordial_f1r3node_adapter::por::interactions::
+                admit_checkpoint_block_production_interactions(
+                    &self.lace,
+                    &self.output,
+                    &checkpoint,
+                    &node(seed),
+                    state,
+                )
+                .unwrap();
+            missing_peer_ratings |= !required.is_empty();
+        }
+        assert_eq!(
             pending.is_none(),
-            "a delayed peer batch must prevent closure"
+            missing_peer_ratings,
+            "round {round}, observer {local}: closure must wait exactly when peers have required ratings"
         );
         for seed in peers {
             if seed == local || state.is_ejected(&node(seed)) {
@@ -223,6 +279,7 @@ impl Fixture {
             if local.is_multiple_of(2) {
                 ratings.reverse();
             }
+            let published_count = ratings.len();
             for rating in ratings {
                 let encoded =
                     BlockProductionRatingEnvelopeV2::new(checkpoint.rating_source(), rating)
@@ -231,6 +288,11 @@ impl Fixture {
                 publisher.publish(&encoded).unwrap();
                 publisher.publish(&encoded).unwrap();
             }
+            trace_event!(
+                "peer_batch_published",
+                round,
+                serde_json::json!({"observer": local, "peer": seed, "count": published_count, "copies_per_rating": 2}),
+            );
         }
         // An ejected key can still write a signed file. Such files must not
         // enter the batch or prevent eligible observers from closing it.
@@ -255,6 +317,7 @@ impl Fixture {
             let publisher = exchange
                 .checkpoint_broadcaster(checkpoint.rating_source(), node(seed))
                 .unwrap();
+            let stale_count = stale.ratings.len();
             for rating in stale.ratings {
                 publisher
                     .publish(
@@ -264,8 +327,13 @@ impl Fixture {
                     )
                     .unwrap();
             }
+            trace_event!(
+                "excluded_batch_published",
+                round,
+                serde_json::json!({"observer": local, "peer": seed, "count": stale_count, "copies_per_rating": 1})
+            );
         }
-        close_checkpoint_rating_exchange_if_complete(
+        let completed = close_checkpoint_rating_exchange_if_complete(
             &self.lace,
             &self.output,
             &checkpoint,
@@ -277,7 +345,13 @@ impl Fixture {
             &exchange,
         )
         .unwrap()
-        .unwrap()
+        .unwrap();
+        trace_event!(
+            "checkpoint_closed",
+            round,
+            serde_json::json!({"observer": local}),
+        );
+        completed
     }
 }
 
@@ -909,6 +983,7 @@ fn multi_round_ranking_and_slashing_convergence() {
         ("isolated", vec![2], [1000, 1000, 1000, 1000]),
         ("correlated", vec![2, 3], [1000, 1000, 1000, 1000]),
     ] {
+        let _event_trace = por_event_trace::start(name, initial, ROUNDS);
         let mut windows = vec![vec![]; ROUNDS];
         windows[SHOCK - 1] = offenders
             .iter()
@@ -927,6 +1002,11 @@ fn multi_round_ranking_and_slashing_convergence() {
         let mut stable = 0;
         let mut trace = Vec::new();
         for round in 1..=ROUNDS {
+            trace_event!(
+                "checkpoint_started",
+                round as u64,
+                serde_json::json!({"weights": previous, "window_start": (round - 1) * 16, "window_end": round * 16 - 1}),
+            );
             let mut checkpoint = None;
             let pre_shock = stores[0].state().unwrap().clone();
             for (index, store) in stores.iter_mut().enumerate() {
@@ -943,6 +1023,16 @@ fn multi_round_ranking_and_slashing_convergence() {
                     .apply_completed_checkpoint_round(&complete, &fixture.config, b"root")
                     .unwrap();
                 let hash = cordial_por::reputation_block_hash(&result.block).unwrap();
+                trace_event!(
+                    "observer_committed",
+                    round as u64,
+                    serde_json::json!({
+                        "observer": index + 1, "checkpoint": hex::encode(hash),
+                        "weights": demo_weights(store.state().unwrap(), &fixture.membership),
+                        "retained": (1..=4u8).map(|seed| (format!("validator-{seed}"), demo_retained(store.state().unwrap(), &node(seed)))).collect::<std::collections::BTreeMap<_,_>>(),
+                        "excluded": (1..=4u8).filter(|seed| store.state().unwrap().is_ejected(&node(*seed))).map(|seed| format!("validator-{seed}")).collect::<Vec<_>>(),
+                    }),
+                );
                 assert_eq!(
                     *checkpoint.get_or_insert(hash),
                     hash,
@@ -981,7 +1071,7 @@ fn multi_round_ranking_and_slashing_convergence() {
             } else {
                 0
             };
-            for store in &stores {
+            for (observer_index, store) in stores.iter().enumerate() {
                 assert_eq!(store.state().unwrap(), stores[0].state().unwrap());
                 for &offender in &offenders {
                     if round >= SHOCK {
@@ -1037,6 +1127,15 @@ fn multi_round_ranking_and_slashing_convergence() {
                                 demo_retained(store.state().unwrap(), &node(offender)),
                                 expected
                             );
+                            trace_event!(
+                                "penalty_verified",
+                                round as u64,
+                                serde_json::json!({
+                                    "observer": observer_index + 1, "validator": format!("validator-{offender}"),
+                                    "prior": prior, "offending_weight": offending, "total_weight": total,
+                                    "penalty": penalty, "scale": fixture.config.scale, "retained": expected,
+                                })
+                            );
                         }
                     }
                 }
@@ -1066,6 +1165,11 @@ fn multi_round_ranking_and_slashing_convergence() {
                     })
                 ).collect::<Vec<_>>(),
             }));
+            trace_event!(
+                "round_completed",
+                round as u64,
+                trace.last().unwrap().clone(),
+            );
             previous = weights;
             if round == SHOCK || round == SHOCK + 1 {
                 // Recover every observer, not just the first one.
@@ -1084,11 +1188,21 @@ fn multi_round_ranking_and_slashing_convergence() {
                         recovered
                     })
                     .collect();
+                trace_event!(
+                    "observers_restarted",
+                    round as u64,
+                    serde_json::json!({"observers": [1,2,3,4], "state_verified": true}),
+                );
             }
         }
         assert!(
             stable >= 8,
             "{name}: no sustained convergence by round {ROUNDS}"
+        );
+        trace_event!(
+            "run_completed",
+            ROUNDS as u64,
+            serde_json::json!({"status": "passed", "stable_rounds": stable}),
         );
         if let Ok(directory) = std::env::var("POR_CONVERGENCE_OUTPUT") {
             fs::create_dir_all(&directory).unwrap();

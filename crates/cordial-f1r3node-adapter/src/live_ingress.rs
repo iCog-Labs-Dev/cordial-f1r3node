@@ -604,12 +604,13 @@ impl<A> LiveIngress<A> {
                 "initial epoch weights changed".into(),
             ));
         }
-        if let Some(active) = &self.future_epoch 
-            && self.bonds != active.new_weights() {
-                return Err(SnapshotError::EpochReplay(
-                    "active epoch weights changed".into(),
-                ));
-            }
+        if let Some(active) = &self.future_epoch
+            && self.bonds != active.new_weights()
+        {
+            return Err(SnapshotError::EpochReplay(
+                "active epoch weights changed".into(),
+            ));
+        }
         let mut authorized: Vec<_> = self.bonds.keys().cloned().collect();
         authorized.sort();
         let output =

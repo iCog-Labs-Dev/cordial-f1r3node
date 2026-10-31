@@ -46,7 +46,7 @@ function play() {
     index++; render();
   }, Number($("speed").value));
 }
-function selectScenario(name) { stop(); selected=name; index=0; notify(""); render(); }
+function selectScenario(name) { window.pausePorReplay?.(); stop(); selected=name; index=0; notify(""); render(); }
 function selectRound(next) { index=Math.max(0,Math.min(rows().length-1,next)); render(); }
 
 function parseTrace(data, filename) {
@@ -162,6 +162,7 @@ function render() {
   drawInspector(run,row,prev,names);
   drawLedger(row,prev,names);
   drawChecks(run,row);
+  window.renderPorReplay?.();
   $("event-track").replaceChildren();
   let lastMarker=-100;
   data.forEach((sample,i)=>{
@@ -429,7 +430,7 @@ async function pollLive() {
   } catch {liveReachable=false;}
   renderLive();setTimeout(pollLive,2500);
 }
-function openImport() {stop();$("import-message").textContent="";$("import-dialog").showModal();}
+function openImport() {window.pausePorReplay?.();stop();$("import-message").textContent="";$("import-dialog").showModal();}
 ["import-top","import-inline","empty-import"].forEach(id=>$(id).addEventListener("click",openImport));
 $("close-import").addEventListener("click",()=>$("import-dialog").close());
 $("import-dialog").addEventListener("click",event=>{if(event.target===$("import-dialog")){const rect=event.target.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)event.target.close();}});
@@ -461,6 +462,7 @@ $("copy-checkpoint").addEventListener("click",async()=>{
 });
 document.addEventListener("keydown",event=>{
   if($("import-dialog").open||/^(INPUT|SELECT|BUTTON|TEXTAREA|A)$/.test(event.target.tagName)||event.ctrlKey||event.metaKey||event.altKey)return;
+  if ($("explorer-view").hidden) return;
   const rect=$("chart-wrap").getBoundingClientRect();if(rect.bottom<0||rect.top>window.innerHeight)return;
   if(event.key==="ArrowRight"){event.preventDefault();stop();selectRound(index+1);}
   if(event.key==="ArrowLeft"){event.preventDefault();stop();selectRound(index-1);}

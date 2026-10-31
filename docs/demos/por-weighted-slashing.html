@@ -5,7 +5,7 @@
 <meta name="theme-color" content="#163c35">
 <meta name="description" content="Explore Proof of Reputation: ratings, voting weight, slashing and recovery across finalized checkpoints.">
 <title>PoR Observatory · Cordial Miners</title>
-<link rel="stylesheet" href="por-weighted-slashing.css"><script src="por-weighted-slashing.js" defer></script>
+<link rel="stylesheet" href="por-weighted-slashing.css?v=20261029-2"><link rel="stylesheet" href="por-replay.css?v=20261029-3"><script src="por-weighted-slashing.js?v=20261029-2" defer></script><script src="por-replay.js?v=20261029-3" defer></script><script src="por-event-cinema.js?v=20261029-3" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#workspace">Skip to simulation</a>
@@ -34,6 +34,43 @@
 </div></section>
 <div class="source-banner"><span class="source-icon" aria-hidden="true">i</span><div><strong id="source-title">Guided example · saved two-round fixture</strong><p id="source-description">A historical example of isolated slashing. It is not a result from the new convergence tests.</p></div><button class="text-button" id="import-inline">Load your run ↥</button></div>
 <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+<div class="replay-tabs" role="tablist" aria-label="Simulation view"><button id="explorer-tab" role="tab" aria-selected="true" aria-controls="explorer-view">Results explorer</button><button id="animation-tab" role="tab" aria-selected="false" aria-controls="animation-view" tabindex="-1">Animation & live replay</button></div>
+<section id="animation-view" role="tabpanel" aria-labelledby="animation-tab" hidden>
+<div id="event-cinema" class="cinema">
+<header class="cinema-heading"><div><p class="eyebrow">PROTOCOL EVENT CINEMA</p><h2>Watch the checkpoint take shape.</h2><p>Actual fixture blocks, observer exchanges, state commits, and convergence—one event at a time.</p></div><span id="cinema-status" class="cinema-status">Awaiting event trace</span></header>
+<div class="cinema-toolbar"><label class="button primary">Open trace<input id="cinema-file" type="file" accept=".jsonl,.json" class="sr-only"></label><button class="button" id="cinema-snapshots">Use selected result snapshots</button><label>Live scenario <select id="cinema-scenario"><option value="honest">Honest</option><option value="unequal">Unequal</option><option value="isolated">Isolated</option><option value="correlated">Correlated</option></select></label><button class="button" id="cinema-connect">Connect live</button><button class="button" id="cinema-download" disabled>Save event trace</button></div>
+<p id="cinema-message" role="status" aria-live="polite">Load a .events.jsonl file or connect to the Python replay server. Existing result JSON supports outcome playback only; it has no DAG or delivery events.</p>
+<div class="cinema-screen">
+<div class="cinema-hud"><span id="cinema-run">NO RUN LOADED</span><span id="cinema-clock">00:00.000</span><span id="cinema-round">ROUND —</span><span id="cinema-count">0 EVENTS</span></div>
+<div class="cinema-empty" id="cinema-empty"><span>01 → 02 → 03</span><h3>Bring the test into view.</h3><p>A detailed trace records what actually happened. Start a traced run to watch it arrive live, or open a saved trace to replay it.</p></div>
+<div id="cinema-content" hidden>
+<div class="cinema-camera"><strong>Shared fixture DAG</strong><label><input id="cinema-follow" type="checkbox" checked> Follow checkpoint</label><label>Window <input id="cinema-window" type="number" min="1" max="128" value="1"></label><label>Blocks <select id="cinema-zoom"><option value="16">16</option><option value="8">8</option><option value="32">32</option></select></label></div>
+<div class="cinema-svg-scroll"><svg id="cinema-dag" viewBox="0 0 1100 260" role="img" aria-label="Recorded fixture DAG with validator lanes"></svg></div>
+<p id="cinema-dag-caption" class="cinema-caption"></p><div id="cinema-block-detail" class="cinema-block-detail">Select a block to inspect its identity and parents.</div>
+<div class="cinema-middle"><div><h3>Observer exchanges <small><span id="cinema-order-note">Actual harness order · illustrative travel time</span></small></h3><div class="cinema-svg-scroll"><svg id="cinema-network" viewBox="0 0 600 280" role="img" aria-label="Rating batches and observer checkpoint status"></svg></div></div><aside class="cinema-event"><span id="cinema-event-kind"></span><h3 id="cinema-event-title"></h3><p id="cinema-event-description"></p><div id="cinema-event-facts"></div></aside></div>
+<div id="cinema-proof" class="cinema-proof" hidden></div><div class="cinema-ledger" id="cinema-ledger"></div>
+<div class="cinema-bottom"><section><h3>Reputation through completed rounds</h3><svg id="cinema-chart" viewBox="0 0 680 180" role="img" aria-label="Reputation history from completed checkpoint events"></svg><p id="cinema-convergence"></p></section><section><h3>Recent events</h3><ol id="cinema-log"></ol></section></div>
+</div></div>
+<div class="cinema-transport"><button class="button primary" id="cinema-play" disabled>Play</button><button class="button" id="cinema-prev" disabled>← Event</button><button class="button" id="cinema-next" disabled>Event →</button><label>Rate <select id="cinema-speed"><option value="900">1×</option><option value="225">4×</option><option value="75">12×</option><option value="16">60×</option></select></label><label><input id="cinema-tail" type="checkbox" checked> Follow live</label><button class="button" id="cinema-checkpoint" disabled>Next checkpoint</button><button class="button" id="cinema-slash" disabled>Jump to slash</button><button class="button" id="cinema-latest" disabled>Latest event</button></div>
+<label class="cinema-timeline">Event timeline<input id="cinema-timeline" type="range" min="0" max="0" value="0" disabled><output id="cinema-timeline-label">—</output></label>
+<details class="setup-details"><summary>Capture a live playthrough</summary><p>Use the Python replay server instead of the plain HTTP server. In another terminal, run the test with POR_EVENT_OUTPUT set. Events are appended as the test progresses. A partial trace is not a passing result.</p><pre><code>python3 docker/scripts/serve-por-replay.py --events docs/demos/traces --port 8765
+
+POR_EVENT_OUTPUT="$PWD/docs/demos/traces" POR_CONVERGENCE_OUTPUT="$PWD/docs/demos/traces" cargo test --release -p cordial-f1r3node-adapter --test test_por_checkpoint_penalties multi_round_ranking_and_slashing_convergence -- --exact --ignored --nocapture</code></pre><p>The DAG is shared fixture input, not independently received local DAGs. Peer events describe publishing to an observer's file exchange; individual network packets and CPU operations are not traced. No Docker is required.</p></details>
+</div>
+<details class="legacy-walkthrough"><summary>Open the earlier schematic walkthrough</summary>
+
+<div class="panel replay-shell">
+<div class="panel-heading"><div><p class="eyebrow">CHECKPOINT REPLAY</p><h2>From evidence to voting power.</h2></div><span class="badge" id="replay-position"></span></div>
+<p class="replay-boundary">Numerical outcomes come from the selected file. DAG blocks, rating flow, and processing stages are schematic: the export contains no block edges, delivery times, or intermediate observer states. Animation speed is illustrative.</p>
+<div class="replay-controls"><button class="button primary" id="replay-play">Play walkthrough</button><button class="button" id="replay-back">Previous stage</button><button class="button" id="replay-next">Next stage</button><label>Speed <select id="replay-speed"><option value="1800">1×</option><option value="900">2×</option><option value="360">5×</option></select></label><button class="button" id="replay-fault">Jump to fault</button><button class="button" id="replay-end">Final round</button></div>
+<label class="replay-scrub">Recorded round <input id="replay-slider" type="range" min="0" max="0" value="0"><output id="replay-round"></output></label>
+<div id="replay-stages" class="replay-stages" aria-label="Checkpoint processing stages"></div>
+<div class="replay-narrative" aria-live="polite"><span id="replay-evidence" class="eyebrow"></span><h3 id="replay-title"></h3><p id="replay-description"></p></div>
+<div class="replay-grid"><section class="replay-scene"><div class="section-label"><h3>Local DAG · schematic</h3><span>Not a block trace</span></div><svg id="replay-dag" viewBox="0 0 680 210" role="img" aria-label="Schematic chain of checkpoint blocks"></svg><p id="replay-dag-note"></p><div id="replay-observers" class="replay-observers"></div><p class="replay-caption">Observer badges repeat the exported agreement outcome. Delivery order and individual observer snapshots are not available.</p></section>
+<section class="replay-state"><h3>Checkpoint outcome</h3><p id="replay-state-note"></p><div id="replay-balances"></div><div id="replay-penalty" class="replay-penalty"></div></section></div>
+<div class="replay-bottom"><section><h3>Convergence through this round</h3><svg id="replay-trend" viewBox="0 0 680 170" role="img" aria-label="Recorded active reputation up to selected round"></svg><div id="replay-legend" class="legend"></div><p id="replay-stability"></p></section><section><h3>Checkpoint record</h3><dl id="replay-record"></dl><p class="replay-caption">A settled ranking is not evidence of new consensus finality. This replay does not execute the protocol.</p></section></div>
+</div></details></section>
+<div id="explorer-view" role="tabpanel" aria-labelledby="explorer-tab">
 <section class="metrics" aria-label="Selected round metrics">
 <div class="metric"><span>Selected round</span><strong id="metric-round">—</strong><small id="metric-round-note">Finalized PoR checkpoint</small></div>
 <div class="metric"><span>Total active reputation</span><strong id="metric-total">—</strong><small>Retained capital is excluded</small></div>
@@ -63,6 +100,7 @@
 <div class="table-scroll"><table><thead><tr><th scope="col">Validator</th><th scope="col">Active</th><th scope="col">Change</th><th scope="col">Retained</th><th scope="col">Vote share</th><th scope="col">Status</th></tr></thead><tbody id="validator-rows"></tbody></table></div><p class="table-note">An ejected key keeps zero voting weight. Retained reputation is separate and does not grant re-entry.</p></div>
 <div class="panel checks-panel"><div class="panel-heading"><div><p class="eyebrow">READING THE EVIDENCE</p><h2>What this run tells us</h2></div></div><div id="checks"></div><p class="checks-note" id="checks-note">A saved example explains the mechanism. It does not establish long-run convergence.</p></div>
 </section>
+</div>
 <section class="live-section" id="live">
 <div class="section-heading"><div><p class="eyebrow">LIVE OBSERVERS</p><h2>Four views of the same network.</h2><p>Current reports from the shadow observers. These are separate from the imported simulation.</p></div><span class="badge" id="live-badge">Feed unavailable</span></div>
 <div class="live-summary" id="live-summary" role="status">No live snapshot is available. The simulation explorer works without a cluster.</div><div class="observer-grid" id="observers"></div>
@@ -77,6 +115,6 @@
 <p>Choose one or more exported scenario files. They stay in your browser and are cleared when you reload this page.</p>
 <label class="drop-zone" id="drop-zone"><span class="upload-icon">↥</span><strong>Choose JSON files</strong><span>or drop them here · up to 5 MB per file</span><input id="result-files" type="file" accept=".json,application/json" multiple></label>
 <p id="import-message" role="status" aria-live="polite"></p>
-<details open><summary>Generate a convergence trace</summary><p>Run this yourself from the repository root in WSL. The dashboard does not execute commands.</p><pre><code>POR_CONVERGENCE_OUTPUT=/tmp/por-convergence cargo test -j 1 -p cordial-f1r3node-adapter --test test_por_checkpoint_penalties multi_round_ranking_and_slashing_convergence -- --exact</code></pre><p>Import <code>honest.json</code>, <code>unequal.json</code>, <code>isolated.json</code>, or <code>correlated.json</code> from the output directory.</p></details>
+<details open><summary>Generate a convergence trace</summary><p>Run this yourself from the repository root in WSL. The dashboard does not execute commands.</p><pre><code>POR_CONVERGENCE_OUTPUT="$PWD/docs/demos/traces" cargo test -j 1 -p cordial-f1r3node-adapter --test test_por_checkpoint_penalties multi_round_ranking_and_slashing_convergence -- --exact --ignored</code></pre><p>Import <code>honest.json</code>, <code>unequal.json</code>, <code>isolated.json</code>, or <code>correlated.json</code> from the output directory.</p></details>
 </dialog>
 </body></html>
