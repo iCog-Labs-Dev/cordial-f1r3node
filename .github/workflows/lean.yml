@@ -14,8 +14,8 @@ on:
       - "crates/*/Cargo.toml"
       - "rust-toolchain.toml"
       - "Justfile"
-      - "scripts/issue188_mutation_test.sh"
-      - "scripts/issue188_benchmark.sh"
+      - "scripts/quorum_threshold_mutation_test.sh"
+      - "scripts/trace_replay_benchmark.sh"
       - "scripts/slashing_conformance.sh"
       - "scripts/tests/test_slashing_replay.py"
       - ".github/workflows/lean.yml"
@@ -32,8 +32,8 @@ on:
       - "crates/*/Cargo.toml"
       - "rust-toolchain.toml"
       - "Justfile"
-      - "scripts/issue188_mutation_test.sh"
-      - "scripts/issue188_benchmark.sh"
+      - "scripts/quorum_threshold_mutation_test.sh"
+      - "scripts/trace_replay_benchmark.sh"
       - "scripts/slashing_conformance.sh"
       - "scripts/tests/test_slashing_replay.py"
       - ".github/workflows/lean.yml"
@@ -121,7 +121,7 @@ jobs:
         run: bash scripts/slashing_conformance.sh
 
       - name: Reject actual weakened Rust threshold
-        run: bash scripts/issue188_mutation_test.sh
+        run: bash scripts/quorum_threshold_mutation_test.sh
 
       - name: Fail on sorry
         working-directory: blocklace/lean

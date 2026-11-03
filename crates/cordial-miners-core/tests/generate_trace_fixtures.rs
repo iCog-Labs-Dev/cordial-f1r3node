@@ -547,7 +547,7 @@ fn generate_all_fixtures() {
 /// Generate a larger deterministic trace for replay performance measurement.
 /// This is intentionally separate from the three canonical conformance
 /// fixtures so benchmark growth does not change their expected outputs.
-#[ignore = "run explicitly through scripts/issue188_benchmark.sh"]
+#[ignore = "run explicitly through scripts/trace_replay_benchmark.sh"]
 #[test]
 fn generate_benchmark_15_fixture() {
     unsafe {

@@ -186,7 +186,7 @@ cannot be enabled accidentally by `--all-features`. It deliberately replaces
 the production predicate with `2 * support > total`. The mutation generator
 runs the real approval → certificate → finality call path with four equally
 weighted participants out of seven and writes only to a temporary directory.
-`scripts/issue188_mutation_test.sh` feeds that trace to unchanged Lean code and
+`scripts/quorum_threshold_mutation_test.sh` feeds that trace to unchanged Lean code and
 requires rejection. The script does not edit a recorded decision and does not
 write the mutated trace into `lean/traces/`.
 
@@ -198,7 +198,7 @@ unweighted record is rejected as outside the CMRef conformance boundary. The
 earlier count-based Rust/formal APIs remain available for their existing tests,
 but are not used as an alternative replay oracle.
 
-`scripts/issue188_benchmark.sh` runs the same Rust consensus path for a
+`scripts/trace_replay_benchmark.sh` runs the same Rust consensus path for a
 deterministic 15-round, seven-validator history and replays the resulting trace
 through Lean. It reports block count, event count, trace bytes, replay elapsed
 time, and maximum resident memory. It has a 30-second safety timeout by default
