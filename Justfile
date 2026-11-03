@@ -78,7 +78,7 @@ issue188-lean:
     just lean-check-sorry
 
 issue188-mutation:
-    bash scripts/quorum_threshold_mutation_test.sh
+    bash scripts/issue188_mutation_test.sh
 
 issue188-conformance: issue188-rust issue188-lean issue188-mutation
 

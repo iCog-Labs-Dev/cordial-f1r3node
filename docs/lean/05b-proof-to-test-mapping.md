@@ -196,6 +196,6 @@ Exact Lean negative labels: `invalid-finality`, `insufficient-quorum`,
 `low-stake-false-finality`. Parser tests cover all 15 variants and rejection
 of malformed/unknown/missing/mistyped/extra fields.
 
-`scripts/quorum_threshold_mutation_test.sh` compiles the actual weakened Rust quorum
+`scripts/issue188_mutation_test.sh` compiles the actual weakened Rust quorum
 predicate, generates an execution, and requires unchanged Lean to reject its
 insufficient-weight certificate. The oracle is independent of Rust's answer.

@@ -122,7 +122,7 @@ private def negativeTests (base : String) : IO Bool := do
       | _ => none
     -- A separate semantic negative case: a false finalized claim over the
     -- low-stake execution. The actual compiled Rust threshold mutation is
-    -- exercised by scripts/quorum_threshold_mutation_test.sh.
+    -- exercised by scripts/issue188_mutation_test.sh.
     let lowStakeFalseFinality := mustReplace lowEvents fun
       | .computeFinality event => some (.computeFinality
           { event with decision := "finalized", certificateId := some "mutated" })

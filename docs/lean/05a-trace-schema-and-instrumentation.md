@@ -186,7 +186,7 @@ cannot be enabled accidentally by `--all-features`. It deliberately replaces
 the production predicate with `2 * support > total`. The mutation generator
 runs the real approval → certificate → finality call path with four equally
 weighted participants out of seven and writes only to a temporary directory.
-`scripts/quorum_threshold_mutation_test.sh` feeds that trace to unchanged Lean code and
+`scripts/issue188_mutation_test.sh` feeds that trace to unchanged Lean code and
 requires rejection. The script does not edit a recorded decision and does not
 write the mutated trace into `lean/traces/`.
 

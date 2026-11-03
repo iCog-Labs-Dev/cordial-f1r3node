@@ -37,7 +37,7 @@ lake build replay_runner conformance_tests
 lake exe replay_runner
 lake exe conformance_tests
 cd ..
-bash scripts/quorum_threshold_mutation_test.sh
+bash scripts/issue188_mutation_test.sh
 ```
 
 Cargo is limited to two jobs and the three fixture scenarios share one test
