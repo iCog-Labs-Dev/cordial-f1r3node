@@ -11,7 +11,7 @@ checks independent executable ordering comparison; it does not claim that
 Run the complete local gate from the repository root:
 
 ```bash
-just issue188-conformance
+just trace-conformance
 ```
 
 The workspace also needs a sibling `../f1r3node` checkout, including for

@@ -1,4 +1,4 @@
-//! Trace fixture generator for Issue 188.
+//! Canonical consensus trace fixture generator.
 //!
 //! Runs three canonical scenarios and writes their JSON traces to the
 //! `lean/traces/` directory:

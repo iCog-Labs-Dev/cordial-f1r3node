@@ -1,6 +1,6 @@
 # 05a — Canonical trace schema and instrumentation
 
-Issue #188 uses newline-delimited JSON as a protocol-level interchange format:
+Canonical traces use newline-delimited JSON as a protocol-level interchange format:
 
 ```text
 Rust execution → typed TraceEvent → NDJSON → typed Lean TraceEvent → CMRef replay
@@ -62,7 +62,7 @@ in isolated subprocesses. Strict mode does not claim crash-durable storage.
 | `accept_approval` | `node_id`, `wave?`, `round`, `approver`, `approver_hash`, `target_hash` | memoized approval evaluation |
 | `build_threshold_certificate` | `node_id`, `wave?`, `kind`, `leader_hash`, `ratifier_hash?`, `certificate_id`, `approver_hashes`, `approvers`, `approver_count`, `approver_weight`, `total_weight`, `weight_table_hash` | weighted ratification and super-ratification |
 | `compute_finality` | `node_id`, `wave`, `wavelength`, `block_hash`, `decision`, `certificate_id?`, `output_prefix_hash?`, `weight_table_hash?` | weighted final-leader evaluation (unweighted records remain schema-compatible but are outside replay) |
-| `run_tau_order` | `node_id`, `wave`, `wavelength`, `latest_leader_hash`, `ordered_block_hashes`, `output_len` | weighted `tau` used by Issue #188 replay |
+| `run_tau_order` | `node_id`, `wave`, `wavelength`, `latest_leader_hash`, `ordered_block_hashes`, `output_len` | weighted `tau` used by trace replay |
 | `emit_output` | `node_id`, `wave`, `block_hash`, `output_index`, `output_prefix_hash` | each `tau` output item |
 | `send_package` | `node_id`, `peer_id`, `block_hashes` | network node and adversarial simulator send paths |
 | `deliver_package` | `node_id`, `peer_id`, `block_hashes` | network node and adversarial simulator delivery paths |
@@ -168,7 +168,7 @@ handwritten protocol transcripts.
 - Evidence: five validators participate, but their distinct stake is only
   1004/3004. The weighted implementation does not build a certificate and
   returns no final leader; count-based finality is deliberately not used by
-  Issue #188 replay.
+  trace replay.
 - Expected result: `not_finalized`. Lean independently obtains the same answer
   from the sidecar weights and strict `3 * support > 2 * total` arithmetic.
   This direct-finality scenario intentionally has no tau/output event.
@@ -192,7 +192,7 @@ write the mutated trace into `lean/traces/`.
 
 ## Weighted replay boundary and benchmark
 
-Issue #188 replay accepts only stake-weighted finality events. A
+Trace replay accepts only stake-weighted finality events. A
 `compute_finality` record must carry the configured `weight_table_hash`; an
 unweighted record is rejected as outside the CMRef conformance boundary. The
 earlier count-based Rust/formal APIs remain available for their existing tests,
@@ -202,7 +202,7 @@ but are not used as an alternative replay oracle.
 deterministic 15-round, seven-validator history and replays the resulting trace
 through Lean. It reports block count, event count, trace bytes, replay elapsed
 time, and maximum resident memory. It has a 30-second safety timeout by default
-(`ISSUE188_BENCHMARK_TIMEOUT` can override it) so a large formal replay cannot
+(`TRACE_REPLAY_BENCHMARK_TIMEOUT` can override it) so a large formal replay cannot
 exhaust a developer workstation. In the current implementation the Rust run
 produces 15 blocks, 15 events, and 4,349 bytes; Lean replay did not complete
 within the 30-second limit. For comparison, the 48-event normal fixture replay
@@ -222,13 +222,13 @@ one-to-one association between that formal id and the externally reported Rust
 digest. Duplicate Rust digests and formal-id collisions are both rejected.
 
 Cryptographic digest/signature validation remains a Rust-side trust boundary:
-Issue #188 replay checks the consensus semantics exposed by the trace, not the
+Trace replay checks the consensus semantics exposed by the trace, not the
 signature algorithm. DAG closure, observation, equivocation, approval,
 weighted certificates, finality, ordering, and output are independently
 re-established in Lean.
 
 `Ordering.lean` retains the earlier abstract `tau_prefix_monotone` axiom as a
-documented KR4 prefix-safety trust boundary. Issue #188 replay does not use that
+documented KR4 prefix-safety trust boundary. Trace replay does not use that
 axiom as an oracle: `CMRef.computeTau` executes leader/finality/ratification/
 approval selection and topological ordering over the reconstructed formal DAG,
 then compares its exact result to Rust.
@@ -236,4 +236,4 @@ then compares its exact result to Rust.
 This comparison is **not a proved refinement of the opaque formal `tau`**.
 There is no equation specifying that function, nor a theorem connecting it to
 `computeTau`. This is an unresolved KR4 prerequisite, not an accepted substitute
-for Issue #188's ordering soundness requirement. See 05b and the triage log.
+for the trace replay ordering soundness requirement. See 05b and the triage log.

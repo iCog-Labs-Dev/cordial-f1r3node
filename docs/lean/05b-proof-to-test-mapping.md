@@ -5,7 +5,7 @@
 Finality, approval, quorum, ratification, super-ratification, observation, and
 equivocation have proved executable-to-Prop bridges. Ordering is independently
 compared but **is not yet proved a refinement of KR4's opaque `tau`**.
-Issue #188 is not fully PR-ready while this gap remains.
+The trace conformance work is not fully PR-ready while this gap remains.
 
 Every named theorem/lemma in the landed KR1–KR4 modules has one row below,
 including private helpers and worked-example scaffolding. A Rust test exercises

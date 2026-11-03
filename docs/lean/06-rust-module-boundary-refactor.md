@@ -233,11 +233,11 @@ and replay-model change, not an interface-honesty one.
 
 ## Verification
 
-Behaviour preservation is checked by Issue #188's own conformance gate: the
+Behaviour preservation is checked by the trace conformance gate: the
 canonical fixtures are regenerated and byte-compared on every run.
 
 ```bash
-just issue188-conformance
+just trace-conformance
 ```
 
 For this work specifically:
