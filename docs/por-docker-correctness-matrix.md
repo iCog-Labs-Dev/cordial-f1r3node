@@ -62,8 +62,9 @@ failure into a pass.
 
 A reproducible report should mark each gate `PASS`, `FAIL`, or `NOT RUN` and
 retain its inputs, counts, hashes, commitments, weights, before/after snapshots,
-and timeout. Set a unique evidence directory for each run; generated evidence
-stays outside Git and can be attached to the run report.
+and timeout. Set a unique evidence directory for each run. Keep raw runs outside
+the repository; selected compact bundles with provenance and checksums can be
+copied into `docs/evidence/`.
 
 ## Current run commands
 
@@ -94,7 +95,11 @@ For a two-snapshot, full-history host-side `τ` run with retained evidence, use
 on a fresh cluster. It reads the configured public genesis bonds and requires
 nonempty, equal `τ` outputs and exact prefix growth. The command and evidence
 layout are in the [ordering guide](cordial-miners/integration/13-four-node-ordering-convergence.md#finalized-%CF%84-evidence-run).
-The `τ` script and the `PorRuntime` slash fixture are separate checks. Run the
+The [2026-11-03 `τ` bundle](evidence/por-tau-2026-11-03/README.md) preserves a
+passing fresh-cluster run with two snapshots and exact prefix growth.
+The [`PorRuntime` slash fixture bundle](evidence/por-weighted-slash-2026-11-03/README.md)
+preserves separate penalty, weight-cutover, and restart results. These are
+historical runs; their READMEs record the source hashes used. Run the
 fixture with:
 
 ```sh

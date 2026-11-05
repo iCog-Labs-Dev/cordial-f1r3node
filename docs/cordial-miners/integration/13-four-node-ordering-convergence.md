@@ -176,6 +176,7 @@ prefix extension on each node. The runner does not change Docker consensus or
 activate PoR weights in the native validators. A pass demonstrates the host-side
 equal-weight `τ` path over this finite run.
 
-Keep each run's evidence directory outside the repository. The script writes
-both snapshots, per-node logs and ordered hashes, prefix checks, and a final
-`result.json` there for comparison or attachment to a run report.
+Use a new evidence directory for each run. The script writes both snapshots,
+per-node logs and ordered hashes, prefix checks, and a final `result.json`.
+The [2026-11-03 four-node `τ` run](../../evidence/por-tau-2026-11-03/README.md)
+is a preserved example, including its source hashes and integrity manifest.
