@@ -1,0 +1,46 @@
+ Container por-smoke-validator-3 Running 
+ Container por-smoke-validator-4 Running 
+ Container por-smoke-boot Running 
+ Container por-smoke-validator-1 Running 
+ Container por-smoke-validator-2 Running 
+ Container por-smoke-boot Waiting 
+ Container por-smoke-boot Waiting 
+ Container por-smoke-boot Waiting 
+ Container por-smoke-boot Waiting 
+ Container por-smoke-boot Healthy 
+ Container por-smoke-boot Healthy 
+ Container por-smoke-boot Healthy 
+ Container por-smoke-boot Healthy 
+ Container por-smoke-validator-1 Waiting 
+ Container por-smoke-validator-2 Waiting 
+ Container por-smoke-validator-3 Waiting 
+ Container por-smoke-validator-4 Waiting 
+ Container por-smoke-validator-4 Healthy 
+ Container por-smoke-validator-1 Healthy 
+ Container por-smoke-validator-3 Healthy 
+ Container por-smoke-validator-2 Healthy 
+ Container por-tau-evidence-cordial-four-node-cluster-verifier-run-426793c85a88 Creating 
+ Container por-tau-evidence-cordial-four-node-cluster-verifier-run-426793c85a88 Created 
+cordial-validator-1: connected native node on cordial-real-four-node (validator status=unknown, peers=4, nodes=4)
+cordial-validator-2: connected native node on cordial-real-four-node (validator status=unknown, peers=4, nodes=4)
+cordial-validator-3: connected native node on cordial-real-four-node (validator status=unknown, peers=4, nodes=4)
+cordial-validator-4: connected native node on cordial-real-four-node (validator status=unknown, peers=4, nodes=4)
+cordial-validator-1: triggering a native proposal through the admin API
+cordial-validator-1: no pending deploys; heartbeat proposer is already producing blocks
+cordial-validator-2: triggering a native proposal through the admin API
+cordial-validator-2: no pending deploys; heartbeat proposer is already producing blocks
+cordial-validator-3: triggering a native proposal through the admin API
+cordial-validator-3: no pending deploys; heartbeat proposer is already producing blocks
+cordial-validator-4: triggering a native proposal through the admin API
+cordial-validator-4: no pending deploys; heartbeat proposer is already producing blocks
+cordial-validator-1: finalized height 1 (target 1)
+cordial-validator-2: finalized height 1 (target 1)
+cordial-validator-3: finalized height 1 (target 1)
+cordial-validator-4: finalized height 1 (target 1)
+cordial-validator-1: finalized window 0..1 (2 blocks)
+cordial-validator-2: finalized window 0..1 (2 blocks)
+cordial-validator-3: finalized window 0..1 (2 blocks)
+cordial-validator-4: finalized window 0..1 (2 blocks)
+PASS: four connected local f1r3node nodes share the finalized block window through height 1.
+0 0903f12a8791ed9a58658b66e91b33907106c6961328e0ef4b864ddfc6ae5815
+1 1e938273842c309be289a001c45ea48ed624396d6d516162b160a32cf1f4b740

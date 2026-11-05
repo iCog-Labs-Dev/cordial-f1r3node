@@ -1,0 +1,28 @@
+Verifying four-node Cordial window-order convergence
+====================================================
+Depth:        64
+Height batch: 64
+Height window: 0
+Fragment:     true
+Boundary:     false
+Window order: false
+Bonds file:   /tmp/cordial-tau-fresh-verified-20261103/second/bonds.txt
+Node timeout: 300s
+Evidence:     /tmp/cordial-tau-fresh-verified-20261103/second
+
+por-smoke-validator-1: latest visible height=26
+por-smoke-validator-2: latest visible height=26
+por-smoke-validator-3: latest visible height=26
+por-smoke-validator-4: latest visible height=26
+Common target height: 26
+
+por-smoke-validator-1: mirroring http://127.0.0.1:61001 and exporting finalized weighted tau
+por-smoke-validator-1: ordered=92 mirror_lfb=81c27985a17cd3238f48c4a69c07c4229980af77bd764a4051e1f0a74f39b9f8
+por-smoke-validator-2: mirroring http://127.0.0.1:62001 and exporting finalized weighted tau
+por-smoke-validator-2: ordered=92 mirror_lfb=81c27985a17cd3238f48c4a69c07c4229980af77bd764a4051e1f0a74f39b9f8
+por-smoke-validator-3: mirroring http://127.0.0.1:63001 and exporting finalized weighted tau
+por-smoke-validator-3: ordered=92 mirror_lfb=81c27985a17cd3238f48c4a69c07c4229980af77bd764a4051e1f0a74f39b9f8
+por-smoke-validator-4: mirroring http://127.0.0.1:64001 and exporting finalized weighted tau
+por-smoke-validator-4: ordered=92 mirror_lfb=81c27985a17cd3238f48c4a69c07c4229980af77bd764a4051e1f0a74f39b9f8
+
+PASS: four mirrors produced the same nonempty finalized weighted tau output and Cordial anchor.

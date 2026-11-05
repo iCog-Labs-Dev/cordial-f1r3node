@@ -1,0 +1,10 @@
+   Compiling cordial-f1r3node-adapter v0.1.0 (/home/ymesfin/cordial-miners/cordial-f1r3node/crates/cordial-f1r3node-adapter)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.97s
+     Running tests/test_por_checkpoint_penalties.rs (target/debug/deps/test_por_checkpoint_penalties-099961d5bce53f91)
+
+running 1 test
+test four_runtime_epochs_preserve_finality_through_slash_and_restart has been running for over 60 seconds
+test four_runtime_epochs_preserve_finality_through_slash_and_restart ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 94.19s
+
