@@ -59,6 +59,11 @@ pub enum PruneError<Id> {
         current: Box<Id>,
         requested: Box<Id>,
     },
+    /// Attempted explicit manual pruning on a DAG that already has consensus finality established.
+    CannotDowngradeConsensusCheckpoint {
+        current_origin: CheckpointOrigin,
+        requested: Box<Id>,
+    },
 }
 
 impl CheckpointGc<BlockIdentity> for Blocklace {
@@ -129,6 +134,20 @@ impl Blocklace {
             }
         }
 
+        if origin == CheckpointOrigin::Explicit
+            && let Some(existing_origin) = self.checkpoint_origin
+        {
+            match existing_origin {
+                CheckpointOrigin::PaperFinal | CheckpointOrigin::WeightedFinal => {
+                    return Err(PruneError::CannotDowngradeConsensusCheckpoint {
+                        current_origin: existing_origin,
+                        requested: Box::new(checkpoint.clone()),
+                    });
+                }
+                CheckpointOrigin::Explicit => {}
+            }
+        }
+
         let mut candidates: BTreeSet<BlockIdentity> =
             self.observe(checkpoint).into_iter().collect();
         candidates.remove(checkpoint);
@@ -188,7 +207,8 @@ where
 
     let checkpoint_order_prefix = match tau(blocklace, wavelength, n, f, leader_selection) {
         Ok(prefix) => prefix,
-        Err(OrderingError::IncompatibleCheckpointRule { .. }) => return Ok(None),
+        Err(OrderingError::IncompatibleCheckpointRule { .. })
+        | Err(OrderingError::ExplicitCheckpointCannotProveFinality) => return Ok(None),
         Err(OrderingError::CycleDetected) => checkpoint_order_prefix(blocklace, &final_leader),
     };
 
@@ -234,7 +254,8 @@ where
     let checkpoint_weighted_order_prefix =
         match weighted_tau(blocklace, wavelength, bonds, leader_selection) {
             Ok(prefix) => prefix,
-            Err(OrderingError::IncompatibleCheckpointRule { .. }) => return Ok(None),
+            Err(OrderingError::IncompatibleCheckpointRule { .. })
+            | Err(OrderingError::ExplicitCheckpointCannotProveFinality) => return Ok(None),
             Err(OrderingError::CycleDetected) => checkpoint_order_prefix(blocklace, &final_leader),
         };
 

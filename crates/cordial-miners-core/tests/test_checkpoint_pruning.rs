@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet};
 use cordial_miners_core::blocklace::{Blocklace, CheckpointOrigin};
 use cordial_miners_core::consensus::finality::leader_block_for_wave;
 use cordial_miners_core::consensus::{
-    CheckpointGc, checkpoint_after_finality, checkpoint_after_weighted_finality, depth,
-    latest_final_leader, latest_weighted_final_leader, leader_blocks_of_wave,
-    previous_final_leader, tau, wave_of_round, weighted_previous_final_leader, weighted_tau,
+    CheckpointGc, OrderingCache, OrderingError, PruneError, checkpoint_after_finality,
+    checkpoint_after_weighted_finality, depth, latest_final_leader, latest_weighted_final_leader,
+    leader_blocks_of_wave, previous_final_leader, tau, tau_with_cache, wave_of_round,
+    weighted_previous_final_leader, weighted_tau, weighted_tau_at_leader, weighted_tau_with_cache,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
@@ -307,13 +308,11 @@ fn weighted_tau_does_not_replay_unweighted_checkpoint_prefix() {
     assert_eq!(report.tau_prefix_len, unweighted_before.len());
     assert_eq!(report.weighted_tau_prefix_len, 0);
 
-    let weighted_after =
-        weighted_tau(&blocklace, wavelength, &weights, leader_node1).expect("weighted tau");
+    let weighted_after = weighted_tau(&blocklace, wavelength, &weights, leader_node1);
     assert_eq!(
         weighted_after,
-        vec![graph.w1_leader.identity.consensus_identity()]
+        Err(OrderingError::ExplicitCheckpointCannotProveFinality)
     );
-    assert_ne!(weighted_after, unweighted_before);
 }
 
 #[test]
@@ -927,4 +926,186 @@ fn checkpoint_after_weighted_finality_does_not_clobber_paper_checkpoint() {
     );
     assert_eq!(paper_lace.checkpoint(), Some(&w1_leader.identity));
     assert!(!paper_lace.checkpoint_order_prefix().is_empty());
+}
+
+#[test]
+fn explicit_pruning_cannot_downgrade_paper_or_weighted_checkpoint() {
+    let wavelength = 3;
+    let n = 4;
+    let f = 1;
+    let weights = bonds(&[(1, 1), (2, 1), (3, 1), (4, 1), (5, 100)]);
+
+    // 1. Paper finality checkpoint cannot be downgraded by explicit pruning
+    let mut paper_lace = Blocklace::new();
+    let v1 = node(1);
+    let v2 = node(2);
+    let v3 = node(3);
+    let v4 = node(4);
+
+    let w0_leader = genesis(&v1, 1);
+    insert(&mut paper_lace, &w0_leader);
+    let w0_r1_v2 = child(&v2, 2, &[&w0_leader]);
+    let w0_r1_v3 = child(&v3, 3, &[&w0_leader]);
+    let w0_r1_v4 = child(&v4, 4, &[&w0_leader]);
+    for b in [&w0_r1_v2, &w0_r1_v3, &w0_r1_v4] {
+        insert(&mut paper_lace, b);
+    }
+    let w0_r2_v2 = child(&v2, 5, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    let w0_r2_v3 = child(&v3, 6, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    let w0_r2_v4 = child(&v4, 7, &[&w0_r1_v2, &w0_r1_v3, &w0_r1_v4]);
+    for b in [&w0_r2_v2, &w0_r2_v3, &w0_r2_v4] {
+        insert(&mut paper_lace, b);
+    }
+    let w1_leader = child(&v1, 8, &[&w0_r2_v2, &w0_r2_v3, &w0_r2_v4]);
+    insert(&mut paper_lace, &w1_leader);
+    let w1_r1_v2 = child(&v2, 9, &[&w1_leader]);
+    let w1_r1_v3 = child(&v3, 10, &[&w1_leader]);
+    let w1_r1_v4 = child(&v4, 11, &[&w1_leader]);
+    for b in [&w1_r1_v2, &w1_r1_v3, &w1_r1_v4] {
+        insert(&mut paper_lace, b);
+    }
+    let w1_r2_v2 = child(&v2, 12, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    let w1_r2_v3 = child(&v3, 13, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    let w1_r2_v4 = child(&v4, 14, &[&w1_r1_v2, &w1_r1_v3, &w1_r1_v4]);
+    for b in [&w1_r2_v2, &w1_r2_v3, &w1_r2_v4] {
+        insert(&mut paper_lace, b);
+    }
+
+    let paper_report = checkpoint_after_finality(&mut paper_lace, wavelength, n, f, leader_node1)
+        .expect("checkpoint_after_finality should not fail")
+        .expect("should establish paper checkpoint");
+    assert_eq!(paper_report.checkpoint, w1_leader.identity);
+    assert_eq!(
+        paper_lace.checkpoint_origin(),
+        Some(CheckpointOrigin::PaperFinal)
+    );
+    let original_paper_prefix = paper_lace.checkpoint_order_prefix().to_vec();
+    assert!(!original_paper_prefix.is_empty());
+
+    // Attempt explicit pruning on a descendant
+    let child_block = child(&v2, 15, &[&w1_r2_v2]);
+    insert(&mut paper_lace, &child_block);
+    let err = paper_lace
+        .prune_below_checkpoint(&child_block.identity)
+        .expect_err("prune_below_checkpoint must reject downgrading consensus checkpoint");
+    assert_eq!(
+        err,
+        PruneError::CannotDowngradeConsensusCheckpoint {
+            current_origin: CheckpointOrigin::PaperFinal,
+            requested: Box::new(child_block.identity.clone()),
+        }
+    );
+    assert_eq!(
+        paper_lace.checkpoint_origin(),
+        Some(CheckpointOrigin::PaperFinal)
+    );
+    assert_eq!(
+        paper_lace.checkpoint_order_prefix(),
+        original_paper_prefix.as_slice()
+    );
+
+    // 2. Weighted finality checkpoint cannot be downgraded by explicit pruning
+    let mut weighted_lace = Blocklace::new();
+    let graph = insert_weighted_two_wave_checkpoint_graph(&mut weighted_lace);
+    let weighted_report =
+        checkpoint_after_weighted_finality(&mut weighted_lace, wavelength, &weights, leader_node1)
+            .expect("checkpoint_after_weighted_finality should not fail")
+            .expect("should establish weighted checkpoint");
+    assert_eq!(weighted_report.checkpoint, graph.w1_leader.identity);
+    assert_eq!(
+        weighted_lace.checkpoint_origin(),
+        Some(CheckpointOrigin::WeightedFinal)
+    );
+    let original_weighted_prefix = weighted_lace.checkpoint_weighted_order_prefix().to_vec();
+    assert!(!original_weighted_prefix.is_empty());
+
+    let weighted_child = child(&v2, 99, &[&graph.w1_leader]);
+    insert(&mut weighted_lace, &weighted_child);
+    let err_w = weighted_lace
+        .prune_below_checkpoint(&weighted_child.identity)
+        .expect_err("prune_below_checkpoint must reject downgrading weighted consensus checkpoint");
+    assert_eq!(
+        err_w,
+        PruneError::CannotDowngradeConsensusCheckpoint {
+            current_origin: CheckpointOrigin::WeightedFinal,
+            requested: Box::new(weighted_child.identity.clone()),
+        }
+    );
+    assert_eq!(
+        weighted_lace.checkpoint_origin(),
+        Some(CheckpointOrigin::WeightedFinal)
+    );
+    assert_eq!(
+        weighted_lace.checkpoint_weighted_order_prefix(),
+        original_weighted_prefix.as_slice()
+    );
+}
+
+#[test]
+fn tau_fails_closed_on_explicit_checkpoint() {
+    let mut lace = Blocklace::new();
+    let wavelength = 3;
+    let n = 4;
+    let f = 1;
+    let v1 = node(1);
+    let v2 = node(2);
+    let leader = genesis(&v1, 1);
+    let child_b = child(&v2, 2, &[&leader]);
+    insert(&mut lace, &leader);
+    insert(&mut lace, &child_b);
+
+    lace.prune_below_checkpoint(&leader.identity)
+        .expect("explicit pruning succeeds on uncheckpointed DAG");
+    assert_eq!(lace.checkpoint_origin(), Some(CheckpointOrigin::Explicit));
+
+    let tau_res = tau(&lace, wavelength, n, f, leader_node1);
+    assert_eq!(
+        tau_res,
+        Err(OrderingError::ExplicitCheckpointCannotProveFinality)
+    );
+
+    let mut cache = OrderingCache::default();
+    let tau_cached_res = tau_with_cache(&lace, wavelength, n, f, 0, leader_node1, &mut cache);
+    assert_eq!(
+        tau_cached_res,
+        Err(OrderingError::ExplicitCheckpointCannotProveFinality)
+    );
+}
+
+#[test]
+fn weighted_tau_fails_closed_on_explicit_checkpoint() {
+    let mut lace = Blocklace::new();
+    let wavelength = 3;
+    let weights = bonds(&[(1, 1), (2, 1), (3, 1), (4, 1)]);
+    let v1 = node(1);
+    let v2 = node(2);
+    let leader = genesis(&v1, 1);
+    let child_b = child(&v2, 2, &[&leader]);
+    insert(&mut lace, &leader);
+    insert(&mut lace, &child_b);
+
+    lace.prune_below_checkpoint(&leader.identity)
+        .expect("explicit pruning succeeds on uncheckpointed DAG");
+    assert_eq!(lace.checkpoint_origin(), Some(CheckpointOrigin::Explicit));
+
+    let w_tau_res = weighted_tau(&lace, wavelength, &weights, leader_node1);
+    assert_eq!(
+        w_tau_res,
+        Err(OrderingError::ExplicitCheckpointCannotProveFinality)
+    );
+
+    let w_tau_at_leader_res =
+        weighted_tau_at_leader(&lace, &leader.identity, wavelength, &weights, leader_node1);
+    assert_eq!(
+        w_tau_at_leader_res,
+        Err(OrderingError::ExplicitCheckpointCannotProveFinality)
+    );
+
+    let mut cache = OrderingCache::default();
+    let w_tau_cached_res =
+        weighted_tau_with_cache(&lace, wavelength, &weights, 0, leader_node1, &mut cache);
+    assert_eq!(
+        w_tau_cached_res,
+        Err(OrderingError::ExplicitCheckpointCannotProveFinality)
+    );
 }

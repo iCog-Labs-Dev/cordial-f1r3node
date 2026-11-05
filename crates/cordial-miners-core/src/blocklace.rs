@@ -248,6 +248,13 @@ impl Blocklace {
 
     /// Return the checkpoint identity only if its origin matches the requested finality rule.
     /// Explicit checkpoints are not trusted as consensus final leaders.
+    ///
+    /// # Invariant & Scope
+    /// `trusted_checkpoint(FinalityRule::Weighted)` verifies provenance against
+    /// stake-weighted finality within the active weight epoch. When validator weights
+    /// change across epochs, callers must use `weighted_tau_across_epoch_boundary`
+    /// with a `WeightedEpochBoundary`, which binds historical prefixes and validates
+    /// finality across epoch boundaries, or re-initialize the DAG store.
     pub fn trusted_checkpoint(
         &self,
         rule: crate::consensus::FinalityRule,

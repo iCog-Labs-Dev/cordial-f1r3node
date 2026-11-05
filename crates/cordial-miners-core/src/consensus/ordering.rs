@@ -111,6 +111,7 @@ pub enum OrderingError {
         checkpoint_origin: CheckpointOrigin,
         requested_rule: FinalityRule,
     },
+    ExplicitCheckpointCannotProveFinality,
 }
 
 /// A previously finalized weighted output that a new weight epoch must retain.
@@ -541,11 +542,17 @@ pub fn tau<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
-    if blocklace.checkpoint_origin() == Some(CheckpointOrigin::WeightedFinal) {
-        return Err(OrderingError::IncompatibleCheckpointRule {
-            checkpoint_origin: CheckpointOrigin::WeightedFinal,
-            requested_rule: FinalityRule::Paper,
-        });
+    match blocklace.checkpoint_origin() {
+        Some(CheckpointOrigin::WeightedFinal) => {
+            return Err(OrderingError::IncompatibleCheckpointRule {
+                checkpoint_origin: CheckpointOrigin::WeightedFinal,
+                requested_rule: FinalityRule::Paper,
+            });
+        }
+        Some(CheckpointOrigin::Explicit) => {
+            return Err(OrderingError::ExplicitCheckpointCannotProveFinality);
+        }
+        _ => {}
     }
 
     let Some(latest_leader) = latest_final_leader(blocklace, wavelength, n, f, leader_selection)
@@ -621,11 +628,17 @@ pub fn tau_with_cache<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
-    if blocklace.checkpoint_origin() == Some(CheckpointOrigin::WeightedFinal) {
-        return Err(OrderingError::IncompatibleCheckpointRule {
-            checkpoint_origin: CheckpointOrigin::WeightedFinal,
-            requested_rule: FinalityRule::Paper,
-        });
+    match blocklace.checkpoint_origin() {
+        Some(CheckpointOrigin::WeightedFinal) => {
+            return Err(OrderingError::IncompatibleCheckpointRule {
+                checkpoint_origin: CheckpointOrigin::WeightedFinal,
+                requested_rule: FinalityRule::Paper,
+            });
+        }
+        Some(CheckpointOrigin::Explicit) => {
+            return Err(OrderingError::ExplicitCheckpointCannotProveFinality);
+        }
+        _ => {}
     }
 
     sync_cache_generation(blocklace, cache);
@@ -683,11 +696,17 @@ pub fn weighted_tau<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
-    if blocklace.checkpoint_origin() == Some(CheckpointOrigin::PaperFinal) {
-        return Err(OrderingError::IncompatibleCheckpointRule {
-            checkpoint_origin: CheckpointOrigin::PaperFinal,
-            requested_rule: FinalityRule::Weighted,
-        });
+    match blocklace.checkpoint_origin() {
+        Some(CheckpointOrigin::PaperFinal) => {
+            return Err(OrderingError::IncompatibleCheckpointRule {
+                checkpoint_origin: CheckpointOrigin::PaperFinal,
+                requested_rule: FinalityRule::Weighted,
+            });
+        }
+        Some(CheckpointOrigin::Explicit) => {
+            return Err(OrderingError::ExplicitCheckpointCannotProveFinality);
+        }
+        _ => {}
     }
 
     let Some(latest_leader) =
@@ -720,11 +739,17 @@ pub fn weighted_tau_at_leader<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
-    if blocklace.checkpoint_origin() == Some(CheckpointOrigin::PaperFinal) {
-        return Err(OrderingError::IncompatibleCheckpointRule {
-            checkpoint_origin: CheckpointOrigin::PaperFinal,
-            requested_rule: FinalityRule::Weighted,
-        });
+    match blocklace.checkpoint_origin() {
+        Some(CheckpointOrigin::PaperFinal) => {
+            return Err(OrderingError::IncompatibleCheckpointRule {
+                checkpoint_origin: CheckpointOrigin::PaperFinal,
+                requested_rule: FinalityRule::Weighted,
+            });
+        }
+        Some(CheckpointOrigin::Explicit) => {
+            return Err(OrderingError::ExplicitCheckpointCannotProveFinality);
+        }
+        _ => {}
     }
 
     let weights = WeightSnapshot::from_bonds(bonds);
@@ -927,11 +952,17 @@ pub fn weighted_tau_with_cache<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
-    if blocklace.checkpoint_origin() == Some(CheckpointOrigin::PaperFinal) {
-        return Err(OrderingError::IncompatibleCheckpointRule {
-            checkpoint_origin: CheckpointOrigin::PaperFinal,
-            requested_rule: FinalityRule::Weighted,
-        });
+    match blocklace.checkpoint_origin() {
+        Some(CheckpointOrigin::PaperFinal) => {
+            return Err(OrderingError::IncompatibleCheckpointRule {
+                checkpoint_origin: CheckpointOrigin::PaperFinal,
+                requested_rule: FinalityRule::Weighted,
+            });
+        }
+        Some(CheckpointOrigin::Explicit) => {
+            return Err(OrderingError::ExplicitCheckpointCannotProveFinality);
+        }
+        _ => {}
     }
 
     sync_cache_generation(blocklace, cache);

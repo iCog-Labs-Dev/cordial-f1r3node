@@ -338,6 +338,14 @@ where
 ///
 /// Scans backward from the highest known wave, returning the newest wave
 /// whose unique leader block achieves weighted finality.
+///
+/// # Epoch Boundary Invariant
+/// `latest_weighted_final_leader` and `Blocklace` checkpoints are scoped to a single
+/// active weight epoch. `trusted_checkpoint(FinalityRule::Weighted)` assumes the
+/// checkpoint was proven final under the active epoch's weights. When validator weights
+/// change across epochs, callers must use `weighted_tau_across_epoch_boundary` with
+/// a `WeightedEpochBoundary` to validate finality across epoch boundaries, or re-initialize
+/// the DAG store.
 pub fn latest_weighted_final_leader<F>(
     blocklace: &Blocklace,
     wavelength: u64,
