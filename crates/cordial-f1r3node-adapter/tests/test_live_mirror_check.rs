@@ -25,7 +25,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use live_mirror_check::{compare_ordered_hashes, write_ordered_hashes};
+use live_mirror_check::{compare_ordered_hashes, read_bonds_file, write_ordered_hashes};
 
 /// Build a unique path under the system temp dir so tests can run
 /// concurrently (or be retried) without clobbering each other's fixture
@@ -54,6 +54,33 @@ impl Drop for TempFile {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }
+}
+
+#[test]
+fn native_bonds_file_preserves_authorized_weights() {
+    let path = temp_path("bonds");
+    let _guard = TempFile(path.clone());
+    fs::write(&path, "# public genesis bonds\n04a1 1\n04b2 7\n").unwrap();
+
+    let bonds = read_bonds_file(&path).unwrap();
+    assert_eq!(bonds.len(), 2);
+    assert_eq!(
+        bonds[&cordial_miners_core::types::NodeId(vec![0x04, 0xa1])],
+        1
+    );
+    assert_eq!(
+        bonds[&cordial_miners_core::types::NodeId(vec![0x04, 0xb2])],
+        7
+    );
+}
+
+#[test]
+fn native_bonds_file_rejects_duplicate_keys() {
+    let path = temp_path("duplicate_bonds");
+    let _guard = TempFile(path.clone());
+    fs::write(&path, "04a1 1\n04a1 9\n").unwrap();
+
+    assert!(read_bonds_file(&path).is_err());
 }
 
 #[test]

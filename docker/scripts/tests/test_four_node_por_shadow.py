@@ -1,6 +1,7 @@
 """Checks for the four-runner PoR smoke harness without a live cluster."""
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -40,7 +41,7 @@ class FourNodeShadowChecks(unittest.TestCase):
     def test_rejects_different_weight_commitment(self):
         statuses = {node: status() for node in VERIFY.NODES}
         statuses[VERIFY.NODES[2]] = status(commitment="other")
-        with self.assertRaisesRegex(ValueError, "different PoR round, checkpoint, commitment, or weights"):
+        with self.assertRaisesRegex(ValueError, "different PoR round, checkpoint, commitment, weights, or penalty state"):
             VERIFY.compare_statuses(statuses, 2)
 
     def test_restart_preserves_prefix_and_projection(self):
@@ -70,6 +71,7 @@ status = {
     'source_height': 2,
 }
 if '--checkpoint-ratings' in sys.argv:
+    status['finalized_hashes'] = ['block-' + str(index) for index in range(16)]
     status['candidate'] = {
         'por_round': 1,
         'source': {'por_round': 1, 'finalized_prefix_len': 16,
@@ -78,6 +80,16 @@ if '--checkpoint-ratings' in sys.argv:
         'weight_commitment': 'candidate-weights',
         'weights': {'validator': 180000000},
     }
+    audits = directory / 'checkpoint-audits'
+    audits.mkdir(exist_ok=True)
+    (audits / 'round-00000000000000000001.json').write_text(json.dumps({
+        'schema_version': 1, 'por_round': 1, 'source_prefix_len': 16,
+        'source_prefix_hash': 'source',
+        'window_block_hashes': status['finalized_hashes'],
+        'eligible_raters': ['validator'], 'ratings': [],
+        'checkpoint_hash': 'checkpoint', 'weight_commitment': 'candidate-weights',
+        'weights': {'validator': 180000000},
+    }))
 saved = directory / 'shadow-status.json'
 if saved.exists():
     status['finalized_hashes'] = json.loads(saved.read_text())['finalized_hashes']
@@ -101,6 +113,10 @@ while True:
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.count("PASS:"), 3)
+            evidence = list((root / "data" / "evidence").glob("*"))
+            self.assertEqual(len(evidence), 1)
+            for label in ("initial", "observer-restart", "validator-restart"):
+                self.assertTrue((evidence[0] / f"{label}.json").is_file())
 
             keys = root / "keys"
             keys.mkdir()
@@ -118,6 +134,8 @@ while True:
             self.assertEqual(candidate.returncode, 0, candidate.stderr)
             self.assertIn("complete candidate round 1", candidate.stdout)
             self.assertEqual(candidate.stdout.count("PASS:"), 3)
+            snapshot = next((root / "candidate-data" / "evidence").glob("*")) / "initial.json"
+            self.assertEqual(json.loads(snapshot.read_text())["checkpoint_rating_audit"]["por_round"], 1)
             forwarded = (root / "candidate-data" / VERIFY.NODES[0] / "por" / "args.json").read_text()
             self.assertIn('"--checkpoint-epoch-delay-waves", "12"', forwarded)
 
