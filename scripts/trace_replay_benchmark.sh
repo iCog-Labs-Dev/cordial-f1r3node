@@ -16,7 +16,7 @@ weights="$benchmark_dir/benchmark_15.weights.json"
 echo "[benchmark_15] trace lines=$(wc -l < "$trace") bytes=$(wc -c < "$trace")"
 
 cd "$repo_root/lean"
-timeout_seconds="${ISSUE188_BENCHMARK_TIMEOUT:-30}"
+timeout_seconds="${TRACE_REPLAY_BENCHMARK_TIMEOUT:-30}"
 set +e
 /usr/bin/time -f '[benchmark_15] replay elapsed=%e s max_rss=%M KB' \
   timeout "${timeout_seconds}s" lake exe replay_runner --trace "$trace" "$weights" benchmark_15

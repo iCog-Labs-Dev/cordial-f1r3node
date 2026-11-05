@@ -838,6 +838,7 @@ dependencies = [
  "cordial-miners-core",
  "criterion",
  "k256",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,0 +1,4631 @@
+{
+  "boundary": "cordial-por/slashing-structural-v1",
+  "fixtures": [
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 1001,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_configuration",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "alpha_above_scale",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 0,
+            "excluded": true,
+            "id": 1,
+            "retained": 750
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 2
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 2,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 2
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 1,
+              "retained": 750
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "invalid_penalty_events",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 0
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "already_ejected",
+      "previous": {
+        "entries": [
+          {
+            "active": 0,
+            "excluded": true,
+            "id": 1,
+            "retained": 750
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 18446744073709551615,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 18446744073709551615,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 18446744073709551615,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 18446744073709551615,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 11068046444225730969,
+        "base_penalty": 4611686018427387903,
+        "gamma": 184467440737095516,
+        "initial": 0,
+        "maximum_rating": 18446744073709551615,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 18446744073709551615,
+        "threshold": 5534023222112865484
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          },
+          {
+            "application_round": 1,
+            "evidence_length": 429,
+            "id": 2,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 18446744073709551615,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 18446744073709551615,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 18446744073709551615,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 18446744073709551615,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "arithmetic_overflow",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 18446744073709551615
+          },
+          {
+            "id": 2,
+            "weight": 18446744073709551615
+          },
+          {
+            "id": 3,
+            "weight": 18446744073709551615
+          },
+          {
+            "id": 4,
+            "weight": 18446744073709551615
+          }
+        ]
+      },
+      "name": "arithmetic_overflow",
+      "previous": {
+        "entries": [
+          {
+            "active": 18446744073709551615,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 18446744073709551615,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 18446744073709551615,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 18446744073709551615,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          },
+          {
+            "application_round": 1,
+            "evidence_length": 429,
+            "id": 2,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "ok",
+        "tiers": [
+          {
+            "id": 1,
+            "penalty": 1000
+          },
+          {
+            "id": 2,
+            "penalty": 1000
+          }
+        ],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 0
+          },
+          {
+            "id": 2,
+            "weight": 0
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "correlated_full",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 429,
+            "id": 2,
+            "offense_round": 0
+          },
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "ok",
+        "tiers": [
+          {
+            "id": 1,
+            "penalty": 1000
+          },
+          {
+            "id": 2,
+            "penalty": 1000
+          }
+        ],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 0
+          },
+          {
+            "id": 2,
+            "weight": 0
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "correlated_reversed",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          },
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_penalty_events",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "duplicate_equivocation",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [],
+        "inactivity": [
+          {
+            "id": 2,
+            "missed_rounds": 1
+          },
+          {
+            "id": 2,
+            "missed_rounds": 1
+          }
+        ],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_penalty_events",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "duplicate_inactivity",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "ok",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "empty_events",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 0,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_penalty_events",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "empty_evidence",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 300,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 700,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 1,
+              "retained": 225
+            },
+            {
+              "active": 700,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "ok",
+        "tiers": [
+          {
+            "id": 1,
+            "penalty": 250
+          }
+        ],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 0
+          },
+          {
+            "id": 2,
+            "weight": 700
+          }
+        ]
+      },
+      "name": "exactly_30",
+      "previous": {
+        "entries": [
+          {
+            "active": 300,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 700,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 1001,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_configuration",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "gamma_above_scale",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 707,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [],
+        "inactivity": [
+          {
+            "id": 2,
+            "missed_rounds": 1
+          }
+        ],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_penalty_events",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "inactive_rater",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": [
+        {
+          "rater": 2,
+          "recipient": 1,
+          "round": 1,
+          "score": 1000,
+          "signature": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 707,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [],
+        "inactivity": [
+          {
+            "id": 1,
+            "missed_rounds": 1
+          }
+        ],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_penalty_events",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "inactive_recipient",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": [
+        {
+          "rater": 2,
+          "recipient": 1,
+          "round": 1,
+          "score": 1000,
+          "signature": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [],
+        "inactivity": [
+          {
+            "id": 1,
+            "missed_rounds": 1
+          },
+          {
+            "id": 2,
+            "missed_rounds": 1
+          }
+        ],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 990,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 990,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "ok",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 990
+          },
+          {
+            "id": 2,
+            "weight": 990
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "inactivity",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [],
+        "inactivity": [
+          {
+            "id": 2,
+            "missed_rounds": 1
+          },
+          {
+            "id": 1,
+            "missed_rounds": 1
+          }
+        ],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 990,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 990,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "ok",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 990
+          },
+          {
+            "id": 2,
+            "weight": 990
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "inactivity_reversed",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 1001,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_configuration",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "initial_above_scale",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 1001,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_configuration",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "inverted_rating_bounds",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 1,
+              "retained": 750
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "ok",
+        "tiers": [
+          {
+            "id": 1,
+            "penalty": 250
+          }
+        ],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 0
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "isolated_below_30",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [
+          {
+            "id": 2,
+            "missed_rounds": 1
+          }
+        ],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 1,
+              "retained": 750
+            },
+            {
+              "active": 990,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "ok",
+        "tiers": [
+          {
+            "id": 1,
+            "penalty": 250
+          }
+        ],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 0
+          },
+          {
+            "id": 2,
+            "weight": 990
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "mixed_penalties",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          },
+          {
+            "active": 562,
+            "excluded": false,
+            "id": 5,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            },
+            {
+              "active": 562,
+              "excluded": false,
+              "id": 5,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "ok",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          },
+          {
+            "id": 5,
+            "weight": 562
+          }
+        ]
+      },
+      "name": "new_rated_validator",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": [
+        {
+          "rater": 2,
+          "recipient": 5,
+          "round": 1,
+          "score": 1000,
+          "signature": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [
+          {
+            "id": 1,
+            "missed_rounds": 1
+          }
+        ],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_penalty_events",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "overlap",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 65537,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_penalty_events",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "oversized_evidence",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 1001,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_configuration",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "penalty_above_scale",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 0,
+            "excluded": true,
+            "id": 1,
+            "retained": 750
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 2
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [],
+        "inactivity": [
+          {
+            "id": 2,
+            "missed_rounds": 1
+          }
+        ],
+        "round": 2
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 1,
+              "retained": 750
+            },
+            {
+              "active": 990,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 2
+        },
+        "status": "ok",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 0
+          },
+          {
+            "id": 2,
+            "weight": 990
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "preserve_ejection",
+      "previous": {
+        "entries": [
+          {
+            "active": 0,
+            "excluded": true,
+            "id": 1,
+            "retained": 750
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 101,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 899,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 1,
+              "retained": 75
+            },
+            {
+              "active": 899,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "ok",
+        "tiers": [
+          {
+            "id": 1,
+            "penalty": 250
+          }
+        ],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 0
+          },
+          {
+            "id": 2,
+            "weight": 899
+          }
+        ]
+      },
+      "name": "rounding",
+      "previous": {
+        "entries": [
+          {
+            "active": 101,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 899,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 707,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 1,
+              "retained": 750
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "ok",
+        "tiers": [
+          {
+            "id": 1,
+            "penalty": 250
+          }
+        ],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 0
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "slash_ignores_rating_reward",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": [
+        {
+          "rater": 2,
+          "recipient": 1,
+          "round": 1,
+          "score": 1000,
+          "signature": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 301,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 699,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 699,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "ok",
+        "tiers": [
+          {
+            "id": 1,
+            "penalty": 1000
+          }
+        ],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 0
+          },
+          {
+            "id": 2,
+            "weight": 699
+          }
+        ]
+      },
+      "name": "smallest_above_30",
+      "previous": {
+        "entries": [
+          {
+            "active": 301,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 699,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 1001
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_configuration",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "threshold_above_scale",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 100,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 200,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 300,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 400,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          },
+          {
+            "application_round": 1,
+            "evidence_length": 429,
+            "id": 2,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 1,
+              "retained": 75
+            },
+            {
+              "active": 0,
+              "excluded": true,
+              "id": 2,
+              "retained": 150
+            },
+            {
+              "active": 300,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 400,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 1
+        },
+        "status": "ok",
+        "tiers": [
+          {
+            "id": 1,
+            "penalty": 250
+          },
+          {
+            "id": 2,
+            "penalty": 250
+          }
+        ],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 0
+          },
+          {
+            "id": 2,
+            "weight": 0
+          },
+          {
+            "id": 3,
+            "weight": 300
+          },
+          {
+            "id": 4,
+            "weight": 400
+          }
+        ]
+      },
+      "name": "unequal_weights",
+      "previous": {
+        "entries": [
+          {
+            "active": 100,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 200,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 300,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 400,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 428,
+            "id": 5,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_penalty_events",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "unknown_equivocator",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [],
+        "inactivity": [
+          {
+            "id": 5,
+            "missed_rounds": 1
+          }
+        ],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_penalty_events",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "unknown_inactive",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [],
+        "inactivity": [
+          {
+            "id": 1,
+            "missed_rounds": 2
+          }
+        ],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_penalty_events",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "unsupported_inactivity",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 1000,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [],
+        "inactivity": [
+          {
+            "id": 1,
+            "missed_rounds": 1
+          }
+        ],
+        "round": 2
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_penalty_events",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "wrong_event_round",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    },
+    {
+      "candidate": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 1
+      },
+      "config": {
+        "alpha": 600,
+        "base_penalty": 250,
+        "gamma": 10,
+        "initial": 200,
+        "maximum_rating": 1000,
+        "minimum_rating": 0,
+        "missing_entry_policy": "carry_forward",
+        "scale": 0,
+        "threshold": 300
+      },
+      "events": {
+        "equivocations": [
+          {
+            "application_round": 1,
+            "evidence_length": 427,
+            "id": 1,
+            "offense_round": 0
+          }
+        ],
+        "inactivity": [],
+        "round": 1
+      },
+      "expected": {
+        "state": {
+          "entries": [
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 1,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 2,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 3,
+              "retained": 0
+            },
+            {
+              "active": 1000,
+              "excluded": false,
+              "id": 4,
+              "retained": 0
+            }
+          ],
+          "round": 0
+        },
+        "status": "invalid_configuration",
+        "tiers": [],
+        "weights": [
+          {
+            "id": 1,
+            "weight": 1000
+          },
+          {
+            "id": 2,
+            "weight": 1000
+          },
+          {
+            "id": 3,
+            "weight": 1000
+          },
+          {
+            "id": 4,
+            "weight": 1000
+          }
+        ]
+      },
+      "name": "zero_scale",
+      "previous": {
+        "entries": [
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 1,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 2,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 3,
+            "retained": 0
+          },
+          {
+            "active": 1000,
+            "excluded": false,
+            "id": 4,
+            "retained": 0
+          }
+        ],
+        "round": 0
+      },
+      "ratings": []
+    }
+  ],
+  "schema_version": 1
+}

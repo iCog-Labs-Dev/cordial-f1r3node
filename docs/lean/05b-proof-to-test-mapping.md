@@ -5,7 +5,7 @@
 Finality, approval, quorum, ratification, super-ratification, observation, and
 equivocation have proved executable-to-Prop bridges. Ordering is independently
 compared but **is not yet proved a refinement of KR4's opaque `tau`**.
-Issue #188 is not fully PR-ready while this gap remains.
+The trace conformance work is not fully PR-ready while this gap remains.
 
 Every named theorem/lemma in the landed KR1–KR4 modules has one row below,
 including private helpers and worked-example scaffolding. A Rust test exercises
@@ -196,6 +196,6 @@ Exact Lean negative labels: `invalid-finality`, `insufficient-quorum`,
 `low-stake-false-finality`. Parser tests cover all 15 variants and rejection
 of malformed/unknown/missing/mistyped/extra fields.
 
-`scripts/issue188_mutation_test.sh` compiles the actual weakened Rust quorum
+`scripts/quorum_threshold_mutation_test.sh` compiles the actual weakened Rust quorum
 predicate, generates an execution, and requires unchanged Lean to reject its
 insufficient-weight certificate. The oracle is independent of Rust's answer.
