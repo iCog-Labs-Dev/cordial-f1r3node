@@ -81,6 +81,10 @@ struct Args {
     #[arg(long, default_value_t = false)]
     window_ordering_fragment: bool,
 
+    /// Native genesis bonds file: one hex-encoded public key and weight per line.
+    #[arg(long)]
+    bonds_file: Option<PathBuf>,
+
     #[arg(long)]
     write_ordered_file: Option<PathBuf>,
 
@@ -143,7 +147,10 @@ async fn main() -> Result<()> {
         bail!("no blocks were returned from the live node");
     }
 
-    let bonds = derive_uniform_bonds(&recent_blocks);
+    let bonds = match args.bonds_file.as_ref() {
+        Some(path) => read_bonds_file(path)?,
+        None => derive_uniform_bonds(&recent_blocks),
+    };
     let shard_conf = CasperShardConf {
         shard_name: args.shard_id.clone(),
         max_number_of_parents: 16,
@@ -348,6 +355,13 @@ async fn main() -> Result<()> {
     println!("Ordering preview:  {}", args.ordering_preview);
     println!("Fragment only:     {}", args.ordering_fragment_only);
     println!("Window fragment:   {}", args.window_ordering_fragment);
+    println!(
+        "Bonds file:        {}",
+        args.bonds_file
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<recent senders>".to_string())
+    );
     println!(
         "Write ordered:     {}",
         args.write_ordered_file
@@ -571,6 +585,39 @@ fn derive_uniform_bonds(blocks: &[models::casper::LightBlockInfo]) -> HashMap<No
         }
     }
     bonds
+}
+
+pub(crate) fn read_bonds_file(path: &PathBuf) -> Result<HashMap<NodeId, u64>> {
+    let body = fs::read_to_string(path)
+        .with_context(|| format!("failed to read bonds file {}", path.display()))?;
+    let mut bonds = HashMap::new();
+    for (index, line) in body.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.split_whitespace();
+        let key = fields.next().unwrap_or_default();
+        let weight = fields
+            .next()
+            .with_context(|| format!("bonds file line {} has no weight", index + 1))?;
+        if fields.next().is_some() {
+            bail!("bonds file line {} has extra fields", index + 1);
+        }
+        let key = StringOps::decode_hex(key.to_string())
+            .filter(|key| !key.is_empty())
+            .with_context(|| format!("bonds file line {} has an invalid key", index + 1))?;
+        let weight: u64 = weight
+            .parse()
+            .with_context(|| format!("bonds file line {} has an invalid weight", index + 1))?;
+        if bonds.insert(NodeId(key), weight).is_some() {
+            bail!("bonds file line {} repeats a validator key", index + 1);
+        }
+    }
+    if bonds.is_empty() {
+        bail!("bonds file {} contains no validators", path.display());
+    }
+    Ok(bonds)
 }
 
 fn hex_string(bytes: Vec<u8>) -> String {

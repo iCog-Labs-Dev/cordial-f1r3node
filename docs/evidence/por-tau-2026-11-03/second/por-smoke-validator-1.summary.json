@@ -1,0 +1,11 @@
+{
+  "node": "por-smoke-validator-1",
+  "grpc_url": "http://127.0.0.1:61001",
+  "http_url": "http://127.0.0.1:61003",
+  "ordered_count": 92,
+  "anchor": "81c27985a17cd3238f48c4a69c07c4229980af77bd764a4051e1f0a74f39b9f8",
+  "mirror_lfb": "81c27985a17cd3238f48c4a69c07c4229980af77bd764a4051e1f0a74f39b9f8",
+  "bond_count": 4,
+  "image_id": "sha256:d996a47a49176aaa777930eebae83926f0d9202bed8b71eca36b84f91a210df7",
+  "output_sha256": "57dbfb801e57d8ac9eb6dd0965de34f84d84c91c191126ea7dee0659bd402801"
+}

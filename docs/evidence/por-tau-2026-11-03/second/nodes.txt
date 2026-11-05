@@ -1,0 +1,4 @@
+por-smoke-validator-1 http://127.0.0.1:61001 http://127.0.0.1:61003
+por-smoke-validator-2 http://127.0.0.1:62001 http://127.0.0.1:62003
+por-smoke-validator-3 http://127.0.0.1:63001 http://127.0.0.1:63003
+por-smoke-validator-4 http://127.0.0.1:64001 http://127.0.0.1:64003

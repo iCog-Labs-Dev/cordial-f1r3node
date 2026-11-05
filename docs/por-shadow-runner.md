@@ -1,5 +1,8 @@
 # Live PoR shadow runner and four-node smoke tests
 
+For the exact correctness claims and limits of each Docker check, see
+[What the four-node PoR Docker run verifies](por-docker-correctness-matrix.md).
+
 This guide covers a single observer and the four-observer checkpoint smoke.
 For a presentation of the live status and a deterministic equivocation replay,
 see the [PoR weighted convergence and equivocation demo](./demos/README.md).
@@ -18,6 +21,10 @@ reporting does not imply that intermediate waves were processed as PoR rating
 rounds. With keyed observers and a shared exchange, it derives complete round
 candidates. An explicit flag can commit and activate them in the local Cordial
 observer.
+
+The status also reports `active_effective_wave`, permanently `ejected_keys`,
+and `retained_reputation` for those keys. These are PoR observer facts. A key
+stays in Cordial's authorized membership even when PoR assigns it zero weight.
 
 For a validator observer, `--validator-rating-key-file /path/to/validator.key`
 optionally loads its own secp256k1 private key at startup. The file contains
@@ -148,6 +155,37 @@ The script compares the active round, checkpoint hash, exact weights,
 commitment, and finalized prefix across all four observers, then restarts an
 observer and a validator. This is an observer convergence check; it does not
 show that the running f1r3node nodes consume PoR weights.
+
+### Inspect a checkpoint rating audit
+
+When all eligible raters complete a checkpoint, each observer writes an
+immutable report to
+`<data-dir>/por/checkpoint-audits/round-00000000000000000001.json`
+(round 1; the name uses a 20-digit round number). The report is written before
+any attempted PoR commit. It names the exact 16 finalized block hashes, source
+prefix commitment, every eligible rater, and each admitted rater–recipient
+pair's evidence hash, score, and signature. It also records authorized
+equivocation or inactivity penalty inputs, resulting reputations and ejections,
+the reputation block's ratings/penalties/reputation commitments, and the
+candidate weight map and commitment. An eligible rater with no recipients
+appears in `eligible_raters` even though it has no `ratings` entry.
+
+For example, inspect round 1 of validator 1's observer with:
+
+```sh
+data_root="$HOME/cordial-por-four-node"
+python3 -m json.tool "$data_root/cordial-validator-1/por/checkpoint-audits/round-00000000000000000001.json"
+```
+
+The keyed four-observer harness checks that this report matches each local
+finalized window and active projection or pending candidate, and that all
+four reports are identical. It repeats the check after restarts and copies the
+agreed report into each evidence snapshot as `checkpoint_rating_audit`. A
+different report at the same round stops the shadow runner. The report is a
+*candidate* audit; `shadow-status.json` tells whether its weights activated.
+This report exposes the signed public ratings and penalty evidence, not private
+rating keys. A zero `equivocations` list means that no authorized equivocation
+penalty was applied in that checkpoint.
 
 To exercise the future-only cutover, add the same
 `--checkpoint-epoch-delay-waves N` to the keyed harness command below. The
@@ -302,7 +340,10 @@ own observer processes when it exits; node volumes and PoR data remain.
 
 Use a data root outside the repository and reuse it for subsequent recovery
 runs. Logs are written to `<data-root>/<node>/runner.log`; each status is at
-`<data-root>/<node>/por/shadow-status.json`. `--skip-node-restart` runs only the
+`<data-root>/<node>/por/shadow-status.json`. Each harness run also retains four
+complete observer status snapshots under `<data-root>/evidence/<run-id>/` at the
+initial, observer-restart, and (unless skipped) validator-restart gates.
+`--skip-node-restart` runs only the
 observer restart check. `--timeout-seconds` and `--min-finalized-blocks` adjust
 the convergence gate. The cluster must be running before this command; the
 harness does not start or reset it.
@@ -396,6 +437,18 @@ hashes at wave 14, including 19 hashes after the sealed prefix. Every
 validator's local PoR weight changed from 200,000,000 to 402,738,615. Because
 all four new weights were equal, this run does not show an unequal-weight
 ordering change or f1r3node enforcing those weights.
+
+For a future fault run, add `--min-distinct-weights 2
+--require-ejected-validator 2 --min-post-cutover-waves 1` to the keyed smoke
+command and raise `--min-por-round` to the penalty checkpoint round. The gate
+requires all four status files to agree on the ejected key, its retained
+reputation, zero active weight, and the effective wave, then finalizes at least
+one wave under that epoch. It repeats these checks after each restart. This is
+an assertion gate, not a fault injector: the current native node proposer
+writes empty body extra bytes and its gRPC `propose` request has no
+authorization payload, so the current Docker setup cannot satisfy a live PoR
+slash scenario. The controlled signed-block test in
+`test_por_checkpoint_penalties.rs` exercises the adapter path today.
 
 **Legacy wave-path blocker observed on 2026-10-14:** four keyed observers
 launched before a fresh cluster, then all exited because no final leader could

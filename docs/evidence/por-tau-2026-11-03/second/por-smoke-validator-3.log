@@ -1,0 +1,79 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.23s
+     Running `target/debug/live_mirror_check --grpc-url 'http://127.0.0.1:63001' --http-url 'http://127.0.0.1:63003' --depth 64 --height-bootstrap --height-batch-size 64 --height-bootstrap-target 26 --skip-http-compare --ordering-preview 3 --write-ordered-file /tmp/cordial-tau-fresh-verified-20261103/second/por-smoke-validator-3.ordered.json --ordering-fragment-only --bonds-file /tmp/cordial-tau-fresh-verified-20261103/second/bonds.txt`
+[phase] querying initial gRPC last finalized block
+[height-bootstrap] start_height=0, target_max_height=26, batch_size=64
+[height-bootstrap] range 0..=26 returned 103 blocks
+[height-bootstrap] after range 0..=26: mirrored=103, pending=0
+[phase] bootstrap complete
+[phase] computing mirror last finalized block
+[phase] querying gRPC last finalized block
+[phase] computing latest finalized ordered output
+[phase] skipping HTTP comparison
+Cordial live mirror check
+=========================
+gRPC URL:          http://127.0.0.1:63001
+HTTP URL:          http://127.0.0.1:63003
+Depth:             64
+Max rounds:        8
+Max backfill:      256
+Parents-only:      false
+Height bootstrap:  true
+Height batch:      64
+Height window:     <full>
+Height target:     26
+Trusted boundary:  false
+Skip ordering:     false
+Skip HTTP compare: true
+Ordering preview:  3
+Fragment only:     true
+Window fragment:   false
+Bonds file:        /tmp/cordial-tau-fresh-verified-20261103/second/bonds.txt
+Write ordered:     /tmp/cordial-tau-fresh-verified-20261103/second/por-smoke-validator-3.ordered.json
+Compare ordered:   <none>
+Mirrored blocks:   103
+Pending blocks:    0
+Decoded messages:  103
+Height bootstrapped: 103
+Backfilled blocks: 0
+Unresolved preds:  0
+Ordered blocks:    92
+Ordered preview:   3
+Ordered head:
+  - 0903f12a8791ed9a58658b66e91b33907106c6961328e0ef4b864ddfc6ae5815
+  - 1e938273842c309be289a001c45ea48ed624396d6d516162b160a32cf1f4b740
+  - d87619030581c778ce0d85cb7a394466ee872a1d634e05c7bf109eb129db163c
+Ordered tail:
+  - ccff6da6bfbb7bf3f8c9a2f18cf52ff5d84d10fdd7668e3cd1276db513ded844
+  - d35092a8487c272ccf8a1909a1c49d88d8171816ec36dd8deb5a727924ce8ef4
+  - 81c27985a17cd3238f48c4a69c07c4229980af77bd764a4051e1f0a74f39b9f8
+Ordered output anchor:   81c27985a17cd3238f48c4a69c07c4229980af77bd764a4051e1f0a74f39b9f8
+Wavelength:              3
+Bond count:              4
+Total mirrored blocks:   103
+Ordered output blocks:   92
+Ordered output head:
+  - hash=0903f12a8791ed9a58658b66e91b33907106c6961328e0ef4b864ddfc6ae5815 creator= block_number=0 round=0 wave=0
+  - hash=1e938273842c309be289a001c45ea48ed624396d6d516162b160a32cf1f4b740 creator=044d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d07662a3eada2d0fe208b6d257ceb0f064284662e857f57b66b54c198bd310ded36d0 block_number=1 round=1 wave=0
+  - hash=d87619030581c778ce0d85cb7a394466ee872a1d634e05c7bf109eb129db163c creator=04462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b199c07969f5442000bea455d72ae826a86bfac9089cb18152ed756ebb2a596f5 block_number=1 round=1 wave=0
+Ordered output tail:
+  - hash=ccff6da6bfbb7bf3f8c9a2f18cf52ff5d84d10fdd7668e3cd1276db513ded844 creator=04462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b199c07969f5442000bea455d72ae826a86bfac9089cb18152ed756ebb2a596f5 block_number=23 round=23 wave=7
+  - hash=d35092a8487c272ccf8a1909a1c49d88d8171816ec36dd8deb5a727924ce8ef4 creator=041b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f70beaf8f588b541507fed6a642c5ab42dfdf8120a7f639de5122d47a69a8e8d1 block_number=23 round=23 wave=7
+  - hash=81c27985a17cd3238f48c4a69c07c4229980af77bd764a4051e1f0a74f39b9f8 creator=041b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f70beaf8f588b541507fed6a642c5ab42dfdf8120a7f639de5122d47a69a8e8d1 block_number=24 round=24 wave=8
+LFB in ordered:    yes
+Ordered file:      /tmp/cordial-tau-fresh-verified-20261103/second/por-smoke-validator-3.ordered.json
+Initial gRPC LFB:  5214b166b5f49636bbf6fe39cf7db200dd2c29b6f158f1311148e1c2ac9ddabb
+Initial gRPC Meta: creator=04462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b199c07969f5442000bea455d72ae826a86bfac9089cb18152ed756ebb2a596f5 block_number=24
+Mirror LFB:        81c27985a17cd3238f48c4a69c07c4229980af77bd764a4051e1f0a74f39b9f8
+Mirror LFB Meta:   creator=041b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f70beaf8f588b541507fed6a642c5ab42dfdf8120a7f639de5122d47a69a8e8d1 block_number=24 round=24 wave=8
+HTTP LFB:          <none>
+gRPC LFB:          5214b166b5f49636bbf6fe39cf7db200dd2c29b6f158f1311148e1c2ac9ddabb
+gRPC LFB Meta:     creator=04462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b199c07969f5442000bea455d72ae826a86bfac9089cb18152ed756ebb2a596f5 block_number=24
+Finality neighborhood: skipped
+Comparison:        SKIPPED
+Deploy trace:
+  Total traced:       0
+  Observed:           0
+  Accepted:           0
+  BlockIncluded:      0
+  FinalizedOrdered:   0
+  (no deploys seen in mirrored blocks)

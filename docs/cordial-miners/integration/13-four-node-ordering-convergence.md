@@ -40,9 +40,10 @@ The verifier runs `live_mirror_check` against each validator:
 - `http://127.0.0.1:53401`
 - `http://127.0.0.1:54401`
 
-For each node, it mirrors live blocks, computes a deterministic ordering over
-the mirrored recent window by default, writes the ordered block hashes to a
-temporary JSON file, and compares each node against validator 1.
+For each node, it mirrors live blocks, computes `xsort` over all blocks in the
+mirrored recent window by default, writes the ordered block hashes to a
+temporary JSON file, and compares each node against validator 1. This default
+does not select blocks through finalized leaders as `weighted_tau` does.
 
 By default the script uses a bounded recent-height window with a trusted window
 boundary. This keeps the live check practical on long-running local clusters:
@@ -53,8 +54,13 @@ verifier.
 
 The default mode is therefore a practical convergence smoke test for the live
 mirror: all four validators must expose the same recent Cordial-ordered block
-view. To force the heavier finalized-fragment path, set
-`CORDIAL_ORDER_WINDOW_ORDERING_FRAGMENT=false`.
+view. To exercise the finalized `weighted_tau` path, set
+`CORDIAL_ORDER_WINDOW_ORDERING_FRAGMENT=false` while leaving
+`CORDIAL_ORDER_FRAGMENT_ONLY=true`. The script requires a nonempty output, so
+missing finality evidence fails the check rather than passing by comparing four
+empty sequences. A bounded trusted window may not contain enough history for
+this check to pass; a full-history `τ` test also needs complete predecessor
+closure and the authorized validator weights.
 
 Before exporting each node's order, the script queries every validator's recent
 HTTP block view and pins the run to the lowest visible block height. This avoids
@@ -117,3 +123,60 @@ CORDIAL_ORDER_DEPTH=16 CORDIAL_ORDER_HEIGHT_WINDOW=256 \
 
 This verifier is intentionally host-side because it runs the adapter binary from
 this repository and connects to the validator gRPC ports exposed by Docker.
+
+## Finalized `τ` evidence run
+
+Use a fresh, short four-validator cluster for the stronger check. The long-running
+cluster's bounded trusted window can omit finality evidence, and deriving bonds
+from recent senders can omit a validator. The dedicated runner reads the same
+public genesis bond table mounted into the Docker nodes, mirrors from height 0,
+and calls `weighted_tau` through `latest_finalized_ordered_output`.
+
+For the isolated `610xx` through `640xx` ports, stop any older project using
+those ports while preserving its volumes, then start a fresh Compose project:
+
+```bash
+docker compose -p por-live-demo --env-file docker/.env \
+  -f docker/four-node-cluster.yml -f docker/four-node-por-smoke-override.yml down
+docker compose -p por-tau-evidence --env-file docker/.env \
+  -f docker/four-node-cluster.yml -f docker/four-node-por-smoke-override.yml up -d
+```
+
+The first command is needed only if `por-live-demo` is actually using the ports;
+replace that project name with the one shown by `docker inspect` for your
+running containers. `down` here keeps the old named volumes. Wait until the
+fresh nodes have finalized blocks, then create the host-port list and run:
+
+```bash
+cat > /tmp/cordial-por-smoke-nodes.txt <<'NODES'
+por-smoke-validator-1 http://127.0.0.1:61001 http://127.0.0.1:61003
+por-smoke-validator-2 http://127.0.0.1:62001 http://127.0.0.1:62003
+por-smoke-validator-3 http://127.0.0.1:63001 http://127.0.0.1:63003
+por-smoke-validator-4 http://127.0.0.1:64001 http://127.0.0.1:64003
+NODES
+CORDIAL_ORDER_NODES_FILE=/tmp/cordial-por-smoke-nodes.txt \
+CORDIAL_ORDER_BONDS_FILE=docker/genesis/cordial-bonds.txt \
+CORDIAL_TAU_EVIDENCE_DIR=/tmp/cordial-tau-run-1 \
+  ./docker/scripts/verify-four-node-cluster-tau.sh
+```
+
+The evidence directory must be new. It keeps `first/` and `second/` snapshots,
+each with `inputs.json`, the copied public bonds and node list, native LFB
+responses, per-node mirror logs, ordered hash arrays, summaries, and a result.
+The root also has `progress.tsv`, `prefix-checks.json`, and `result.json`. An
+early failure retains the files collected up to that point. The input record
+includes the Git commit plus hashes of the verifier and mirror source, so an
+uncommitted test run remains identifiable. Per-node summaries include the
+container image ID when the node name matches a local container.
+
+A pass requires all four nodes to have similar visible heights, nonempty
+finalized outputs, the same Cordial anchor and exact ordered hash sequence at
+each snapshot, no duplicate hashes, and a later output that grows by exact
+prefix extension on each node. The runner does not change Docker consensus or
+activate PoR weights in the native validators. A pass demonstrates the host-side
+equal-weight `τ` path over this finite run.
+
+Use a new evidence directory for each run. The script writes both snapshots,
+per-node logs and ordered hashes, prefix checks, and a final `result.json`.
+The [2026-11-03 four-node `τ` run](../../evidence/por-tau-2026-11-03/README.md)
+is a preserved example, including its source hashes and integrity manifest.

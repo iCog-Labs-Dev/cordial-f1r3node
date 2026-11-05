@@ -1,0 +1,10 @@
+   Compiling cordial-f1r3node-adapter v0.1.0 (/home/ymesfin/cordial-miners/cordial-f1r3node/crates/cordial-f1r3node-adapter)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.90s
+     Running tests/test_future_weight_epoch.rs (target/debug/deps/test_future_weight_epoch-1d5410e2526bd913)
+
+running 2 tests
+test preview_rejects_missing_boundary_past_wave_and_membership_change ... ok
+test preview_preserves_published_prefix_and_uses_new_weights_only_for_future_wave ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

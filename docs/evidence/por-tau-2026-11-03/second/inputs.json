@@ -1,0 +1,14 @@
+{
+  "started_at": "2026-11-03T06:52:13Z",
+  "git_commit": "b3dd6a144434a862ebc976ac0bd91750be2d2df2",
+  "verifier_sha256": "788f323d7cc992b4aa030c4f76913be2fe97153ae4f35ca6194235b68523bb5c",
+  "mirror_source_sha256": "c8d4a2d3547a53e31cda1bc93a5c18c2b3957f5569e6201b4b96f1bb7a993e3b",
+  "mode": "finalized-weighted-tau",
+  "target_height": 26,
+  "height_window": 0,
+  "trusted_window_boundary": false,
+  "max_height_lag": 8,
+  "bonds_sha256": "7213566bb6b014b65dfe9ede4494c2faac9d0c4a1afebeebb5de8535bf68c565",
+  "nodes_file": "nodes.txt",
+  "bonds_file": "bonds.txt"
+}

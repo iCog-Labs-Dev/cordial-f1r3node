@@ -1,0 +1,104 @@
+{
+  "base_penalty_percent": 25,
+  "description": "Four independent durable PoR replays of signed checkpoint ratings and one finalized equivocation authorization",
+  "initial_weights": {
+    "validator-1": 1000,
+    "validator-2": 1000,
+    "validator-3": 1000,
+    "validator-4": 1000
+  },
+  "kind": "deterministic_checkpoint_fixture",
+  "observers": [
+    {
+      "final_round": 2,
+      "observer": "observer-1",
+      "recovered_round": 1,
+      "round_1_checkpoint": "d7cf0cddc6019bab1b3a2820476bb43d644cbf71b6dfd529f1f7aaa57e808d02",
+      "round_1_retained": 750,
+      "round_1_weights": {
+        "validator-1": 911,
+        "validator-2": 0,
+        "validator-3": 1000,
+        "validator-4": 1000
+      },
+      "round_2_checkpoint": "e8ca315557477548c0dc6a53b5583f70f4b4f5af873cc537de5aa3fe22f67719",
+      "round_2_weights": {
+        "validator-1": 843,
+        "validator-2": 0,
+        "validator-3": 1000,
+        "validator-4": 1000
+      }
+    },
+    {
+      "final_round": 2,
+      "observer": "observer-2",
+      "recovered_round": 1,
+      "round_1_checkpoint": "d7cf0cddc6019bab1b3a2820476bb43d644cbf71b6dfd529f1f7aaa57e808d02",
+      "round_1_retained": 750,
+      "round_1_weights": {
+        "validator-1": 911,
+        "validator-2": 0,
+        "validator-3": 1000,
+        "validator-4": 1000
+      },
+      "round_2_checkpoint": "e8ca315557477548c0dc6a53b5583f70f4b4f5af873cc537de5aa3fe22f67719",
+      "round_2_weights": {
+        "validator-1": 843,
+        "validator-2": 0,
+        "validator-3": 1000,
+        "validator-4": 1000
+      }
+    },
+    {
+      "final_round": 2,
+      "observer": "observer-3",
+      "recovered_round": 1,
+      "round_1_checkpoint": "d7cf0cddc6019bab1b3a2820476bb43d644cbf71b6dfd529f1f7aaa57e808d02",
+      "round_1_retained": 750,
+      "round_1_weights": {
+        "validator-1": 911,
+        "validator-2": 0,
+        "validator-3": 1000,
+        "validator-4": 1000
+      },
+      "round_2_checkpoint": "e8ca315557477548c0dc6a53b5583f70f4b4f5af873cc537de5aa3fe22f67719",
+      "round_2_weights": {
+        "validator-1": 843,
+        "validator-2": 0,
+        "validator-3": 1000,
+        "validator-4": 1000
+      }
+    },
+    {
+      "final_round": 2,
+      "observer": "observer-4",
+      "recovered_round": 1,
+      "round_1_checkpoint": "d7cf0cddc6019bab1b3a2820476bb43d644cbf71b6dfd529f1f7aaa57e808d02",
+      "round_1_retained": 750,
+      "round_1_weights": {
+        "validator-1": 911,
+        "validator-2": 0,
+        "validator-3": 1000,
+        "validator-4": 1000
+      },
+      "round_2_checkpoint": "e8ca315557477548c0dc6a53b5583f70f4b4f5af873cc537de5aa3fe22f67719",
+      "round_2_weights": {
+        "validator-1": 843,
+        "validator-2": 0,
+        "validator-3": 1000,
+        "validator-4": 1000
+      }
+    }
+  ],
+  "offender": "validator-2",
+  "penalties_hash": "60906a44d0ab25f5bf8e09e6ab607de78fd77428692b3f6c0c643e9ea01a8a45",
+  "proof_blocks": [
+    "d656ba4529b3ed0f966bc9f66bfde9538e4686995e6293194aeb35354b8b3883",
+    "a1e8864f80682649621b6bf139904f739bbca6aa95a7f714dc0a1a19bc26596d"
+  ],
+  "rating_count": 3,
+  "schema_version": 1,
+  "source_prefix_hash": "76513ad7f8b06f4b8b73780279de488db658e716e3ce31c66a31e71a93a8f0f4",
+  "source_prefix_len": 16,
+  "source_round": 1
+}
