@@ -5,7 +5,7 @@
 //! A retained finalized prefix is checked before a recovered view is published.
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs::{self, File},
     io::Write,
     path::{Path, PathBuf},
@@ -34,6 +34,7 @@ use crate::{
 
 use super::{
     activation::PorWeightActivationRecord,
+    checkpoint_audit::CheckpointRatingAudit,
     checkpoint_ratings::{
         close_checkpoint_rating_exchange_if_complete, stage_local_checkpoint_rating_batch,
     },
@@ -118,6 +119,15 @@ pub struct ShadowStatus {
     pub candidate: Option<ShadowCandidate>,
     pub weight_commitment: String,
     pub weights: BTreeMap<String, u64>,
+    /// Active future epoch's first wave under these weights, if applicable.
+    #[serde(default)]
+    pub active_effective_wave: Option<u64>,
+    /// Permanent PoR ejections; authorized membership is unchanged.
+    #[serde(default)]
+    pub ejected_keys: Vec<String>,
+    /// Surviving reputation for ejected keys, excluded from voting weight.
+    #[serde(default)]
+    pub retained_reputation: BTreeMap<String, u64>,
     pub finalized_anchor: Option<String>,
     /// Latest Cordial wave observed as finalized; this is not a committed PoR round.
     #[serde(default)]
@@ -139,6 +149,7 @@ impl ShadowStatus {
             .activated_weight_record()?
             .context("PoR genesis projection was not activated")?;
         let active_epoch = runtime.active_future_epoch();
+        let state = runtime.state().state()?;
         let active_weights = active_epoch.map(|record| record.new_weights());
         let weights = active_weights
             .as_ref()
@@ -146,12 +157,19 @@ impl ShadowStatus {
             .iter()
             .map(|(node, weight)| (hex::encode(&node.0), *weight))
             .collect();
-        let next_round = runtime
-            .state()
-            .state()?
-            .round()
-            .checked_add(1)
-            .context("PoR round overflow")?;
+        let ejected_keys = state
+            .excluded_keys()
+            .iter()
+            .map(|node| hex::encode(&node.0))
+            .collect();
+        let retained_reputation = state
+            .reputation_list()
+            .entries
+            .iter()
+            .filter(|entry| state.is_ejected(&entry.node_id))
+            .map(|entry| (hex::encode(&entry.node_id.0), entry.retained_reputation))
+            .collect();
+        let next_round = state.round().checked_add(1).context("PoR round overflow")?;
         let next_por_source_checkpoint =
             finalized_prefix_checkpoint(output, next_round)?.map(|checkpoint| {
                 ShadowSourceCheckpoint {
@@ -179,6 +197,9 @@ impl ShadowStatus {
                 }),
             ),
             weights,
+            active_effective_wave: active_epoch.map(|record| record.effective_wave()),
+            ejected_keys,
+            retained_reputation,
             finalized_anchor: output.anchor_hash().map(hex::encode),
             observed_finalized_wave: finalized_wave_from_output(
                 runtime.ingress().blocklace(),
@@ -221,10 +242,25 @@ impl ShadowStatus {
             recovered.active_por_round >= self.active_por_round,
             "recovered PoR activation regressed"
         );
+        ensure!(
+            self.ejected_keys
+                .iter()
+                .all(|key| recovered.ejected_keys.contains(key)),
+            "recovered PoR ejection disappeared"
+        );
+        ensure!(
+            self.retained_reputation
+                .iter()
+                .all(|(key, value)| { recovered.retained_reputation.get(key) == Some(value) }),
+            "recovered PoR retained reputation changed"
+        );
         if recovered.active_por_round == self.active_por_round {
             ensure!(
                 recovered.weight_commitment == self.weight_commitment
-                    && recovered.weights == self.weights,
+                    && recovered.weights == self.weights
+                    && recovered.active_effective_wave == self.active_effective_wave
+                    && recovered.ejected_keys == self.ejected_keys
+                    && recovered.retained_reputation == self.retained_reputation,
                 "recovered PoR projection differs from the previous publication"
             );
             if let Some(checkpoint) = &self.active_por_checkpoint {
@@ -364,6 +400,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
         .map(|root| FileRatingExchange::open(root, config.shard_id.as_bytes()))
         .transpose()?;
     let authorized_raters: HashSet<NodeId> = bonds.keys().cloned().collect();
+    let authorized_audit_raters: BTreeSet<NodeId> = bonds.keys().cloned().collect();
     let configured_rating_rater = rating_key
         .as_ref()
         .map(|signer| hex::encode(&signer.rater().0));
@@ -607,6 +644,22 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
                             .map(|(node, weight)| (hex::encode(&node.0), *weight))
                             .collect(),
                     };
+                    let audit = CheckpointRatingAudit::build(
+                        runtime.ingress().blocklace(),
+                        &output,
+                        &completed,
+                        state,
+                        &candidate_state,
+                        runtime.config(),
+                        &authorized_audit_raters,
+                        candidate.weights_commitment(),
+                        &candidate_status.weights,
+                    )?;
+                    ensure!(
+                        audit.checkpoint_hash == candidate_status.checkpoint_hash,
+                        "checkpoint audit candidate hash differs from activated projection"
+                    );
+                    audit.persist(&config.data_dir)?;
                     if last_logged_candidate_checkpoint != Some(candidate_hash) {
                         tracing::info!(
                             candidate_por_round = next_round,
@@ -860,6 +913,9 @@ mod tests {
             candidate: None,
             weight_commitment: "abc".into(),
             weights: BTreeMap::from([("key".into(), 1)]),
+            active_effective_wave: None,
+            ejected_keys: vec![],
+            retained_reputation: BTreeMap::new(),
             finalized_anchor: hashes.last().map(|hash| hash.to_string()),
             observed_finalized_wave: None,
             finalized_hashes: hashes.iter().map(|hash| hash.to_string()).collect(),
@@ -938,12 +994,21 @@ mod tests {
             .unwrap()
             .remove("next_por_source_checkpoint");
         value.as_object_mut().unwrap().remove("candidate");
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("active_effective_wave");
+        value.as_object_mut().unwrap().remove("ejected_keys");
+        value.as_object_mut().unwrap().remove("retained_reputation");
         let previous: ShadowStatus = serde_json::from_value(value).unwrap();
         assert_eq!(previous.observed_finalized_wave, None);
         assert_eq!(previous.configured_rating_rater, None);
         assert_eq!(previous.active_por_checkpoint, None);
         assert_eq!(previous.next_por_source_checkpoint, None);
         assert_eq!(previous.candidate, None);
+        assert_eq!(previous.active_effective_wave, None);
+        assert!(previous.ejected_keys.is_empty());
+        assert!(previous.retained_reputation.is_empty());
         let mut recovered = status(&["a", "b"]);
         recovered.observed_finalized_wave = Some(1);
         previous.validate_recovered(&recovered).unwrap();
@@ -974,6 +1039,28 @@ mod tests {
         recovered.active_por_checkpoint = Some("checkpoint-b".into());
         assert!(old.validate_recovered(&recovered).is_err());
         recovered.active_por_checkpoint = None;
+        assert!(old.validate_recovered(&recovered).is_err());
+    }
+
+    #[test]
+    fn recovered_ejection_and_cutover_cannot_disappear() {
+        let mut old = status(&["a"]);
+        old.active_por_round = 2;
+        old.active_effective_wave = Some(13);
+        old.weights.insert("offender".into(), 0);
+        old.ejected_keys.push("offender".into());
+        old.retained_reputation.insert("offender".into(), 750);
+        let mut recovered = old.clone();
+        recovered.finalized_hashes.push("b".into());
+        old.validate_recovered(&recovered).unwrap();
+
+        recovered.ejected_keys.clear();
+        assert!(old.validate_recovered(&recovered).is_err());
+        recovered = old.clone();
+        recovered.retained_reputation.insert("offender".into(), 0);
+        assert!(old.validate_recovered(&recovered).is_err());
+        recovered = old.clone();
+        recovered.active_effective_wave = Some(14);
         assert!(old.validate_recovered(&recovered).is_err());
     }
 

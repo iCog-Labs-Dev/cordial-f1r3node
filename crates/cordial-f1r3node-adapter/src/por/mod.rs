@@ -6,6 +6,9 @@
 
 pub mod activation;
 pub mod checkpoint;
+pub mod checkpoint_audit;
+#[cfg(test)]
+mod checkpoint_audit_tests;
 mod checkpoint_evidence;
 pub mod checkpoint_ratings;
 pub mod collector;
