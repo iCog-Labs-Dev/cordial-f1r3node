@@ -65,8 +65,10 @@ pub use interactions::{
     validate_finalized_rating_round,
 };
 pub use leader_schedule::{
+    DEFAULT_POR_LEADER_THRESHOLD_DENOMINATOR, DEFAULT_POR_LEADER_THRESHOLD_NUMERATOR,
     LeaderSchedule, LeaderScheduleError, LeaderSelectionComparison, LeaderSelectionPolicy,
-    MAX_POR_LEADER_SCHEDULE_LENGTH, compare_leader_selection,
+    MAX_POR_LEADER_SCHEDULE_LENGTH, ReputationLeaderCandidate, ReputationThreshold,
+    compare_leader_selection, select_reputation_leader_candidates,
 };
 pub use lifecycle::checkpoint::CompletedCheckpointRatingRound;
 pub use lifecycle::cutoff::{

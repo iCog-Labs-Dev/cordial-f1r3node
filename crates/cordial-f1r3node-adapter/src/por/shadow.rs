@@ -41,6 +41,7 @@ use super::{
     finality::{
         finalized_output_for_wave, finalized_prefix_checkpoint, finalized_wave_from_output,
     },
+    leader_schedule::ReputationThreshold,
     local_ratings::{
         RatingExchangeProgress, close_rating_exchange_if_complete, observe_rating_exchange,
         stage_local_rating_batch,
@@ -61,6 +62,12 @@ impl BlocklaceAdapter<BlockIdentity> for PassthroughAdapter {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ShadowLeaderComparisonPolicy {
+    pub schedule_length: usize,
+    pub candidate_threshold: ReputationThreshold,
+}
+
 /// Configuration for one observer. The bonds file is the node's authorized set.
 #[derive(Debug, Clone)]
 pub struct ShadowConfig {
@@ -73,9 +80,9 @@ pub struct ShadowConfig {
     pub checkpoint_ratings: bool,
     /// Fixed number of waves from the rating source to the weight cutover.
     pub checkpoint_epoch_delay_waves: Option<u64>,
-    /// Compare the active round-robin leader with a non-authoritative bounded
-    /// PoR weighted-fair schedule of this length.
-    pub leader_comparison_schedule_length: Option<usize>,
+    /// Compare the active round-robin leader with a bounded PoR weighted-fair
+    /// candidate policy without changing consensus behavior.
+    pub leader_comparison_policy: Option<ShadowLeaderComparisonPolicy>,
     pub data_dir: PathBuf,
     pub shard_id: String,
     pub height_batch_size: i64,
@@ -102,11 +109,24 @@ pub struct ShadowCandidate {
     pub weights: BTreeMap<String, u64>,
 }
 
+/// One ranked PoR leader candidate published for comparison.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowLeaderCandidate {
+    pub node_id: String,
+    pub reputation: u64,
+}
+
 /// Non-authoritative leader comparison for one finalized wave.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowLeaderComparison {
     pub wave: u64,
     pub schedule_length: usize,
+    #[serde(default)]
+    pub candidate_threshold_numerator: Option<u64>,
+    #[serde(default)]
+    pub candidate_threshold_denominator: Option<u64>,
+    #[serde(default)]
+    pub candidates: Vec<ShadowLeaderCandidate>,
     pub round_robin_leader: Option<String>,
     pub por_weighted_fair_leader: Option<String>,
     pub differs: bool,
@@ -149,7 +169,7 @@ impl ShadowStatus {
         output: &OrderedFinalizedOutput,
         rating_rater: Option<&str>,
         source_height: i64,
-        leader_comparison_schedule_length: Option<usize>,
+        leader_comparison_policy: Option<ShadowLeaderComparisonPolicy>,
     ) -> Result<Self> {
         let legacy_record = runtime
             .state()
@@ -167,18 +187,29 @@ impl ShadowStatus {
         let observed_finalized_wave =
             finalized_wave_from_output(runtime.ingress().blocklace(), output)?;
         let effective_wave = active_epoch.map_or(0, |record| record.effective_wave());
-        let leader_comparison = match (leader_comparison_schedule_length, observed_finalized_wave) {
-            (Some(schedule_length), Some(wave)) => {
+        let leader_comparison = match (leader_comparison_policy, observed_finalized_wave) {
+            (Some(policy), Some(wave)) => {
                 let comparison = super::leader_schedule::compare_leader_selection(
                     selected_weights,
                     effective_wave,
                     wave,
-                    schedule_length,
+                    policy.schedule_length,
+                    policy.candidate_threshold,
                 )?;
                 let differs = comparison.differs();
                 Some(ShadowLeaderComparison {
                     wave,
-                    schedule_length,
+                    schedule_length: policy.schedule_length,
+                    candidate_threshold_numerator: Some(policy.candidate_threshold.numerator()),
+                    candidate_threshold_denominator: Some(policy.candidate_threshold.denominator()),
+                    candidates: comparison
+                        .por_leader_candidates
+                        .into_iter()
+                        .map(|candidate| ShadowLeaderCandidate {
+                            node_id: hex::encode(candidate.node_id.0),
+                            reputation: candidate.reputation,
+                        })
+                        .collect(),
                     round_robin_leader: comparison
                         .round_robin_leader
                         .map(|leader| hex::encode(leader.0)),
@@ -285,7 +316,14 @@ impl ShadowStatus {
             }
             if recovered.observed_finalized_wave == self.observed_finalized_wave
                 && let Some(previous) = &self.leader_comparison
+                && (previous.candidate_threshold_numerator.is_some()
+                    || previous.candidate_threshold_denominator.is_some())
             {
+                ensure!(
+                    previous.candidate_threshold_numerator.is_some()
+                        && previous.candidate_threshold_denominator.is_some(),
+                    "retained PoR leader comparison has an incomplete candidate threshold"
+                );
                 ensure!(
                     recovered.leader_comparison.as_ref() == Some(previous),
                     "recovered PoR leader comparison differs from the previous publication"
@@ -391,13 +429,13 @@ fn validate_config(config: &ShadowConfig) -> Result<()> {
     if let Some(delay) = config.checkpoint_epoch_delay_waves {
         PorWeightEpochPolicy::new(delay)?;
     }
-    if let Some(schedule_length) = config.leader_comparison_schedule_length {
+    if let Some(policy) = config.leader_comparison_policy {
         ensure!(
-            schedule_length > 0,
+            policy.schedule_length > 0,
             "leader comparison schedule must not be empty"
         );
         ensure!(
-            schedule_length <= super::leader_schedule::MAX_POR_LEADER_SCHEDULE_LENGTH,
+            policy.schedule_length <= super::leader_schedule::MAX_POR_LEADER_SCHEDULE_LENGTH,
             "leader comparison schedule exceeds the maximum of {}",
             super::leader_schedule::MAX_POR_LEADER_SCHEDULE_LENGTH
         );
@@ -608,7 +646,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
             &output,
             configured_rating_rater.as_deref(),
             head,
-            config.leader_comparison_schedule_length,
+            config.leader_comparison_policy,
         )?;
         if let Some(previous) = &previous {
             previous.validate_recovered(&status)?;
@@ -726,7 +764,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
                                         &output,
                                         configured_rating_rater.as_deref(),
                                         head,
-                                        config.leader_comparison_schedule_length,
+                                        config.leader_comparison_policy,
                                     )?;
                                     before_commit.validate_recovered(&status)?;
                                 }
@@ -763,7 +801,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
                                         &output,
                                         configured_rating_rater.as_deref(),
                                         head,
-                                        config.leader_comparison_schedule_length,
+                                        config.leader_comparison_policy,
                                     )?;
                                     before_commit.validate_recovered(&status)?;
                                 }
@@ -903,7 +941,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
                                             &output,
                                             configured_rating_rater.as_deref(),
                                             head,
-                                            config.leader_comparison_schedule_length,
+                                            config.leader_comparison_policy,
                                         )?;
                                         before_commit.validate_recovered(&status)?;
                                     } else if last_logged_deferred_wave != Some(expected_wave) {
@@ -1018,6 +1056,12 @@ mod tests {
         old.leader_comparison = Some(ShadowLeaderComparison {
             wave: 2,
             schedule_length: 16,
+            candidate_threshold_numerator: Some(1),
+            candidate_threshold_denominator: Some(2),
+            candidates: vec![ShadowLeaderCandidate {
+                node_id: "01".into(),
+                reputation: 10,
+            }],
             round_robin_leader: Some("01".into()),
             por_weighted_fair_leader: Some("02".into()),
             differs: true,
@@ -1031,6 +1075,32 @@ mod tests {
             .unwrap()
             .por_weighted_fair_leader = Some("03".into());
         assert!(old.validate_recovered(&recovered).is_err());
+    }
+
+    #[test]
+    fn legacy_leader_comparison_can_upgrade_candidate_policy() {
+        let mut old = status(&["a", "b"]);
+        old.observed_finalized_wave = Some(2);
+        old.leader_comparison = Some(ShadowLeaderComparison {
+            wave: 2,
+            schedule_length: 16,
+            candidate_threshold_numerator: None,
+            candidate_threshold_denominator: None,
+            candidates: Vec::new(),
+            round_robin_leader: Some("01".into()),
+            por_weighted_fair_leader: Some("02".into()),
+            differs: true,
+        });
+        let mut recovered = old.clone();
+        let comparison = recovered.leader_comparison.as_mut().unwrap();
+        comparison.candidate_threshold_numerator = Some(1);
+        comparison.candidate_threshold_denominator = Some(2);
+        comparison.candidates.push(ShadowLeaderCandidate {
+            node_id: "01".into(),
+            reputation: 10,
+        });
+
+        old.validate_recovered(&recovered).unwrap();
     }
 
     #[test]
@@ -1154,7 +1224,7 @@ mod tests {
             commit_complete_ratings: false,
             checkpoint_ratings: false,
             checkpoint_epoch_delay_waves: None,
-            leader_comparison_schedule_length: None,
+            leader_comparison_policy: None,
             data_dir: "data".into(),
             shard_id: "root".into(),
             height_batch_size: 64,
@@ -1185,12 +1255,20 @@ mod tests {
         config.checkpoint_epoch_delay_waves = Some(0);
         assert!(validate_config(&config).is_err());
         config.checkpoint_epoch_delay_waves = Some(1);
-        config.leader_comparison_schedule_length = Some(0);
+        config.leader_comparison_policy = Some(ShadowLeaderComparisonPolicy {
+            schedule_length: 0,
+            candidate_threshold: ReputationThreshold::default(),
+        });
         assert!(validate_config(&config).is_err());
-        config.leader_comparison_schedule_length =
-            Some(super::super::leader_schedule::MAX_POR_LEADER_SCHEDULE_LENGTH + 1);
+        config.leader_comparison_policy = Some(ShadowLeaderComparisonPolicy {
+            schedule_length: super::super::leader_schedule::MAX_POR_LEADER_SCHEDULE_LENGTH + 1,
+            candidate_threshold: ReputationThreshold::default(),
+        });
         assert!(validate_config(&config).is_err());
-        config.leader_comparison_schedule_length = Some(16);
+        config.leader_comparison_policy = Some(ShadowLeaderComparisonPolicy {
+            schedule_length: 16,
+            candidate_threshold: ReputationThreshold::default(),
+        });
         assert!(validate_config(&config).is_ok());
     }
 

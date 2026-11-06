@@ -12,6 +12,54 @@ use thiserror::Error;
 
 /// Upper bound for materialized comparison schedules.
 pub const MAX_POR_LEADER_SCHEDULE_LENGTH: usize = 65_536;
+pub const DEFAULT_POR_LEADER_THRESHOLD_NUMERATOR: u64 = 1;
+pub const DEFAULT_POR_LEADER_THRESHOLD_DENOMINATOR: u64 = 2;
+
+/// Strict fraction of total active reputation required for the leader set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReputationThreshold {
+    numerator: u64,
+    denominator: u64,
+}
+
+impl ReputationThreshold {
+    pub fn new(numerator: u64, denominator: u64) -> Result<Self, LeaderScheduleError> {
+        if numerator == 0 || denominator == 0 || numerator >= denominator {
+            return Err(LeaderScheduleError::InvalidCandidateThreshold {
+                numerator,
+                denominator,
+            });
+        }
+        Ok(Self {
+            numerator,
+            denominator,
+        })
+    }
+
+    pub fn numerator(self) -> u64 {
+        self.numerator
+    }
+
+    pub fn denominator(self) -> u64 {
+        self.denominator
+    }
+}
+
+impl Default for ReputationThreshold {
+    fn default() -> Self {
+        Self {
+            numerator: DEFAULT_POR_LEADER_THRESHOLD_NUMERATOR,
+            denominator: DEFAULT_POR_LEADER_THRESHOLD_DENOMINATOR,
+        }
+    }
+}
+
+/// One Cordial-authorized validator admitted to the PoR leader-candidate set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReputationLeaderCandidate {
+    pub node_id: NodeId,
+    pub reputation: u64,
+}
 
 /// Leader-selection policy applied to one authorized weight snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +70,12 @@ pub enum LeaderSelectionPolicy {
     /// Bounded deterministic schedule. Every positive-weight key receives one
     /// baseline slot and remaining slots are distributed proportionally.
     PorWeightedFair { schedule_length: usize },
+    /// Weighted-fair schedule restricted to the smallest highest-reputation
+    /// prefix that strictly exceeds `candidate_threshold`.
+    PorThresholdWeightedFair {
+        schedule_length: usize,
+        candidate_threshold: ReputationThreshold,
+    },
 }
 
 /// A leader schedule that becomes valid at one protocol-agreed wave.
@@ -38,6 +92,7 @@ pub struct LeaderSelectionComparison {
     pub wave: u64,
     pub round_robin_leader: Option<NodeId>,
     pub por_weighted_fair_leader: Option<NodeId>,
+    pub por_leader_candidates: Vec<ReputationLeaderCandidate>,
 }
 
 impl LeaderSelectionComparison {
@@ -52,6 +107,10 @@ pub enum LeaderScheduleError {
     EmptyAuthorizedValidatorSet,
     #[error("PoR leader selection requires positive active reputation weight")]
     ZeroActiveReputation,
+    #[error(
+        "PoR leader candidate threshold must satisfy 0 < numerator < denominator, got {numerator}/{denominator}"
+    )]
+    InvalidCandidateThreshold { numerator: u64, denominator: u64 },
     #[error(
         "PoR schedule length {schedule_length} is smaller than its {eligible_validators} eligible validators"
     )]
@@ -90,6 +149,14 @@ impl LeaderSchedule {
             LeaderSelectionPolicy::PorWeightedFair { schedule_length } => {
                 weighted_fair_schedule(weights, schedule_length)?
             }
+            LeaderSelectionPolicy::PorThresholdWeightedFair {
+                schedule_length,
+                candidate_threshold,
+            } => {
+                validate_schedule_length_limit(schedule_length)?;
+                let candidates = select_reputation_leader_candidates(weights, candidate_threshold)?;
+                weighted_fair_candidate_schedule(&candidates, schedule_length)?
+            }
         };
 
         Ok(Self {
@@ -118,7 +185,10 @@ impl LeaderSchedule {
         let schedule_index = match self.policy {
             // Preserve the existing global wave-indexed rotation exactly.
             LeaderSelectionPolicy::RoundRobin => usize::try_from(wave).ok()?,
-            LeaderSelectionPolicy::PorWeightedFair { .. } => usize::try_from(offset).ok()?,
+            LeaderSelectionPolicy::PorWeightedFair { .. }
+            | LeaderSelectionPolicy::PorThresholdWeightedFair { .. } => {
+                usize::try_from(offset).ok()?
+            }
         };
         Some(self.leaders[schedule_index % self.leaders.len()].clone())
     }
@@ -130,55 +200,134 @@ pub fn compare_leader_selection(
     effective_wave: u64,
     wave: u64,
     por_schedule_length: usize,
+    candidate_threshold: ReputationThreshold,
 ) -> Result<LeaderSelectionComparison, LeaderScheduleError> {
+    validate_schedule_length_limit(por_schedule_length)?;
     let round_robin =
         LeaderSchedule::from_weights(LeaderSelectionPolicy::RoundRobin, effective_wave, weights)?;
-    let por_weighted_fair = LeaderSchedule::from_weights(
-        LeaderSelectionPolicy::PorWeightedFair {
+    let por_leader_candidates = select_reputation_leader_candidates(weights, candidate_threshold)?;
+    let por_weighted_fair = LeaderSchedule {
+        policy: LeaderSelectionPolicy::PorThresholdWeightedFair {
             schedule_length: por_schedule_length,
+            candidate_threshold,
         },
         effective_wave,
-        weights,
-    )?;
+        leaders: weighted_fair_candidate_schedule(&por_leader_candidates, por_schedule_length)?,
+    };
 
     Ok(LeaderSelectionComparison {
         wave,
         round_robin_leader: round_robin.leader_for_wave(wave),
         por_weighted_fair_leader: por_weighted_fair.leader_for_wave(wave),
+        por_leader_candidates,
     })
+}
+
+/// Derive a deterministic leader-candidate subset without changing Cordial
+/// membership. Zero-weight validators are ineligible. Candidates are returned
+/// in reputation-descending order with `NodeId` as the exact-tie breaker.
+pub fn select_reputation_leader_candidates(
+    weights: &HashMap<NodeId, u64>,
+    threshold: ReputationThreshold,
+) -> Result<Vec<ReputationLeaderCandidate>, LeaderScheduleError> {
+    if weights.is_empty() {
+        return Err(LeaderScheduleError::EmptyAuthorizedValidatorSet);
+    }
+
+    let mut ranked: Vec<_> = weights
+        .iter()
+        .filter(|(_, weight)| **weight > 0)
+        .map(|(node_id, reputation)| ReputationLeaderCandidate {
+            node_id: node_id.clone(),
+            reputation: *reputation,
+        })
+        .collect();
+    if ranked.is_empty() {
+        return Err(LeaderScheduleError::ZeroActiveReputation);
+    }
+    ranked.sort_by(|left, right| {
+        right
+            .reputation
+            .cmp(&left.reputation)
+            .then_with(|| left.node_id.cmp(&right.node_id))
+    });
+
+    let total_reputation = ranked.iter().try_fold(0u128, |total, candidate| {
+        total
+            .checked_add(u128::from(candidate.reputation))
+            .ok_or(LeaderScheduleError::ArithmeticOverflow)
+    })?;
+    let required_reputation = strict_required_reputation(total_reputation, threshold)?;
+    let mut selected_reputation = 0u128;
+    let mut selected = Vec::new();
+    for candidate in ranked {
+        selected_reputation = selected_reputation
+            .checked_add(u128::from(candidate.reputation))
+            .ok_or(LeaderScheduleError::ArithmeticOverflow)?;
+        selected.push(candidate);
+        if selected_reputation >= required_reputation {
+            break;
+        }
+    }
+
+    Ok(selected)
+}
+
+fn strict_required_reputation(
+    total_reputation: u128,
+    threshold: ReputationThreshold,
+) -> Result<u128, LeaderScheduleError> {
+    let numerator = u128::from(threshold.numerator());
+    let denominator = u128::from(threshold.denominator());
+    let whole = (total_reputation / denominator)
+        .checked_mul(numerator)
+        .ok_or(LeaderScheduleError::ArithmeticOverflow)?;
+    let remainder = (total_reputation % denominator)
+        .checked_mul(numerator)
+        .ok_or(LeaderScheduleError::ArithmeticOverflow)?
+        / denominator;
+    whole
+        .checked_add(remainder)
+        .and_then(|required| required.checked_add(1))
+        .ok_or(LeaderScheduleError::ArithmeticOverflow)
 }
 
 fn weighted_fair_schedule(
     weights: &HashMap<NodeId, u64>,
     schedule_length: usize,
 ) -> Result<Vec<NodeId>, LeaderScheduleError> {
-    if schedule_length > MAX_POR_LEADER_SCHEDULE_LENGTH {
-        return Err(LeaderScheduleError::ScheduleTooLong {
-            schedule_length,
-            max_schedule_length: MAX_POR_LEADER_SCHEDULE_LENGTH,
-        });
-    }
-
-    let mut eligible: Vec<_> = weights
+    validate_schedule_length_limit(schedule_length)?;
+    let eligible: Vec<_> = weights
         .iter()
         .filter(|(_, weight)| **weight > 0)
-        .map(|(node_id, weight)| (node_id.clone(), *weight))
+        .map(|(node_id, reputation)| ReputationLeaderCandidate {
+            node_id: node_id.clone(),
+            reputation: *reputation,
+        })
         .collect();
-    eligible.sort_by(|left, right| left.0.cmp(&right.0));
+    weighted_fair_candidate_schedule(&eligible, schedule_length)
+}
 
-    if eligible.is_empty() {
+fn weighted_fair_candidate_schedule(
+    candidates: &[ReputationLeaderCandidate],
+    schedule_length: usize,
+) -> Result<Vec<NodeId>, LeaderScheduleError> {
+    validate_schedule_length_limit(schedule_length)?;
+    if candidates.is_empty() {
         return Err(LeaderScheduleError::ZeroActiveReputation);
     }
-    if schedule_length < eligible.len() {
+    if schedule_length < candidates.len() {
         return Err(LeaderScheduleError::ScheduleTooShort {
             schedule_length,
-            eligible_validators: eligible.len(),
+            eligible_validators: candidates.len(),
         });
     }
 
-    let total_weight = eligible.iter().try_fold(0u128, |total, (_, weight)| {
+    let mut eligible = candidates.to_vec();
+    eligible.sort_by(|left, right| left.node_id.cmp(&right.node_id));
+    let total_weight = eligible.iter().try_fold(0u128, |total, candidate| {
         total
-            .checked_add(u128::from(*weight))
+            .checked_add(u128::from(candidate.reputation))
             .ok_or(LeaderScheduleError::ArithmeticOverflow)
     })?;
     let remaining_slots = schedule_length - eligible.len();
@@ -189,8 +338,8 @@ fn weighted_fair_schedule(
     // liveness slot, then allocates the bounded remainder proportionally.
     let mut quotas = Vec::with_capacity(eligible.len());
     let mut assigned = 0usize;
-    for (node_id, weight) in eligible {
-        let numerator = u128::from(weight)
+    for candidate in eligible {
+        let numerator = u128::from(candidate.reputation)
             .checked_mul(remaining_slots)
             .ok_or(LeaderScheduleError::ArithmeticOverflow)?;
         let extra = usize::try_from(numerator / total_weight)
@@ -201,7 +350,7 @@ fn weighted_fair_schedule(
         assigned = assigned
             .checked_add(quota)
             .ok_or(LeaderScheduleError::ArithmeticOverflow)?;
-        quotas.push((node_id, quota, numerator % total_weight));
+        quotas.push((candidate.node_id, quota, numerator % total_weight));
     }
 
     let leftovers = schedule_length
@@ -222,6 +371,16 @@ fn weighted_fair_schedule(
     }
 
     smooth_weighted_rotation(&quotas, schedule_length)
+}
+
+fn validate_schedule_length_limit(schedule_length: usize) -> Result<(), LeaderScheduleError> {
+    if schedule_length > MAX_POR_LEADER_SCHEDULE_LENGTH {
+        return Err(LeaderScheduleError::ScheduleTooLong {
+            schedule_length,
+            max_schedule_length: MAX_POR_LEADER_SCHEDULE_LENGTH,
+        });
+    }
+    Ok(())
 }
 
 fn smooth_weighted_rotation(

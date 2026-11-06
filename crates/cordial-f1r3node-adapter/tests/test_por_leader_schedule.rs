@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use cordial_f1r3node_adapter::por::{
     LeaderSchedule, LeaderScheduleError, LeaderSelectionPolicy, MAX_POR_LEADER_SCHEDULE_LENGTH,
-    compare_leader_selection,
+    ReputationThreshold, compare_leader_selection, select_reputation_leader_candidates,
 };
 use cordial_miners_core::NodeId;
 
@@ -154,13 +154,100 @@ fn invalid_schedule_inputs_fail_closed() {
 
 #[test]
 fn comparison_reports_both_policies_without_selecting_before_activation() {
-    let before = compare_leader_selection(&weights(&[(1, 90), (2, 10)]), 4, 3, 4).unwrap();
+    let before = compare_leader_selection(
+        &weights(&[(1, 90), (2, 10)]),
+        4,
+        3,
+        4,
+        ReputationThreshold::default(),
+    )
+    .unwrap();
     assert_eq!(before.round_robin_leader, None);
     assert_eq!(before.por_weighted_fair_leader, None);
     assert!(!before.differs());
+    assert_eq!(before.por_leader_candidates.len(), 1);
 
-    let active = compare_leader_selection(&weights(&[(1, 90), (2, 10)]), 4, 5, 4).unwrap();
+    let active = compare_leader_selection(
+        &weights(&[(1, 90), (2, 10)]),
+        4,
+        5,
+        4,
+        ReputationThreshold::default(),
+    )
+    .unwrap();
     assert_eq!(active.round_robin_leader, Some(node(2)));
     assert_eq!(active.por_weighted_fair_leader, Some(node(1)));
     assert!(active.differs());
+}
+
+#[test]
+fn candidate_set_is_the_smallest_prefix_strictly_above_threshold() {
+    let candidates = select_reputation_leader_candidates(
+        &weights(&[(1, 50), (2, 30), (3, 20), (4, 0)]),
+        ReputationThreshold::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| (candidate.node_id.clone(), candidate.reputation))
+            .collect::<Vec<_>>(),
+        vec![(node(1), 50), (node(2), 30)]
+    );
+}
+
+#[test]
+fn candidate_ranking_uses_node_id_for_equal_reputation() {
+    let first = select_reputation_leader_candidates(
+        &weights(&[(3, 20), (2, 40), (1, 40)]),
+        ReputationThreshold::default(),
+    )
+    .unwrap();
+    let second = select_reputation_leader_candidates(
+        &weights(&[(1, 40), (3, 20), (2, 40)]),
+        ReputationThreshold::default(),
+    )
+    .unwrap();
+
+    assert_eq!(first, second);
+    assert_eq!(
+        first
+            .iter()
+            .map(|candidate| candidate.node_id.clone())
+            .collect::<Vec<_>>(),
+        vec![node(1), node(2)]
+    );
+}
+
+#[test]
+fn threshold_weighted_schedule_only_contains_selected_candidates() {
+    let threshold = ReputationThreshold::new(3, 4).unwrap();
+    let schedule = LeaderSchedule::from_weights(
+        LeaderSelectionPolicy::PorThresholdWeightedFair {
+            schedule_length: 8,
+            candidate_threshold: threshold,
+        },
+        0,
+        &weights(&[(1, 60), (2, 30), (3, 10)]),
+    )
+    .unwrap();
+
+    let excluded = node(3);
+    assert!(schedule.leaders().iter().all(|leader| leader != &excluded));
+    assert!(schedule.leaders().contains(&node(1)));
+    assert!(schedule.leaders().contains(&node(2)));
+}
+
+#[test]
+fn invalid_candidate_thresholds_are_rejected() {
+    for (numerator, denominator) in [(0, 2), (1, 0), (1, 1), (3, 2)] {
+        assert_eq!(
+            ReputationThreshold::new(numerator, denominator),
+            Err(LeaderScheduleError::InvalidCandidateThreshold {
+                numerator,
+                denominator,
+            })
+        );
+    }
 }

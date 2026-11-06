@@ -20,10 +20,14 @@ observer.
 To compare leader policies without changing consensus, pass
 `--leader-comparison-schedule-length S`. For each observed finalized wave, the
 status document then includes `leader_comparison` with the canonical
-round-robin leader, the deterministic PoR weighted-fair leader, and whether
-they differ. `S` must be positive and at most `65,536`; it must also be at
-least the number of positive-weight validators. This output is observational:
-the runner still uses Cordial's configured selector for finality and ordering.
+round-robin leader, the deterministic threshold-filtered PoR weighted-fair
+leader, the ranked candidate set, and whether the leaders differ. The candidate
+threshold defaults to a strict `1/2` of total active reputation. Override it
+with `--leader-candidate-threshold-numerator N` and
+`--leader-candidate-threshold-denominator D`, where `0 < N < D`. `S` must be
+positive and at most `65,536`; it must also be at least the number of selected
+candidates. This output is observational: the runner still uses Cordial's
+configured selector for finality and ordering.
 
 For a validator observer, `--validator-rating-key-file /path/to/validator.key`
 optionally loads its own secp256k1 private key at startup. The file contains
