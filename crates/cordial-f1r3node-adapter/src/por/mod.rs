@@ -64,7 +64,10 @@ pub use interactions::{
     extract_checkpoint_block_production_evidence, validate_finalized_checkpoint_window,
     validate_finalized_rating_round,
 };
-pub use leader_schedule::{LeaderSchedule, LeaderScheduleError, LeaderSelectionPolicy};
+pub use leader_schedule::{
+    LeaderSchedule, LeaderScheduleError, LeaderSelectionComparison, LeaderSelectionPolicy,
+    MAX_POR_LEADER_SCHEDULE_LENGTH, compare_leader_selection,
+};
 pub use lifecycle::checkpoint::CompletedCheckpointRatingRound;
 pub use lifecycle::cutoff::{
     DEFAULT_RATING_CUTOFF_WAVE_LAG, PorRatingCutoffError, PorRatingRoundCutoffPolicy,
