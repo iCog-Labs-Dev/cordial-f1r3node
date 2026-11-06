@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use cordial_f1r3node_adapter::por::{LeaderSchedule, LeaderScheduleError, LeaderSelectionPolicy};
+use cordial_f1r3node_adapter::por::{
+    LeaderSchedule, LeaderScheduleError, LeaderSelectionPolicy, MAX_POR_LEADER_SCHEDULE_LENGTH,
+    compare_leader_selection,
+};
 use cordial_miners_core::NodeId;
 
 fn node(id: u8) -> NodeId {
@@ -66,10 +69,11 @@ fn por_schedule_is_bounded_proportional_and_keeps_positive_nodes_live() {
     .unwrap();
 
     let count = |id| {
+        let target = node(id);
         schedule
             .leaders()
             .iter()
-            .filter(|leader| **leader == node(id))
+            .filter(|leader| *leader == &target)
             .count()
     };
     assert_eq!(schedule.leaders().len(), 10);
@@ -98,10 +102,11 @@ fn exact_apportionment_ties_use_node_id() {
     .unwrap();
 
     let count = |id| {
+        let target = node(id);
         schedule
             .leaders()
             .iter()
-            .filter(|leader| **leader == node(id))
+            .filter(|leader| *leader == &target)
             .count()
     };
     assert_eq!((count(1), count(2), count(3)), (2, 2, 1));
@@ -132,4 +137,30 @@ fn invalid_schedule_inputs_fail_closed() {
         ),
         Err(LeaderScheduleError::ZeroActiveReputation)
     );
+    assert_eq!(
+        LeaderSchedule::from_weights(
+            LeaderSelectionPolicy::PorWeightedFair {
+                schedule_length: MAX_POR_LEADER_SCHEDULE_LENGTH + 1,
+            },
+            0,
+            &weights(&[(1, 1)])
+        ),
+        Err(LeaderScheduleError::ScheduleTooLong {
+            schedule_length: MAX_POR_LEADER_SCHEDULE_LENGTH + 1,
+            max_schedule_length: MAX_POR_LEADER_SCHEDULE_LENGTH,
+        })
+    );
+}
+
+#[test]
+fn comparison_reports_both_policies_without_selecting_before_activation() {
+    let before = compare_leader_selection(&weights(&[(1, 90), (2, 10)]), 4, 3, 4).unwrap();
+    assert_eq!(before.round_robin_leader, None);
+    assert_eq!(before.por_weighted_fair_leader, None);
+    assert!(!before.differs());
+
+    let active = compare_leader_selection(&weights(&[(1, 90), (2, 10)]), 4, 5, 4).unwrap();
+    assert_eq!(active.round_robin_leader, Some(node(2)));
+    assert_eq!(active.por_weighted_fair_leader, Some(node(1)));
+    assert!(active.differs());
 }
