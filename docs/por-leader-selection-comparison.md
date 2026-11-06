@@ -2,13 +2,16 @@
 
 ## Status
 
-PoR-aware leader selection is an optional experimental Cordial policy. The
-existing canonical `NodeId` round-robin policy remains the default until a
-network-wide configuration explicitly activates another policy at a committed
-future wave.
+PoR-aware leader selection is implemented as an optional comparison policy.
+The deterministic weighted-fair scheduler is functional: it constructs a
+bounded schedule from activated PoR weights, resolves a leader for each wave,
+and can be compared with canonical `NodeId` round robin through shadow status.
 
-The initial implementation constructs schedules only. It is not yet wired into
-Cordial finality or tau ordering.
+This feature is complete for its current observational scope. It deliberately
+does not replace Cordial's authoritative leader selector, so finality and tau
+ordering continue to use canonical round robin. Making PoR-aware selection an
+authoritative consensus mode would be a separate protocol change requiring
+network-wide configuration and activation at a committed future wave.
 
 ## Objective
 
@@ -231,17 +234,18 @@ Shadow comparison should record, per policy:
 - finalized-prefix and tau-prefix agreement;
 - schedule reconstruction agreement after restart.
 
-## Remaining Integration Work
+## Requirements For Future Consensus Activation
 
-The selector must still be integrated with:
+If PoR-aware selection is later promoted from comparison mode to an
+authoritative consensus policy, that separate integration must cover:
 
 - finalized leader lookup;
 - weighted tau and cached tau;
 - old/new epoch-boundary replay;
 - durable append-only schedule history;
 - collision-safe schedule identity in ordering caches;
-- shadow comparison output;
 - network-wide policy configuration and migration.
 
-Until those paths use the same epoch-aware selector, the weighted-fair policy
-must remain non-authoritative.
+Comparison mode requires none of these changes and remains fully functional.
+An authoritative mode must not be enabled until every leader-dependent path
+uses the same epoch-aware selector.
