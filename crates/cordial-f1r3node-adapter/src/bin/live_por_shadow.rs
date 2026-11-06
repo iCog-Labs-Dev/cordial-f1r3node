@@ -27,6 +27,9 @@ struct Args {
     /// Activate committed checkpoint weights at the fixed future wave.
     #[arg(long)]
     checkpoint_epoch_delay_waves: Option<u64>,
+    /// Report round-robin and PoR weighted-fair leaders without changing consensus.
+    #[arg(long)]
+    leader_comparison_schedule_length: Option<usize>,
     #[arg(long)]
     data_dir: PathBuf,
     #[arg(long, default_value = "root")]
@@ -52,6 +55,7 @@ async fn main() -> Result<()> {
         commit_complete_ratings: args.commit_complete_ratings,
         checkpoint_ratings: args.checkpoint_ratings,
         checkpoint_epoch_delay_waves: args.checkpoint_epoch_delay_waves,
+        leader_comparison_schedule_length: args.leader_comparison_schedule_length,
         data_dir: args.data_dir,
         shard_id: args.shard_id,
         height_batch_size: args.height_batch_size,

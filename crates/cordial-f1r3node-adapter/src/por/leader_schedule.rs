@@ -10,6 +10,9 @@ use std::collections::HashMap;
 use cordial_miners_core::NodeId;
 use thiserror::Error;
 
+/// Upper bound for materialized comparison schedules.
+pub const MAX_POR_LEADER_SCHEDULE_LENGTH: usize = 65_536;
+
 /// Leader-selection policy applied to one authorized weight snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeaderSelectionPolicy {
@@ -29,6 +32,20 @@ pub struct LeaderSchedule {
     leaders: Vec<NodeId>,
 }
 
+/// Non-authoritative result for comparing both policies at one wave.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaderSelectionComparison {
+    pub wave: u64,
+    pub round_robin_leader: Option<NodeId>,
+    pub por_weighted_fair_leader: Option<NodeId>,
+}
+
+impl LeaderSelectionComparison {
+    pub fn differs(&self) -> bool {
+        self.round_robin_leader != self.por_weighted_fair_leader
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum LeaderScheduleError {
     #[error("leader selection requires at least one authorized validator")]
@@ -41,6 +58,11 @@ pub enum LeaderScheduleError {
     ScheduleTooShort {
         schedule_length: usize,
         eligible_validators: usize,
+    },
+    #[error("PoR schedule length {schedule_length} exceeds the maximum {max_schedule_length}")]
+    ScheduleTooLong {
+        schedule_length: usize,
+        max_schedule_length: usize,
     },
     #[error("PoR leader schedule arithmetic overflowed")]
     ArithmeticOverflow,
@@ -102,10 +124,41 @@ impl LeaderSchedule {
     }
 }
 
+/// Compare both policies without changing the selector used by consensus.
+pub fn compare_leader_selection(
+    weights: &HashMap<NodeId, u64>,
+    effective_wave: u64,
+    wave: u64,
+    por_schedule_length: usize,
+) -> Result<LeaderSelectionComparison, LeaderScheduleError> {
+    let round_robin =
+        LeaderSchedule::from_weights(LeaderSelectionPolicy::RoundRobin, effective_wave, weights)?;
+    let por_weighted_fair = LeaderSchedule::from_weights(
+        LeaderSelectionPolicy::PorWeightedFair {
+            schedule_length: por_schedule_length,
+        },
+        effective_wave,
+        weights,
+    )?;
+
+    Ok(LeaderSelectionComparison {
+        wave,
+        round_robin_leader: round_robin.leader_for_wave(wave),
+        por_weighted_fair_leader: por_weighted_fair.leader_for_wave(wave),
+    })
+}
+
 fn weighted_fair_schedule(
     weights: &HashMap<NodeId, u64>,
     schedule_length: usize,
 ) -> Result<Vec<NodeId>, LeaderScheduleError> {
+    if schedule_length > MAX_POR_LEADER_SCHEDULE_LENGTH {
+        return Err(LeaderScheduleError::ScheduleTooLong {
+            schedule_length,
+            max_schedule_length: MAX_POR_LEADER_SCHEDULE_LENGTH,
+        });
+    }
+
     let mut eligible: Vec<_> = weights
         .iter()
         .filter(|(_, weight)| **weight > 0)
