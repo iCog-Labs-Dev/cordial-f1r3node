@@ -3,9 +3,10 @@
 ## Status
 
 PoR-aware leader selection is implemented as an optional comparison policy.
-The deterministic weighted-fair scheduler is functional: it constructs a
-bounded schedule from activated PoR weights, resolves a leader for each wave,
-and can be compared with canonical `NodeId` round robin through shadow status.
+The deterministic weighted-fair scheduler is functional: it derives a
+threshold-based leader-candidate set from activated PoR weights, constructs a
+bounded schedule, resolves a leader for each wave, and can be compared with
+canonical `NodeId` round robin through shadow status.
 
 This feature is complete for its current observational scope. It deliberately
 does not replace Cordial's authoritative leader selector, so finality and tau
@@ -15,11 +16,12 @@ network-wide configuration and activation at a committed future wave.
 
 ## Objective
 
-Compare two leader-selection policies without transferring validator-membership
+Compare leader-selection policies without transferring validator-membership
 authority from Cordial to Proof of Reputation:
 
 1. canonical round robin;
-2. deterministic PoR weighted-fair rotation.
+2. deterministic PoR weighted-fair rotation over all positive weights;
+3. deterministic PoR threshold-filtered weighted-fair rotation.
 
 Both policies consume Cordial's authorized validator map. PoR may change the
 weight and leadership frequency of an authorized validator, but it cannot add
@@ -36,11 +38,14 @@ The Cordial policy is deliberately different:
 
 - Cordial retains its complete authorized validator set.
 - PoR reputation is already used as Cordial finality weight.
-- The optional leader policy uses reputation to allocate leadership frequency.
+- The optional leader policy treats that group as a leader-candidate subset,
+  not as a replacement for Cordial membership.
+- The comparison policy uses reputation to allocate leadership frequency
+  within the candidate subset.
 - Selection is deterministic so all honest observers derive the same leader.
 
-The weighted-fair policy is therefore paper-guided integration, not a
-paper-native implementation of the PoR consensus protocol.
+The threshold-filtered weighted-fair policy is therefore paper-guided
+integration, not a paper-native implementation of the PoR consensus protocol.
 
 Paper reference: <https://arxiv.org/abs/2108.03542>
 
@@ -125,6 +130,54 @@ through the cycle.
 - ejected and zero-weight validators receive no PoR leadership slots;
 - no random seed or locally observed timing affects selection.
 
+## Policy C: Threshold-Filtered PoR Weighted-Fair Rotation
+
+This is the policy used by shadow comparison. Start with Cordial's authorized
+validators and rank positive-weight entries by:
+
+1. activated reputation descending;
+2. `NodeId` ascending for an exact reputation tie.
+
+For threshold `n/d`, select the smallest ranked prefix `G` satisfying:
+
+```text
+sum(reputation in G) > (n / d) * total_active_reputation
+```
+
+The comparison defaults to `1/2`, matching the paper's strict
+greater-than-50% rule. Integer arithmetic computes the minimum accepted weight
+without floating point:
+
+```text
+required = floor(total_active_reputation * n / d) + 1
+```
+
+The bounded weighted-fair schedule is then constructed over `G` only. Cordial's
+authorized set is unchanged: validators outside `G` remain consensus members
+but do not appear in this optional leader schedule.
+
+### Example
+
+```text
+A = 50 reputation
+B = 30 reputation
+C = 20 reputation
+threshold = 1/2
+```
+
+`A` alone reaches exactly 50%, which is not strictly greater than the
+threshold. The selected candidate set is therefore `[A, B]` with collective
+reputation 80%.
+
+### Properties
+
+- deterministic candidate selection;
+- strict threshold semantics aligned with the paper's group boundary;
+- canonical tie-breaking independent of map insertion order;
+- zero-weight validators are never candidates;
+- Cordial remains the authority for validator membership;
+- deterministic weighted scheduling replaces the paper's random leader draw.
+
 ## Correctness Requirements
 
 For every wave `w`, all honest observers must resolve the same tuple:
@@ -195,7 +248,8 @@ Largest-remainder allocation minimizes the discrepancy but does not remove it.
 ### Baseline-Slot Distortion
 
 Giving every positive-weight validator one slot ensures recurring leadership
-opportunities, but slightly overrepresents validators with very small weights.
+opportunities within the selected policy set, but slightly overrepresents
+validators with very small weights.
 
 ### Reputation Concentration
 
@@ -212,7 +266,8 @@ chosen schedule length.
 
 ### Paper Deviation
 
-The policy does not construct the paper's greater-than-50% consensus group and
+The threshold policy constructs the paper-guided greater-than-50% group but
+uses it only for leader candidacy. It does not replace Cordial membership and
 does not uniformly sample a leader from that group.
 
 ### No Local Fallback
@@ -226,6 +281,7 @@ activation, missing PoR schedule state is a recovery error.
 Shadow comparison should record, per policy:
 
 - selected leader per wave;
+- selected threshold and ranked leader-candidate set;
 - finalized waves and skipped waves;
 - waves between successful final leaders;
 - leadership frequency per validator;
