@@ -15,6 +15,7 @@ pub mod evidence;
 pub mod finality;
 pub mod history;
 pub mod interactions;
+pub mod leader_schedule;
 pub mod lifecycle;
 pub mod local_ratings;
 pub mod persistence;
@@ -62,6 +63,10 @@ pub use interactions::{
     admit_finalized_block_production_interactions, extract_block_production_evidence,
     extract_checkpoint_block_production_evidence, validate_finalized_checkpoint_window,
     validate_finalized_rating_round,
+};
+pub use leader_schedule::{
+    LeaderSchedule, LeaderScheduleError, LeaderSelectionComparison, LeaderSelectionPolicy,
+    MAX_POR_LEADER_SCHEDULE_LENGTH, compare_leader_selection,
 };
 pub use lifecycle::checkpoint::CompletedCheckpointRatingRound;
 pub use lifecycle::cutoff::{
