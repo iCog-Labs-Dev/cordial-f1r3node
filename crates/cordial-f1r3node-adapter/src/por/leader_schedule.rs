@@ -5,7 +5,10 @@
 //! epoch or decide finality. Callers must bind a schedule to an agreed future
 //! `effective_wave` and retain older schedules for historical replay.
 
-use std::collections::HashMap;
+use std::{
+    cmp::Ordering,
+    collections::{BinaryHeap, HashMap},
+};
 
 use cordial_miners_core::NodeId;
 use thiserror::Error;
@@ -221,41 +224,64 @@ fn weighted_fair_schedule(
             .ok_or(LeaderScheduleError::ArithmeticOverflow)?;
     }
 
-    smooth_weighted_rotation(&quotas, schedule_length)
+    weighted_fair_rotation(&quotas, schedule_length)
 }
 
-fn smooth_weighted_rotation(
+fn weighted_fair_rotation(
     quotas: &[(NodeId, usize, u128)],
     schedule_length: usize,
 ) -> Result<Vec<NodeId>, LeaderScheduleError> {
-    let total =
-        i128::try_from(schedule_length).map_err(|_| LeaderScheduleError::ArithmeticOverflow)?;
-    let mut current = vec![0i128; quotas.len()];
+    let mut pending: BinaryHeap<FairSlot> = quotas
+        .iter()
+        .map(|(node_id, quota, _)| FairSlot {
+            node_id: node_id.clone(),
+            quota: *quota,
+            emitted: 0,
+        })
+        .collect();
     let mut schedule = Vec::with_capacity(schedule_length);
 
     for _ in 0..schedule_length {
-        for (index, (_, quota, _)) in quotas.iter().enumerate() {
-            let quota =
-                i128::try_from(*quota).map_err(|_| LeaderScheduleError::ArithmeticOverflow)?;
-            current[index] = current[index]
-                .checked_add(quota)
-                .ok_or(LeaderScheduleError::ArithmeticOverflow)?;
-        }
-
-        let selected = (0..quotas.len())
-            .max_by(|left, right| {
-                current[*left]
-                    .cmp(&current[*right])
-                    // `max_by` chooses the greater item, so reverse the node
-                    // comparison to make the smaller NodeId win an exact tie.
-                    .then_with(|| quotas[*right].0.cmp(&quotas[*left].0))
-            })
+        let mut selected = pending
+            .pop()
             .ok_or(LeaderScheduleError::ZeroActiveReputation)?;
-        current[selected] = current[selected]
-            .checked_sub(total)
+        schedule.push(selected.node_id.clone());
+        selected.emitted = selected
+            .emitted
+            .checked_add(1)
             .ok_or(LeaderScheduleError::ArithmeticOverflow)?;
-        schedule.push(quotas[selected].0.clone());
+        if selected.emitted < selected.quota {
+            pending.push(selected);
+        }
     }
 
     Ok(schedule)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FairSlot {
+    node_id: NodeId,
+    quota: usize,
+    emitted: usize,
+}
+
+impl Ord for FairSlot {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let self_next = (self.emitted as u128 + 1) * other.quota as u128;
+        let other_next = (other.emitted as u128 + 1) * self.quota as u128;
+
+        // `BinaryHeap` pops the greatest item. Reverse the rational comparison
+        // so the earliest virtual finish wins, then the smaller NodeId.
+        other_next
+            .cmp(&self_next)
+            .then_with(|| other.node_id.cmp(&self.node_id))
+            .then_with(|| self.quota.cmp(&other.quota))
+            .then_with(|| self.emitted.cmp(&other.emitted))
+    }
+}
+
+impl PartialOrd for FairSlot {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
