@@ -78,6 +78,21 @@ fn por_schedule_is_bounded_proportional_and_keeps_positive_nodes_live() {
     };
     assert_eq!(schedule.leaders().len(), 10);
     assert_eq!((count(1), count(2), count(3)), (5, 3, 2));
+    assert_eq!(
+        schedule.leaders(),
+        &[
+            node(1),
+            node(2),
+            node(1),
+            node(3),
+            node(1),
+            node(2),
+            node(1),
+            node(1),
+            node(2),
+            node(3),
+        ]
+    );
 }
 
 #[test]
