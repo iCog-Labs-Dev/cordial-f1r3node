@@ -85,7 +85,7 @@ The implementation constructs a bounded schedule of `S` slots:
 2. Give every validator one baseline slot.
 3. Allocate the remaining `S - |E|` slots proportionally to activated weight.
 4. Use largest-remainder apportionment with `NodeId` as the final tie-breaker.
-5. Arrange the quotas using deterministic smooth weighted rotation.
+5. Arrange the quotas by earliest virtual finish using a deterministic heap.
 
 For an epoch beginning at wave `e`:
 
@@ -115,6 +115,11 @@ C = 2 slots
 
 The exact slot order is deterministic and spreads each validator's quota
 through the cycle.
+
+Schedule construction costs `O(S log K)`, where `S` is the bounded schedule
+length and `K` is the number of eligible validators. The heap stores `O(K)`
+entries and the materialized schedule stores `O(S)` leaders. Construction
+requires `K <= S <= 65,536`, which bounds both computation and memory.
 
 ### Properties
 
