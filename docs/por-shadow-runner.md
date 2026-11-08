@@ -28,6 +28,9 @@ with `--leader-candidate-threshold-numerator N` and
 positive and at most `65,536`; it must also be at least the number of selected
 candidates. This output is observational: the runner still uses Cordial's
 configured selector for finality and ordering.
+When a future weight epoch is prepared, comparison uses the old snapshot for
+observed waves before `effective_wave` and the new snapshot from
+`effective_wave` onward; it never reports a future schedule as active early.
 
 For a validator observer, `--validator-rating-key-file /path/to/validator.key`
 optionally loads its own secp256k1 private key at startup. The file contains

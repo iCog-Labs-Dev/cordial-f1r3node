@@ -177,6 +177,7 @@ impl ShadowStatus {
             .context("PoR genesis projection was not activated")?;
         let active_epoch = runtime.active_future_epoch();
         let active_weights = active_epoch.map(|record| record.new_weights());
+        let prior_weights = active_epoch.map(|record| record.old_weights());
         let selected_weights = active_weights
             .as_ref()
             .unwrap_or_else(|| legacy_record.weights());
@@ -186,11 +187,18 @@ impl ShadowStatus {
             .collect();
         let observed_finalized_wave =
             finalized_wave_from_output(runtime.ingress().blocklace(), output)?;
-        let effective_wave = active_epoch.map_or(0, |record| record.effective_wave());
         let leader_comparison = match (leader_comparison_policy, observed_finalized_wave) {
             (Some(policy), Some(wave)) => {
+                let current_weights = prior_weights
+                    .as_ref()
+                    .unwrap_or_else(|| legacy_record.weights());
+                let future_weights = active_epoch
+                    .zip(active_weights.as_ref())
+                    .map(|(record, weights)| (weights, record.effective_wave()));
+                let (comparison_weights, effective_wave) =
+                    leader_comparison_snapshot(current_weights, future_weights, wave);
                 let comparison = super::leader_schedule::compare_leader_selection(
-                    selected_weights,
+                    comparison_weights,
                     effective_wave,
                     wave,
                     policy.schedule_length,
@@ -341,6 +349,19 @@ impl ShadowStatus {
             );
         }
         Ok(())
+    }
+}
+
+fn leader_comparison_snapshot<'a>(
+    current_weights: &'a HashMap<NodeId, u64>,
+    future_epoch: Option<(&'a HashMap<NodeId, u64>, u64)>,
+    observed_wave: u64,
+) -> (&'a HashMap<NodeId, u64>, u64) {
+    match future_epoch {
+        Some((future_weights, effective_wave)) if observed_wave >= effective_wave => {
+            (future_weights, effective_wave)
+        }
+        _ => (current_weights, 0),
     }
 }
 
@@ -1101,6 +1122,51 @@ mod tests {
         });
 
         old.validate_recovered(&recovered).unwrap();
+    }
+
+    #[test]
+    fn leader_comparison_uses_the_snapshot_applicable_to_the_observed_wave() {
+        let current = HashMap::from([(NodeId(vec![1]), 90), (NodeId(vec![2]), 10)]);
+        let future = HashMap::from([(NodeId(vec![1]), 10), (NodeId(vec![2]), 90)]);
+        let threshold = ReputationThreshold::default();
+
+        let (before, before_effective_wave) =
+            leader_comparison_snapshot(&current, Some((&future, 8)), 7);
+        assert_eq!(before, &current);
+        assert_eq!(before_effective_wave, 0);
+        let before_comparison = super::super::leader_schedule::compare_leader_selection(
+            before,
+            before_effective_wave,
+            7,
+            2,
+            threshold,
+        )
+        .unwrap();
+        assert!(before_comparison.round_robin_leader.is_some());
+        assert!(before_comparison.por_weighted_fair_leader.is_some());
+        assert_eq!(
+            before_comparison.por_leader_candidates[0].node_id,
+            NodeId(vec![1])
+        );
+
+        let (active, active_effective_wave) =
+            leader_comparison_snapshot(&current, Some((&future, 8)), 8);
+        assert_eq!(active, &future);
+        assert_eq!(active_effective_wave, 8);
+        let active_comparison = super::super::leader_schedule::compare_leader_selection(
+            active,
+            active_effective_wave,
+            8,
+            2,
+            threshold,
+        )
+        .unwrap();
+        assert!(active_comparison.round_robin_leader.is_some());
+        assert!(active_comparison.por_weighted_fair_leader.is_some());
+        assert_eq!(
+            active_comparison.por_leader_candidates[0].node_id,
+            NodeId(vec![2])
+        );
     }
 
     #[test]
