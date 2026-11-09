@@ -41,6 +41,7 @@ use super::{
     finality::{
         finalized_output_for_wave, finalized_prefix_checkpoint, finalized_wave_from_output,
     },
+    leader_schedule::ReputationThreshold,
     local_ratings::{
         RatingExchangeProgress, close_rating_exchange_if_complete, observe_rating_exchange,
         stage_local_rating_batch,
@@ -61,6 +62,12 @@ impl BlocklaceAdapter<BlockIdentity> for PassthroughAdapter {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ShadowLeaderComparisonPolicy {
+    pub schedule_length: usize,
+    pub candidate_threshold: ReputationThreshold,
+}
+
 /// Configuration for one observer. The bonds file is the node's authorized set.
 #[derive(Debug, Clone)]
 pub struct ShadowConfig {
@@ -73,6 +80,9 @@ pub struct ShadowConfig {
     pub checkpoint_ratings: bool,
     /// Fixed number of waves from the rating source to the weight cutover.
     pub checkpoint_epoch_delay_waves: Option<u64>,
+    /// Compare the active round-robin leader with a bounded PoR weighted-fair
+    /// candidate policy without changing consensus behavior.
+    pub leader_comparison_policy: Option<ShadowLeaderComparisonPolicy>,
     pub data_dir: PathBuf,
     pub shard_id: String,
     pub height_batch_size: i64,
@@ -99,6 +109,29 @@ pub struct ShadowCandidate {
     pub weights: BTreeMap<String, u64>,
 }
 
+/// One ranked PoR leader candidate published for comparison.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowLeaderCandidate {
+    pub node_id: String,
+    pub reputation: u64,
+}
+
+/// Non-authoritative leader comparison for one finalized wave.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShadowLeaderComparison {
+    pub wave: u64,
+    pub schedule_length: usize,
+    #[serde(default)]
+    pub candidate_threshold_numerator: Option<u64>,
+    #[serde(default)]
+    pub candidate_threshold_denominator: Option<u64>,
+    #[serde(default)]
+    pub candidates: Vec<ShadowLeaderCandidate>,
+    pub round_robin_leader: Option<String>,
+    pub por_weighted_fair_leader: Option<String>,
+    pub differs: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowStatus {
     pub schema_version: u16,
@@ -122,6 +155,9 @@ pub struct ShadowStatus {
     /// Latest Cordial wave observed as finalized; this is not a committed PoR round.
     #[serde(default)]
     pub observed_finalized_wave: Option<u64>,
+    /// Optional comparison only; neither value changes consensus behavior.
+    #[serde(default)]
+    pub leader_comparison: Option<ShadowLeaderComparison>,
     pub finalized_hashes: Vec<String>,
     pub mirrored_blocks: usize,
     pub source_height: i64,
@@ -133,6 +169,7 @@ impl ShadowStatus {
         output: &OrderedFinalizedOutput,
         rating_rater: Option<&str>,
         source_height: i64,
+        leader_comparison_policy: Option<ShadowLeaderComparisonPolicy>,
     ) -> Result<Self> {
         let legacy_record = runtime
             .state()
@@ -140,12 +177,58 @@ impl ShadowStatus {
             .context("PoR genesis projection was not activated")?;
         let active_epoch = runtime.active_future_epoch();
         let active_weights = active_epoch.map(|record| record.new_weights());
-        let weights = active_weights
+        let prior_weights = active_epoch.map(|record| record.old_weights());
+        let selected_weights = active_weights
             .as_ref()
-            .unwrap_or_else(|| legacy_record.weights())
+            .unwrap_or_else(|| legacy_record.weights());
+        let weights = selected_weights
             .iter()
             .map(|(node, weight)| (hex::encode(&node.0), *weight))
             .collect();
+        let observed_finalized_wave =
+            finalized_wave_from_output(runtime.ingress().blocklace(), output)?;
+        let leader_comparison = match (leader_comparison_policy, observed_finalized_wave) {
+            (Some(policy), Some(wave)) => {
+                let current_weights = prior_weights
+                    .as_ref()
+                    .unwrap_or_else(|| legacy_record.weights());
+                let future_weights = active_epoch
+                    .zip(active_weights.as_ref())
+                    .map(|(record, weights)| (weights, record.effective_wave()));
+                let (comparison_weights, effective_wave) =
+                    leader_comparison_snapshot(current_weights, future_weights, wave);
+                let comparison = super::leader_schedule::compare_leader_selection(
+                    comparison_weights,
+                    effective_wave,
+                    wave,
+                    policy.schedule_length,
+                    policy.candidate_threshold,
+                )?;
+                let differs = comparison.differs();
+                Some(ShadowLeaderComparison {
+                    wave,
+                    schedule_length: policy.schedule_length,
+                    candidate_threshold_numerator: Some(policy.candidate_threshold.numerator()),
+                    candidate_threshold_denominator: Some(policy.candidate_threshold.denominator()),
+                    candidates: comparison
+                        .por_leader_candidates
+                        .into_iter()
+                        .map(|candidate| ShadowLeaderCandidate {
+                            node_id: hex::encode(candidate.node_id.0),
+                            reputation: candidate.reputation,
+                        })
+                        .collect(),
+                    round_robin_leader: comparison
+                        .round_robin_leader
+                        .map(|leader| hex::encode(leader.0)),
+                    por_weighted_fair_leader: comparison
+                        .por_weighted_fair_leader
+                        .map(|leader| hex::encode(leader.0)),
+                    differs,
+                })
+            }
+            _ => None,
+        };
         let next_round = runtime
             .state()
             .state()?
@@ -180,10 +263,8 @@ impl ShadowStatus {
             ),
             weights,
             finalized_anchor: output.anchor_hash().map(hex::encode),
-            observed_finalized_wave: finalized_wave_from_output(
-                runtime.ingress().blocklace(),
-                output,
-            )?,
+            observed_finalized_wave,
+            leader_comparison,
             finalized_hashes: output.block_hashes().into_iter().map(hex::encode).collect(),
             mirrored_blocks: output.total_mirrored_blocks,
             source_height,
@@ -241,6 +322,21 @@ impl ShadowStatus {
                     "recovered PoR checkpoint candidate differs from the previous publication"
                 );
             }
+            if recovered.observed_finalized_wave == self.observed_finalized_wave
+                && let Some(previous) = &self.leader_comparison
+                && (previous.candidate_threshold_numerator.is_some()
+                    || previous.candidate_threshold_denominator.is_some())
+            {
+                ensure!(
+                    previous.candidate_threshold_numerator.is_some()
+                        && previous.candidate_threshold_denominator.is_some(),
+                    "retained PoR leader comparison has an incomplete candidate threshold"
+                );
+                ensure!(
+                    recovered.leader_comparison.as_ref() == Some(previous),
+                    "recovered PoR leader comparison differs from the previous publication"
+                );
+            }
         }
         Ok(())
     }
@@ -253,6 +349,19 @@ impl ShadowStatus {
             );
         }
         Ok(())
+    }
+}
+
+fn leader_comparison_snapshot<'a>(
+    current_weights: &'a HashMap<NodeId, u64>,
+    future_epoch: Option<(&'a HashMap<NodeId, u64>, u64)>,
+    observed_wave: u64,
+) -> (&'a HashMap<NodeId, u64>, u64) {
+    match future_epoch {
+        Some((future_weights, effective_wave)) if observed_wave >= effective_wave => {
+            (future_weights, effective_wave)
+        }
+        _ => (current_weights, 0),
     }
 }
 
@@ -340,6 +449,17 @@ fn validate_config(config: &ShadowConfig) -> Result<()> {
     );
     if let Some(delay) = config.checkpoint_epoch_delay_waves {
         PorWeightEpochPolicy::new(delay)?;
+    }
+    if let Some(policy) = config.leader_comparison_policy {
+        ensure!(
+            policy.schedule_length > 0,
+            "leader comparison schedule must not be empty"
+        );
+        ensure!(
+            policy.schedule_length <= super::leader_schedule::MAX_POR_LEADER_SCHEDULE_LENGTH,
+            "leader comparison schedule exceeds the maximum of {}",
+            super::leader_schedule::MAX_POR_LEADER_SCHEDULE_LENGTH
+        );
     }
     Ok(())
 }
@@ -547,6 +667,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
             &output,
             configured_rating_rater.as_deref(),
             head,
+            config.leader_comparison_policy,
         )?;
         if let Some(previous) = &previous {
             previous.validate_recovered(&status)?;
@@ -664,6 +785,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
                                         &output,
                                         configured_rating_rater.as_deref(),
                                         head,
+                                        config.leader_comparison_policy,
                                     )?;
                                     before_commit.validate_recovered(&status)?;
                                 }
@@ -700,6 +822,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
                                         &output,
                                         configured_rating_rater.as_deref(),
                                         head,
+                                        config.leader_comparison_policy,
                                     )?;
                                     before_commit.validate_recovered(&status)?;
                                 }
@@ -839,6 +962,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
                                             &output,
                                             configured_rating_rater.as_deref(),
                                             head,
+                                            config.leader_comparison_policy,
                                         )?;
                                         before_commit.validate_recovered(&status)?;
                                     } else if last_logged_deferred_wave != Some(expected_wave) {
@@ -889,6 +1013,7 @@ mod tests {
             weights: BTreeMap::from([("key".into(), 1)]),
             finalized_anchor: hashes.last().map(|hash| hash.to_string()),
             observed_finalized_wave: None,
+            leader_comparison: None,
             finalized_hashes: hashes.iter().map(|hash| hash.to_string()).collect(),
             mirrored_blocks: hashes.len(),
             source_height: 10,
@@ -946,6 +1071,105 @@ mod tests {
     }
 
     #[test]
+    fn recovered_leader_comparison_cannot_change_at_the_same_wave() {
+        let mut old = status(&["a", "b"]);
+        old.observed_finalized_wave = Some(2);
+        old.leader_comparison = Some(ShadowLeaderComparison {
+            wave: 2,
+            schedule_length: 16,
+            candidate_threshold_numerator: Some(1),
+            candidate_threshold_denominator: Some(2),
+            candidates: vec![ShadowLeaderCandidate {
+                node_id: "01".into(),
+                reputation: 10,
+            }],
+            round_robin_leader: Some("01".into()),
+            por_weighted_fair_leader: Some("02".into()),
+            differs: true,
+        });
+        let mut recovered = old.clone();
+        old.validate_recovered(&recovered).unwrap();
+
+        recovered
+            .leader_comparison
+            .as_mut()
+            .unwrap()
+            .por_weighted_fair_leader = Some("03".into());
+        assert!(old.validate_recovered(&recovered).is_err());
+    }
+
+    #[test]
+    fn legacy_leader_comparison_can_upgrade_candidate_policy() {
+        let mut old = status(&["a", "b"]);
+        old.observed_finalized_wave = Some(2);
+        old.leader_comparison = Some(ShadowLeaderComparison {
+            wave: 2,
+            schedule_length: 16,
+            candidate_threshold_numerator: None,
+            candidate_threshold_denominator: None,
+            candidates: Vec::new(),
+            round_robin_leader: Some("01".into()),
+            por_weighted_fair_leader: Some("02".into()),
+            differs: true,
+        });
+        let mut recovered = old.clone();
+        let comparison = recovered.leader_comparison.as_mut().unwrap();
+        comparison.candidate_threshold_numerator = Some(1);
+        comparison.candidate_threshold_denominator = Some(2);
+        comparison.candidates.push(ShadowLeaderCandidate {
+            node_id: "01".into(),
+            reputation: 10,
+        });
+
+        old.validate_recovered(&recovered).unwrap();
+    }
+
+    #[test]
+    fn leader_comparison_uses_the_snapshot_applicable_to_the_observed_wave() {
+        let current = HashMap::from([(NodeId(vec![1]), 90), (NodeId(vec![2]), 10)]);
+        let future = HashMap::from([(NodeId(vec![1]), 10), (NodeId(vec![2]), 90)]);
+        let threshold = ReputationThreshold::default();
+
+        let (before, before_effective_wave) =
+            leader_comparison_snapshot(&current, Some((&future, 8)), 7);
+        assert_eq!(before, &current);
+        assert_eq!(before_effective_wave, 0);
+        let before_comparison = super::super::leader_schedule::compare_leader_selection(
+            before,
+            before_effective_wave,
+            7,
+            2,
+            threshold,
+        )
+        .unwrap();
+        assert!(before_comparison.round_robin_leader.is_some());
+        assert!(before_comparison.por_weighted_fair_leader.is_some());
+        assert_eq!(
+            before_comparison.por_leader_candidates[0].node_id,
+            NodeId(vec![1])
+        );
+
+        let (active, active_effective_wave) =
+            leader_comparison_snapshot(&current, Some((&future, 8)), 8);
+        assert_eq!(active, &future);
+        assert_eq!(active_effective_wave, 8);
+        let active_comparison = super::super::leader_schedule::compare_leader_selection(
+            active,
+            active_effective_wave,
+            8,
+            2,
+            threshold,
+        )
+        .unwrap();
+        assert!(active_comparison.round_robin_leader.is_some());
+        assert!(active_comparison.por_weighted_fair_leader.is_some());
+        assert_eq!(
+            active_comparison.por_leader_candidates[0].node_id,
+            NodeId(vec![2])
+        );
+    }
+
+    #[test]
     fn old_status_without_observed_wave_remains_readable() {
         let mut value = serde_json::to_value(status(&["a"])).unwrap();
         value
@@ -965,12 +1189,14 @@ mod tests {
             .unwrap()
             .remove("next_por_source_checkpoint");
         value.as_object_mut().unwrap().remove("candidate");
+        value.as_object_mut().unwrap().remove("leader_comparison");
         let previous: ShadowStatus = serde_json::from_value(value).unwrap();
         assert_eq!(previous.observed_finalized_wave, None);
         assert_eq!(previous.configured_rating_rater, None);
         assert_eq!(previous.active_por_checkpoint, None);
         assert_eq!(previous.next_por_source_checkpoint, None);
         assert_eq!(previous.candidate, None);
+        assert_eq!(previous.leader_comparison, None);
         let mut recovered = status(&["a", "b"]);
         recovered.observed_finalized_wave = Some(1);
         previous.validate_recovered(&recovered).unwrap();
@@ -1028,7 +1254,7 @@ mod tests {
         };
         let first = open();
         let first_status =
-            ShadowStatus::from_runtime(&first, &OrderedFinalizedOutput::default(), None, 0)
+            ShadowStatus::from_runtime(&first, &OrderedFinalizedOutput::default(), None, 0, None)
                 .unwrap();
         assert_eq!(first_status.active_por_round, 0);
         assert_eq!(first_status.weights.len(), 2);
@@ -1037,9 +1263,14 @@ mod tests {
         drop(first);
 
         let restored = open();
-        let restored_status =
-            ShadowStatus::from_runtime(&restored, &OrderedFinalizedOutput::default(), None, 0)
-                .unwrap();
+        let restored_status = ShadowStatus::from_runtime(
+            &restored,
+            &OrderedFinalizedOutput::default(),
+            None,
+            0,
+            None,
+        )
+        .unwrap();
         assert_eq!(restored_status, first_status);
         read_status(&path)
             .unwrap()
@@ -1059,6 +1290,7 @@ mod tests {
             commit_complete_ratings: false,
             checkpoint_ratings: false,
             checkpoint_epoch_delay_waves: None,
+            leader_comparison_policy: None,
             data_dir: "data".into(),
             shard_id: "root".into(),
             height_batch_size: 64,
@@ -1088,6 +1320,22 @@ mod tests {
         assert!(validate_config(&config).is_ok());
         config.checkpoint_epoch_delay_waves = Some(0);
         assert!(validate_config(&config).is_err());
+        config.checkpoint_epoch_delay_waves = Some(1);
+        config.leader_comparison_policy = Some(ShadowLeaderComparisonPolicy {
+            schedule_length: 0,
+            candidate_threshold: ReputationThreshold::default(),
+        });
+        assert!(validate_config(&config).is_err());
+        config.leader_comparison_policy = Some(ShadowLeaderComparisonPolicy {
+            schedule_length: super::super::leader_schedule::MAX_POR_LEADER_SCHEDULE_LENGTH + 1,
+            candidate_threshold: ReputationThreshold::default(),
+        });
+        assert!(validate_config(&config).is_err());
+        config.leader_comparison_policy = Some(ShadowLeaderComparisonPolicy {
+            schedule_length: 16,
+            candidate_threshold: ReputationThreshold::default(),
+        });
+        assert!(validate_config(&config).is_ok());
     }
 
     // ---- long-history status publication (#263) --------------------------------
@@ -1186,7 +1434,7 @@ mod tests {
         let publish = publish_started.elapsed();
 
         let status_started = std::time::Instant::now();
-        let status = ShadowStatus::from_runtime(&runtime, &output, None, head).unwrap();
+        let status = ShadowStatus::from_runtime(&runtime, &output, None, head, None).unwrap();
         let path = status_path(directory.path());
         write_status(&path, &status).unwrap();
         let published = read_status(&path).unwrap().expect("status file written");

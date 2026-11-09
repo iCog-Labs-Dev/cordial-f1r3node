@@ -17,6 +17,21 @@ rounds. With keyed observers and a shared exchange, it derives complete round
 candidates. An explicit flag can commit and activate them in the local Cordial
 observer.
 
+To compare leader policies without changing consensus, pass
+`--leader-comparison-schedule-length S`. For each observed finalized wave, the
+status document then includes `leader_comparison` with the canonical
+round-robin leader, the deterministic threshold-filtered PoR weighted-fair
+leader, the ranked candidate set, and whether the leaders differ. The candidate
+threshold defaults to a strict `1/2` of total active reputation. Override it
+with `--leader-candidate-threshold-numerator N` and
+`--leader-candidate-threshold-denominator D`, where `0 < N < D`. `S` must be
+positive and at most `65,536`; it must also be at least the number of selected
+candidates. This output is observational: the runner still uses Cordial's
+configured selector for finality and ordering.
+When a future weight epoch is prepared, comparison uses the old snapshot for
+observed waves before `effective_wave` and the new snapshot from
+`effective_wave` onward; it never reports a future schedule as active early.
+
 For a validator observer, `--validator-rating-key-file /path/to/validator.key`
 optionally loads its own secp256k1 private key at startup. The file contains
 exactly 64 hexadecimal characters, with optional surrounding whitespace.
@@ -195,7 +210,8 @@ repository. The runner polls every two seconds by default. It emits a JSON
 status line after each successful poll and atomically writes the same document
 to `<data-dir>/por/shadow-status.json`. The document contains
 `active_por_round`, `weight_commitment`, the exact hex-keyed `weights` map,
-`finalized_anchor`, `observed_finalized_wave`, and `finalized_hashes`.
+`finalized_anchor`, `observed_finalized_wave`, optional `leader_comparison`, and
+`finalized_hashes`.
 `observed_finalized_wave` is null until Cordial exports a final leader; it is
 the wave of that leader, not the active PoR reputation round. The full
 finalized hash sequence is retained so startup can reject a replay that
