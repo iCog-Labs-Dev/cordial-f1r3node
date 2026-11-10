@@ -13,6 +13,7 @@ pub mod verified_evidence;
 pub mod wave;
 pub mod weight_snapshot;
 
+pub use crate::blocklace::CheckpointOrigin;
 pub use approval::{approves, approving_blocks, weighted_approving_creators};
 pub use certificate::{CertificateKind, ThresholdCertificate};
 pub use cordiality::{
@@ -35,9 +36,9 @@ pub use evidence::{
     EvidencePool, InMemoryEvidencePool, record_rejected_equivocation,
 };
 pub use finality::{
-    final_leader_for_wave, is_final_leader, is_weighted_final_leader, latest_final_leader,
-    latest_weighted_final_leader, leader_block_for_wave, weighted_final_leader_certificate,
-    weighted_final_leader_for_wave,
+    FinalityRule, final_leader_for_wave, is_final_leader, is_weighted_final_leader,
+    latest_final_leader, latest_weighted_final_leader, leader_block_for_wave,
+    weighted_final_leader_certificate, weighted_final_leader_for_wave,
 };
 pub use fork_choice::{ForkChoice, collect_validator_tips, fork_choice, is_cordial};
 pub use ordering::{
