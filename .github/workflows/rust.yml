@@ -31,6 +31,10 @@ jobs:
         with:
           path: blocklace
 
+      - name: Check README badge counts
+        working-directory: blocklace
+        run: python3 scripts/check_readme_badges.py
+
       - name: Checkout f1r3node-rust
         uses: actions/checkout@v4
         with:
