@@ -1,111 +1,96 @@
 # Cordial F1R3node
 
-[![CI](https://github.com/iCog-Labs-Dev/cordial-f1r3node/actions/workflows/rust.yml/badge.svg)](https://github.com/iCog-Labs-Dev/cordial-f1r3node/actions/workflows/rust.yml)
-![Branch](https://img.shields.io/badge/branches-master%20%7C%20dev-blue)
-![Workspace](https://img.shields.io/badge/workspace-3%20crates-8A2BE2)
-![Test defs](https://img.shields.io/badge/tests-512-brightgreen)
-![Toolchain](https://img.shields.io/badge/rust-nightly-orange)
+[![Rust CI](https://github.com/iCog-Labs-Dev/cordial-f1r3node/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/iCog-Labs-Dev/cordial-f1r3node/actions/workflows/rust.yml)
+[![Lean checks](https://github.com/iCog-Labs-Dev/cordial-f1r3node/actions/workflows/lean.yml/badge.svg)](https://github.com/iCog-Labs-Dev/cordial-f1r3node/actions/workflows/lean.yml)
+[![Benchmarks](https://github.com/iCog-Labs-Dev/cordial-f1r3node/actions/workflows/benchmarks.yml/badge.svg?branch=main)](https://github.com/iCog-Labs-Dev/cordial-f1r3node/actions/workflows/benchmarks.yml)
+![Workspace crates](https://img.shields.io/badge/workspace-5%20crates-287b61)
+![Benchmark targets](https://img.shields.io/badge/bench%20targets-19-b26a35)
+![Property suites](https://img.shields.io/badge/property%20suites-5-476b91)
+![Rust edition](https://img.shields.io/badge/Rust%20edition-2024-555555)
 
 [Cordial Miners research paper](https://arxiv.org/abs/2205.09174)
 
-A Rust workspace for integrating **Cordial Miners** with the F1R3FLY node stack. The project is split into a pure consensus core crate and adapter crates for node/runtime integration.
+A Rust implementation of Cordial Miners with Proof-of-Reputation (PoR)
+weighting, a Lean verification model, and adapter-side integration with
+`f1r3node-rust`. The live adapter observes node blocks and deploys, builds a
+local blocklace, and exports finalized Cordial order to read-only consumers
+and an application-event interface.
 
-> Coverage badge is not shown yet because this repository does not currently publish coverage artifacts to a coverage service.
+The workflow badges report their GitHub Actions runs, not test coverage. The
+count badges track workspace members, registered benchmark targets, and
+dedicated property-test suites; CI checks them against the repository. We do
+not publish a code-coverage percentage.
 
-## What it does
+## Workspace
 
-- `cordial-miners-core` provides core types, blocklace DAG structures, validation, fork choice, finality, execution abstractions, and generic consensus traits.
-- `cordial-f1r3node-adapter` provides f1r3node-facing adapters, block translation, snapshot/shard config helpers, crypto bridge, and consensus-mode factory wiring.
-- `cordial-f1r3space-adapter` provides real runtime/storage bridging for RSpace/Rholang integration against f1r3node crates.
-- Boundary checks ensure node-specific imports do not leak into the pure core crate.
+| Crate | Purpose |
+| --- | --- |
+| `cordial-miners-core` | Blocklace DAG, validation, equivocation handling, weighted finality, and tau ordering |
+| `cordial-por` | Reputation updates, weight export, and penalty state |
+| `cordial-app-runtime` | Deterministic processing of finalized app events, receipts, cursors, and snapshots |
+| `cordial-f1r3node-adapter` | Live block mirror, deploy observation, ordered-output export, and app-event extraction |
+| `cordial-f1r3space-adapter` | RSpace/Rholang runtime and storage bridge to `f1r3node-rust` |
 
-## Repo layout
-
-This is a Cargo workspace with three crates, layered:
-
-| Crate | What | Depends on |
-|-------|------|------------|
-| `crates/cordial-miners-core` | Pure consensus/core crate: DAG/block types, consensus logic, execution abstractions, generic engine traits | No f1r3node crates |
-| `crates/cordial-f1r3node-adapter` | Node-facing adapter crate: translation, Casper adapter, snapshot/shard config, consensus mode selection | `cordial-miners-core`, optional f1r3node crates |
-| `crates/cordial-f1r3space-adapter` | Storage/runtime adapter crate for real RSpace integration | `cordial-miners-core`, `cordial-f1r3node-adapter`, and f1r3node path deps |
-
-If you only want the consensus protocol, depend on `cordial-miners-core`. If you want node-facing integration hooks, add `cordial-f1r3node-adapter`. If you want real Rholang/RSpace execution wiring, add `cordial-f1r3space-adapter`.
+The consensus core remains separate from node-specific integration. The
+adapter consumes public node block views and provides an observer-side path for
+finality, ordering, and PoR experiments. The `lean/` project models protocol
+properties and checks selected Rust decisions by replaying traces; it does not
+generate or formally verify the Rust implementation.
 
 ## Quick start
 
-### Clone and run core tests
+Install the pinned Rust toolchain with
+`rustup toolchain install nightly-2026-02-09 --component clippy --component rustfmt`
+and install `protoc` (`sudo apt install protobuf-compiler` on Linux or
+`brew install protobuf` on macOS). Cargo resolves path dependencies for the
+workspace even when testing a single crate, so `f1r3node-rust` must be a
+sibling checkout:
 
 ```bash
-git clone  https://github.com/iCog-Labs-Dev/cordial-f1r3node.git
+git clone https://github.com/iCog-Labs-Dev/cordial-f1r3node.git
 cd cordial-f1r3node
-cargo +nightly-2026-02-09 test -p cordial-miners-core
-```
-
-This builds and tests the standalone core crate. No f1r3node checkout is required for this step.
-
-### Full workspace including f1r3node integration
-
-You'll need:
-
-- `protoc` on PATH — `sudo apt install protobuf-compiler` (Linux) or `brew install protobuf` (Mac)
-- `f1r3node-rust` checked out at `../f1r3node-rust` relative to this repo:
-
-```bash
 git clone https://github.com/F1R3FLY-io/f1r3node-rust.git ../f1r3node-rust
-```
-
-Then:
-
-```bash
+git -C ../f1r3node-rust checkout 525f8e8b5419bac7b36a354c2325ef61ed73201f
 cargo +nightly-2026-02-09 test --workspace
 ```
 
-The first build compiles the node's Rholang interpreter and RSpace tuplespace. Incremental builds are faster.
+The node commit above matches Rust CI. The first workspace build also compiles
+the node's Rholang and RSpace dependencies.
 
-For the native-node Docker image and connected four-node cluster, see [docker/README.md](docker/README.md).
+## Common checks
 
-If something breaks during build, see the troubleshooting table in [`docs/INTEGRATION_NEXT_STEPS.md`](docs/INTEGRATION_NEXT_STEPS.md).
-
-## Useful commands
-
-This repo includes a `Justfile` with common workflows:
+The `Justfile` provides these commands:
 
 ```bash
-just build
-just test
-just test-core
-just test-adapter
-just test-consensus-flag
-just check-core-boundaries
-just ci
+just test                     # Rust workspace tests
+just ci                       # Rust checks and core boundary check
+just lean-build               # Lean model and proofs (requires Lean/Lake)
+just trace-conformance        # Rust traces checked by the Lean reference
+just bench-smoke              # Benchmark fixture preflight
 ```
 
-## Benchmarking
-
-See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for component coverage, small/large
-workloads, real RSpace execution, reproducible baselines, validation commands, and
-the separate multi-node load harness. Live monitoring is tracked separately.
+For live-node and four-validator Docker commands, use
+[docker/README.md](docker/README.md). Live cluster checks are distinct from
+the fast workspace tests. The bounded ordering verifier compares a recent
+shared window, not the entire historical tau order.
 
 ## Documentation
 
-- **[`docs/implementation.md`](docs/implementation.md)** — what's implemented, organized by module. Start here if you want to understand the codebase.
-- **[`docs/cordial-miners-vs-cbc-casper.md`](docs/cordial-miners-vs-cbc-casper.md)** — protocol comparison and integration roadmap. Read this if you're integrating into f1r3node or comparing the two consensus mechanisms.
-- **[`docs/INTEGRATION_NEXT_STEPS.md`](docs/INTEGRATION_NEXT_STEPS.md)** — open tasks for new contributors, ordered by impact. Each task has scope, difficulty, and files to read.
-- **[`crates/cordial-miners-core/src/network/NETWORK.md`](crates/cordial-miners-core/src/network/NETWORK.md)** — the P2P networking module's wire protocol and flow diagrams.
-- **[`docs/cordial-miners/15-proposer-pipeline.md`](docs/cordial-miners/15-proposer-pipeline.md)** — outbound block creation: tips, mempool, RSpace execution, signing, broadcast.
-
-- **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — how to set up your environment, run tests, structure commits, and submit changes.
+- [Integration guide](docs/cordial-miners/integration/00-index.md): live mirror, deploy observation, ordered-output export, and recovery.
+- [Four-node ordering check](docs/cordial-miners/integration/13-four-node-ordering-convergence.md): scope and commands for the bounded live comparison.
+- [PoR shadow observer](docs/por-shadow-runner.md): checkpoint ratings, weight commitments, and restart checks.
+- [Lean verification](lean/README.md): model, proofs, trace replay, and conformance limits.
+- [Application interface](crates/cordial-app-runtime/docs/01-architecture.md): finalized events to app state.
+- [Benchmarks](docs/BENCHMARKS.md): workloads, smoke checks, and reproducible results.
 
 ## Status
 
-Phases 1-3 of the integration roadmap are complete. The core consensus crate and adapter crates compile and test successfully, including consensus-mode feature-flag/factory wiring and core-boundary CI checks.
+The connected four-validator cluster has produced matching bounded Cordial
+window order. A separate four-observer PoR run agreed on a checkpoint, weight
+map, and commitment across observer and validator restarts. The native mirror
+also has restart recovery for persisted blocks and its height cursor. These
+are specific integration checks, not a claim that every node execution path
+has been formally verified or production-qualified.
 
-Outstanding work is tracked in [`docs/INTEGRATION_NEXT_STEPS.md`](docs/INTEGRATION_NEXT_STEPS.md). The most impactful next task is an end-to-end test that actually executes a Rholang deploy through the RSpace adapter — the translation layer is done, but we don't yet exercise it against a live RuntimeManager.
-
-## Contributing
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). Short version: pick a task from `INTEGRATION_NEXT_STEPS.md`, branch off `master`, keep PRs scoped to one logical change, run `cargo test --workspace` before pushing.
-
-## License
-
-See [`LICENSE`](LICENSE) (if present) or contact the repository owners.
+Work and reviews are tracked in [GitHub issues](https://github.com/iCog-Labs-Dev/cordial-f1r3node/issues)
+and [pull requests](https://github.com/iCog-Labs-Dev/cordial-f1r3node/pulls).
