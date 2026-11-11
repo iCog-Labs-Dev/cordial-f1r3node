@@ -20,6 +20,7 @@ import LeanVerification.CMRef
 import LeanVerification.OrderingProofs
 import LeanVerification.OrderingEquivocation
 import LeanVerification.OrderingEquivocationExamples
+import LeanVerification.OrderingEquivocationWavelength3Examples
 import LeanVerification.Trace
 import LeanVerification.Replay
 import LeanVerification.SlashingReplay
