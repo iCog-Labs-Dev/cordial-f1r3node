@@ -354,6 +354,20 @@ has zero stake and the honest leader has all positive stake, so the example
 does not rely on Byzantine majority weight. `blanket_exclusion_false` formally
 refutes the unconditional statement.
 
+[`OrderingEquivocationWavelength3Examples.lean`](../../lean/LeanVerification/OrderingEquivocationWavelength3Examples.lean)
+exercises the configured wavelength of three rounds with two consecutive
+waves. Their leaders are at depths 3 and 6, with finality witnesses in the
+last rounds at depths 5 and 8. Both snapshots use their complete blocklace
+domains and return explicitly checked, nonempty τ outputs. The first leader
+observes only one branch of a genuine equivocation. The second leader
+acknowledges both and approves neither, but the first branch remains in the
+earlier emitted prefix. Executable checks verify the previous-final-leader
+link, the two emitting epochs, and exclusion of the conflicting pair before
+and after acknowledgement. Both runs also instantiate `tauRef_forkFree`.
+The fixture retains the single bonded validator used by the wavelength-one
+examples; it checks wavelength-three ordering and acknowledgement rather than
+simulating a multi-validator deployment.
+
 These results concern the existing Lean `tauRef` model of `ordering.rs:tau`.
 They do not establish source-level Rust refinement, agreement between
 unrelated snapshots, or separate correctness of weighted epoch-boundary,
