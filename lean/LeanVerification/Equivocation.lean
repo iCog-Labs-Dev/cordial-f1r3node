@@ -239,15 +239,13 @@ def VouchesFor (B : Blocklace) (c b : BlockId) : Prop :=
 
 /-- **Exclusion property.** If `b₁` and `b₂` equivocate and `c`
 acknowledges the equivocation (observes both), `c` cleanly vouches for
-*neither* branch. This is the structural fact that keeps both sides of a
-cheat out of any finalized output built from `VouchesFor`/`Approves`-style
-acceptance — the sentence to say out loud is: no single approving block
-can vouch for both sides of the same lie, because as soon as it has seen
-both sides, `VouchesFor`'s own "no incomparable sibling observed"
-condition fails for each side in turn. This is the core proof Issue 04's
-Agreement theorem rests on; see `equivocation_not_approved` immediately
-below for the form actually meant to be imported as a hypothesis, phrased
-against an arbitrary `Approves` rather than this file's own `VouchesFor`. -/
+*neither* branch: the "no incomparable sibling observed" condition fails
+for each side in turn. This is a local statement about an acknowledging
+approver. It does not retract a branch emitted by an earlier leader that
+had not observed its competitor. Whole-output conflict-freedom and the
+stronger visibility-dependent exclusion are proved in
+`OrderingEquivocation.lean`. See `equivocation_not_approved` immediately
+below for the bridge to an arbitrary `Approves` relation. -/
 theorem equivocation_exclusion
     (B : Blocklace) (hV : ValidBlocklace B) (b₁ b₂ c : BlockId)
     (heq : Equivocation B hV b₁ b₂) (hack : Acknowledges B c b₁ b₂) :
