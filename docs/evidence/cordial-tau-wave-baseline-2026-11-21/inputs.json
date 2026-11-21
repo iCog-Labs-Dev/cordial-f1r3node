@@ -1,0 +1,20 @@
+{
+  "binary": "target/debug/ordered_output_server",
+  "binary_sha256": "0f162b6a39d0e8e38486fe9a5e9352e670d77121a5a9c243f77a55cb1bd3ac20",
+  "bonds_file": "docker/genesis/cordial-bonds.txt",
+  "bonds_sha256": "7213566bb6b014b65dfe9ede4494c2faac9d0c4a1afebeebb5de8535bf68c565",
+  "probe_source_sha256": "a2085c6711d077be92bfdbdda53479275e888d197ea8d9c551e58fdf7885183d",
+  "server_source_sha256": "d40c3185e23479613bc408fa38ac3b1c9636c1964911f5723bcd56a90ceb4196",
+  "git_commit": "162acae8b19720f69b3d925a4ae9da8ebfc42e82",
+  "nodes": {
+    "validator-1": 51401,
+    "validator-2": 52401,
+    "validator-3": 53401,
+    "validator-4": 54401
+  },
+  "waves_requested": 3,
+  "poll_ms": 1000,
+  "depth": 256,
+  "started_at_ns": 1795291936755229634,
+  "definition": "first observed Cordial wave in any mirror to first poll where four mirrors share its finalized tau prefix"
+}
