@@ -59,6 +59,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use casper::rust::util::bonds_parser::BondsParser;
@@ -71,10 +72,12 @@ use cordial_f1r3node_adapter::live_grpc::{
 use cordial_f1r3node_adapter::live_ingress::LiveIngress;
 use cordial_f1r3node_adapter::ordered_output_server::{PollOutcome, poll_once, serve};
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
-use cordial_f1r3node_adapter::shared_ordered_output::SharedOrderedOutput;
+use cordial_f1r3node_adapter::shared_ordered_output::{ReadOrderedOutput, SharedOrderedOutput};
 use cordial_miners_core::Block;
+use cordial_miners_core::consensus::{compute_all_depths, depth as block_depth, wave_of_round};
 use cordial_miners_core::types::{BlockIdentity, NodeId};
 use models::rust::string_ops::StringOps;
+use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
 // ── CLI args ──────────────────────────────────────────────────────────────────
@@ -119,6 +122,50 @@ struct Args {
     /// 100 so a read-only mirror can still compute finality.
     #[arg(long)]
     bonds_file: Option<PathBuf>,
+
+    /// Print timestamped Cordial wave observations and tau finalizations as JSON lines.
+    #[arg(long, default_value_t = false)]
+    wave_events: bool,
+}
+
+fn emit_wave_event(
+    kind: &str,
+    wave: u64,
+    round: u64,
+    initial: bool,
+    output: Option<&cordial_f1r3node_adapter::ordered_output::OrderedFinalizedOutput>,
+) {
+    let at_ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let (ordered_len, anchor_hash, tau_sha256) = if let Some(output) = output {
+        let mut digest = Sha256::new();
+        digest.update((output.blocks.len() as u64).to_le_bytes());
+        for block in &output.blocks {
+            digest.update(block.content_hash);
+        }
+        (
+            output.blocks.len(),
+            output.anchor_hash().map(hex::encode),
+            Some(hex::encode(digest.finalize())),
+        )
+    } else {
+        (0, None, None)
+    };
+    println!(
+        "TAU_WAVE_EVENT {}",
+        serde_json::json!({
+            "kind": kind,
+            "wave": wave,
+            "round": round,
+            "initial": initial,
+            "ordered_len": ordered_len,
+            "anchor_hash": anchor_hash,
+            "tau_sha256": tau_sha256,
+            "at_ns": at_ns.to_string(),
+        })
+    );
 }
 
 // ── Passthrough adapter ───────────────────────────────────────────────────────
@@ -253,11 +300,14 @@ async fn main() -> Result<()> {
         let wave_length = args.wave_length;
         let poll_interval = Duration::from_millis(args.poll_interval_ms);
         let depth = args.depth;
+        let wave_events = args.wave_events;
 
         tokio::spawn(async move {
             let mut client: Option<LiveGrpcBlockClient> = None;
             let mut bootstrapped = false;
             let mut known_creators: HashMap<[u8; 32], NodeId> = HashMap::new();
+            let mut last_observed_wave: Option<u64> = None;
+            let mut last_finalized_wave: Option<u64> = None;
 
             loop {
                 // Ensure gRPC client is connected
@@ -318,17 +368,61 @@ async fn main() -> Result<()> {
                     tracing::debug!(new_blocks, "poll cycle: new blocks appended");
                 }
 
+                if wave_events && new_blocks > 0 {
+                    let ingress_guard = ingress.lock().await;
+                    if let Some(round) = compute_all_depths(ingress_guard.blocklace())
+                        .values()
+                        .copied()
+                        .max()
+                        && let Some(wave) = wave_of_round(round, wave_length)
+                        && last_observed_wave.is_none_or(|last| wave > last)
+                    {
+                        emit_wave_event(
+                            "observed",
+                            wave,
+                            round,
+                            last_observed_wave.is_none(),
+                            None,
+                        );
+                        last_observed_wave = Some(wave);
+                    }
+                }
+
                 // Recompute ordered output over the accumulated blocklace.
                 let output_res = {
                     let mut ingress_guard = ingress.lock().await;
-                    ingress_guard.latest_finalized_ordered_output(wave_length)
+                    let output = ingress_guard.latest_finalized_ordered_output(wave_length);
+                    let anchor_round = if wave_events {
+                        output.as_ref().ok().and_then(|output| {
+                            output
+                                .anchor
+                                .as_ref()
+                                .and_then(|anchor| block_depth(ingress_guard.blocklace(), anchor))
+                        })
+                    } else {
+                        None
+                    };
+                    (output, anchor_round)
                 };
 
-                match output_res {
+                match output_res.0 {
                     Ok(output) => {
                         let mut guard = shared.lock().await;
                         match poll_once(&mut guard, output) {
                             PollOutcome::Updated { finalized_len } => {
+                                if let Some(round) = output_res.1
+                                    && let Some(wave) = wave_of_round(round, wave_length)
+                                    && last_finalized_wave.is_none_or(|last| wave > last)
+                                {
+                                    emit_wave_event(
+                                        "finalized",
+                                        wave,
+                                        round,
+                                        last_finalized_wave.is_none(),
+                                        guard.latest(),
+                                    );
+                                    last_finalized_wave = Some(wave);
+                                }
                                 tracing::debug!(
                                     finalized_blocks = finalized_len,
                                     "ordered output updated"
