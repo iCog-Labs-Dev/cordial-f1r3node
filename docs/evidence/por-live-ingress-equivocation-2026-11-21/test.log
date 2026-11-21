@@ -1,0 +1,17 @@
+   Compiling cordial-f1r3node-adapter v0.1.0 (/home/ymesfin/cordial-miners/cordial-f1r3node/crates/cordial-f1r3node-adapter)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.64s
+     Running tests/test_live_ingress_equivocation.rs (target/debug/deps/test_live_ingress_equivocation-90a28563fb4870fb)
+
+running 1 test
+observer 1: reading recent native block from http://127.0.0.1:61001
+observer 1: native blocks=41 latest_height=37206 latest_hash=9577d9d67cf0e8e128acadc850cba286aebe5247ac0b46acb84b61e584690017 injected_fork_branches=2 proof_verified
+observer 2: reading recent native block from http://127.0.0.1:62001
+observer 2: native blocks=41 latest_height=23998 latest_hash=cc940dc8f051de17c8f928ba4c2c530ec13c763fd694db6810c950fcf8dbd395 injected_fork_branches=2 proof_verified
+observer 3: reading recent native block from http://127.0.0.1:63001
+observer 3: native blocks=44 latest_height=37205 latest_hash=a80e887383a439f1285411dde04b49e778b5d8bd231da8ccbc7359b46db7663e injected_fork_branches=2 proof_verified
+observer 4: reading recent native block from http://127.0.0.1:64001
+observer 4: native blocks=41 latest_height=37206 latest_hash=e15af7d0577b24cad63fdaf46bc0c9d39323fc46091887b56248c1f104066071 injected_fork_branches=2 proof_verified
+test four_live_sources_detect_injected_cordial_fork ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
