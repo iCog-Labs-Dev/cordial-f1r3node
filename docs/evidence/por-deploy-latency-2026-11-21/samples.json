@@ -1,0 +1,377 @@
+[
+  {
+    "sample": 1,
+    "submitted_at_utc": "2026-11-21T19:26:10Z",
+    "projection_at_submission": [
+      {
+        "node": "cordial-validator-1",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 245
+      },
+      {
+        "node": "cordial-validator-2",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 245
+      },
+      {
+        "node": "cordial-validator-3",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 245
+      },
+      {
+        "node": "cordial-validator-4",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 245
+      }
+    ],
+    "submit_response_seconds": 0.082,
+    "accepted": true,
+    "deploy_id": "30450221009634f3cd569d8359a477ad230a14bebb75a30b9cf02266c5388d0f65472212300220242df1369b59ce054ceb482c5d4ea2a6635c2ee131d194af85033e7572b2a2c0",
+    "outcome": "agreed",
+    "block_hash": "fc8a34b0518063727fd579617241ed0956476a1cd86939771ed03b51a32ff827",
+    "block_number": 72,
+    "errored": null,
+    "included_after_seconds": 5.112,
+    "agreed_after_seconds": 29.125,
+    "agreed_at_utc": "2026-11-21T19:26:40Z",
+    "ordered_position": 268,
+    "observers": [
+      {
+        "node": "cordial-validator-1",
+        "position": 268,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 74,
+        "finalized_count": 269
+      },
+      {
+        "node": "cordial-validator-2",
+        "position": 268,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 74,
+        "finalized_count": 269
+      },
+      {
+        "node": "cordial-validator-3",
+        "position": 268,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 74,
+        "finalized_count": 269
+      },
+      {
+        "node": "cordial-validator-4",
+        "position": 268,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 74,
+        "finalized_count": 269
+      }
+    ]
+  },
+  {
+    "sample": 2,
+    "submitted_at_utc": "2026-11-21T19:26:40Z",
+    "projection_at_submission": [
+      {
+        "node": "cordial-validator-1",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 269
+      },
+      {
+        "node": "cordial-validator-2",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 269
+      },
+      {
+        "node": "cordial-validator-3",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 269
+      },
+      {
+        "node": "cordial-validator-4",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 269
+      }
+    ],
+    "submit_response_seconds": 0.089,
+    "accepted": true,
+    "deploy_id": "30440220028d504a3641a7d5f72f86d5ce07c15229c76b1412cb7e815ef23339afc4026f022069460ddf56ae5177cfbeb940898f7e5e28d30698933b67e1d8a7073131821008",
+    "outcome": "agreed",
+    "block_hash": "b69d74eccba8ff388c81481ac04aea0722fadf6c293f50b2bb7ee25640677855",
+    "block_number": 75,
+    "errored": null,
+    "included_after_seconds": 4.103,
+    "agreed_after_seconds": 81.143,
+    "agreed_at_utc": "2026-11-21T19:28:01Z",
+    "ordered_position": 276,
+    "observers": [
+      {
+        "node": "cordial-validator-1",
+        "position": 276,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 80,
+        "finalized_count": 285
+      },
+      {
+        "node": "cordial-validator-2",
+        "position": 276,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 80,
+        "finalized_count": 285
+      },
+      {
+        "node": "cordial-validator-3",
+        "position": 276,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 80,
+        "finalized_count": 285
+      },
+      {
+        "node": "cordial-validator-4",
+        "position": 276,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 80,
+        "finalized_count": 285
+      }
+    ]
+  },
+  {
+    "sample": 3,
+    "submitted_at_utc": "2026-11-21T19:28:01Z",
+    "projection_at_submission": [
+      {
+        "node": "cordial-validator-1",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 285
+      },
+      {
+        "node": "cordial-validator-2",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 285
+      },
+      {
+        "node": "cordial-validator-3",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 285
+      },
+      {
+        "node": "cordial-validator-4",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 285
+      }
+    ],
+    "submit_response_seconds": 0.082,
+    "accepted": true,
+    "deploy_id": "304502210088e9cb633a2ab859f60836a2d26bbc6a76f69ad503d348b1fb3f37af07c819d902204cae77512e52cc011aa994e99a26763bcad9cdb6921f3ee71c0c1c1bdf5fa801",
+    "outcome": "agreed",
+    "block_hash": "bd3dd8d350fe6b3f34e6115ba80534d5d92bafb465d4c18b8e627ebdaa9c8056",
+    "block_number": 81,
+    "errored": null,
+    "included_after_seconds": 2.091,
+    "agreed_after_seconds": 83.133,
+    "agreed_at_utc": "2026-11-21T19:29:24Z",
+    "ordered_position": 298,
+    "observers": [
+      {
+        "node": "cordial-validator-1",
+        "position": 298,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 86,
+        "finalized_count": 308
+      },
+      {
+        "node": "cordial-validator-2",
+        "position": 298,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 86,
+        "finalized_count": 308
+      },
+      {
+        "node": "cordial-validator-3",
+        "position": 298,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 86,
+        "finalized_count": 308
+      },
+      {
+        "node": "cordial-validator-4",
+        "position": 298,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 86,
+        "finalized_count": 308
+      }
+    ]
+  },
+  {
+    "sample": 4,
+    "submitted_at_utc": "2026-11-21T19:29:24Z",
+    "projection_at_submission": [
+      {
+        "node": "cordial-validator-1",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 308
+      },
+      {
+        "node": "cordial-validator-2",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 308
+      },
+      {
+        "node": "cordial-validator-3",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 308
+      },
+      {
+        "node": "cordial-validator-4",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 308
+      }
+    ],
+    "submit_response_seconds": 0.085,
+    "accepted": true,
+    "deploy_id": "304402201783f2bb9e871efe0b053b5f2a9037d84e48861162e47aad9ebc10ffe7508ef2022075e8c35ccfe4b5259feb376e28bbbbfaaf449232a80f47ab9245eb7e33afb6ef",
+    "outcome": "agreed",
+    "block_hash": "69a849bd48bfd2233c3e8aaacfc14f793c5ea8bb5c29176ce5fb87414b45a54a",
+    "block_number": 88,
+    "errored": null,
+    "included_after_seconds": 6.101,
+    "agreed_after_seconds": 70.136,
+    "agreed_at_utc": "2026-11-21T19:30:34Z",
+    "ordered_position": 323,
+    "observers": [
+      {
+        "node": "cordial-validator-1",
+        "position": 323,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 92,
+        "finalized_count": 328
+      },
+      {
+        "node": "cordial-validator-2",
+        "position": 323,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 92,
+        "finalized_count": 328
+      },
+      {
+        "node": "cordial-validator-3",
+        "position": 323,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 92,
+        "finalized_count": 328
+      },
+      {
+        "node": "cordial-validator-4",
+        "position": 323,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 92,
+        "finalized_count": 328
+      }
+    ]
+  },
+  {
+    "sample": 5,
+    "submitted_at_utc": "2026-11-21T19:30:34Z",
+    "projection_at_submission": [
+      {
+        "node": "cordial-validator-1",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 328
+      },
+      {
+        "node": "cordial-validator-2",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 328
+      },
+      {
+        "node": "cordial-validator-3",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 328
+      },
+      {
+        "node": "cordial-validator-4",
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "finalized_count": 328
+      }
+    ],
+    "submit_response_seconds": 0.091,
+    "accepted": true,
+    "deploy_id": "3045022100dd262d135f0fe4ca9885e50de1f67c1f2dcc3f3db1a9766fb52992822fb09eba022063c68d75a30072f0c71ae9faba87e6f786e889f52d93d62d55a11a2fc5526c09",
+    "outcome": "agreed",
+    "block_hash": "674118b2fceba9950c5066642299b10d21462a00620908451067530cc8a9c45a",
+    "block_number": 94,
+    "errored": null,
+    "included_after_seconds": 4.106,
+    "agreed_after_seconds": 70.141,
+    "agreed_at_utc": "2026-11-21T19:31:44Z",
+    "ordered_position": 343,
+    "observers": [
+      {
+        "node": "cordial-validator-1",
+        "position": 343,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 98,
+        "finalized_count": 348
+      },
+      {
+        "node": "cordial-validator-2",
+        "position": 343,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 98,
+        "finalized_count": 348
+      },
+      {
+        "node": "cordial-validator-3",
+        "position": 343,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 98,
+        "finalized_count": 348
+      },
+      {
+        "node": "cordial-validator-4",
+        "position": 343,
+        "active_por_round": 3,
+        "weight_commitment": "0a04b8ecdf70a2161b4ee0ee26d9dfd3f193c1247d4e30743b4750642c41db84",
+        "source_height": 98,
+        "finalized_count": 348
+      }
+    ]
+  }
+]

@@ -1,0 +1,15 @@
+{
+  "started_at_utc": "2026-11-21T19:26:10Z",
+  "finished_at_utc": "2026-11-21T19:31:44Z",
+  "attempts": 5,
+  "agreed": 5,
+  "timeouts": 0,
+  "rejections": 0,
+  "poll_seconds": 1.0,
+  "timeout_seconds": 300,
+  "median_seconds": 70.141,
+  "p95_seconds": 83.133,
+  "min_seconds": 29.125,
+  "max_seconds": 83.133,
+  "measurement": "host monotonic time from submitter launch to first poll finding identical finalized block index in four PoR statuses"
+}
