@@ -217,3 +217,81 @@ fn active_future_epoch_is_a_noop() {
     assert_snapshot_eq(&before, &live.snapshot().unwrap());
     assert_eq!(live.last_finalized_block_hash().unwrap(), hash);
 }
+
+fn assert_order(actual: &OrderedFinalizedOutput, expected: &OrderedFinalizedOutput) {
+    assert_eq!(actual.blocks, expected.blocks);
+    assert_eq!(actual.anchor, expected.anchor);
+}
+
+#[test]
+fn ordering_matches_reference_after_each_checkpoint() {
+    // This fully connected fixture does not exercise nonzero removal: its
+    // ancestors stay protected. Check both cached and recomputed ordering.
+    let mut reference = ingress(0);
+    let mut live = ingress(0);
+    let mut previous = output(&mut live);
+    let mut advances = 0;
+    for block in stream(9) {
+        feed(&mut reference, block.clone());
+        feed(&mut live, block);
+        let expected = output(&mut reference);
+        let mut actual = output(&mut live);
+        assert_order(&actual, &expected);
+        if actual.anchor.is_some() && actual.anchor != previous.anchor {
+            output(&mut live);
+            assert_eq!(live.ordering_diagnostics().last_path, Some("unchanged"));
+            checkpoint(&mut live);
+            actual = output(&mut live);
+            assert!(matches!(
+                live.ordering_diagnostics().last_path,
+                Some("full" | "verified_prefix")
+            ));
+            advances += 1;
+        }
+        assert_order(&actual, &expected);
+        assert!(actual.preserves_prefix(&previous));
+        previous = actual;
+    }
+    assert_eq!(advances, 3);
+}
+
+#[test]
+#[ignore = "logical checkpoints change snapshot ancestry fields"]
+// A logical ancestry boundary makes dag.latest_messages_map,
+// dag.finalized_blocks_set, tips, parents, justifications and
+// on_chain_state.active_validators reflect post-checkpoint history.
+// The finalized hash and ordered output remain unchanged.
+fn compare_full_snapshots_at_a_checkpoint() {
+    let mut live = ingress(6);
+    let before = live.snapshot().unwrap();
+    let hash = live.last_finalized_block_hash().unwrap();
+    let ordered = output(&mut live);
+    assert!(checkpoint(&mut live).checkpoint_depth > 0);
+    assert_eq!(live.last_finalized_block_hash().unwrap(), hash);
+    assert_order(&output(&mut live), &ordered);
+    assert_snapshot_eq(&before, &live.snapshot().unwrap());
+}
+
+#[test]
+#[ignore = "fully connected rounds retain every block"]
+// Protected ancestors prevent physical removal in this stream. The previous
+// 120-round run had 480 ingested / 480 retained / 0 removed over 40 advances.
+fn measure_fully_connected_growth() {
+    let mut live = ingress(0);
+    let mut previous = None;
+    println!("ingested,retained,removed");
+    for (step, block) in stream(30).into_iter().enumerate() {
+        feed(&mut live, block);
+        let actual = output(&mut live);
+        if actual.anchor.is_some() && actual.anchor != previous {
+            let report = checkpoint(&mut live);
+            println!(
+                "{},{},{}",
+                step + 1,
+                live.blocklace().dom().len(),
+                report.removed.len()
+            );
+        }
+        previous = actual.anchor;
+    }
+}
