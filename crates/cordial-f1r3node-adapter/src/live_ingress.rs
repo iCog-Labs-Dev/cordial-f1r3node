@@ -13,9 +13,9 @@ use std::time::Instant;
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    OrderingCache, WeightSnapshot, WeightedEpochBoundary, WeightedEpochError, depth,
-    last_round_of_wave, wave_of_round, weighted_final_leader_for_wave,
-    weighted_tau_after_epoch_boundary,
+    OrderingCache, PruneError, PruneReport, WeightSnapshot, WeightedEpochBoundary,
+    WeightedEpochError, checkpoint_after_weighted_finality, depth, last_round_of_wave,
+    wave_of_round, weighted_final_leader_for_wave, weighted_tau_after_epoch_boundary,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::types::BlockIdentity;
@@ -67,6 +67,8 @@ pub enum LiveIngressError {
     Mirror(String),
     /// Persisting a block or the finalized cursor to the LMDB store failed.
     Persistence(RepoError),
+    /// The core rejected a finalized checkpoint advance.
+    Pruning(PruneError<BlockIdentity>),
 }
 
 impl std::fmt::Display for LiveIngressError {
@@ -76,6 +78,7 @@ impl std::fmt::Display for LiveIngressError {
             Self::Adapter(err) => write!(f, "adapter rejected live block: {err}"),
             Self::Mirror(err) => write!(f, "failed to mirror live block: {err}"),
             Self::Persistence(err) => write!(f, "failed to persist live block: {err}"),
+            Self::Pruning(err) => write!(f, "checkpoint pruning failed: {err:?}"),
         }
     }
 }
@@ -273,6 +276,10 @@ where
 
     pub fn blocklace(&self) -> &Blocklace {
         &self.blocklace
+    }
+
+    pub(crate) fn blocklace_mut(&mut self) -> &mut Blocklace {
+        &mut self.blocklace
     }
 
     pub fn pending(&self) -> &HashMap<BlockIdentity, Block> {
@@ -604,6 +611,47 @@ impl<A> LiveIngress<A> {
     /// Return the current local blocklace mirror.
     pub fn blocklace(&self) -> &Blocklace {
         self.mirror.blocklace()
+    }
+
+    /// Opt in to pruning at a proven weighted final leader.
+    ///
+    /// Uses current bonds and round-robin leaders over sorted validators, as
+    /// live ordering does. Returns `None` without bonds or a new final leader.
+    /// Future PoR epochs are skipped because their ordering replays separately.
+    /// Every advance clears ordering reuse, even when no blocks are removed.
+    ///
+    /// # Known limitations
+    ///
+    /// Checkpoints are logical ancestry boundaries; physical removal depends
+    /// on the protected closure. Restart still replays every stored block.
+    /// Late references to pruned predecessors have no special handling, and
+    /// the pending map is unbounded. Finalized identity prefixes and shared
+    /// ordered output keep growing.
+    pub fn checkpoint_and_prune(
+        &mut self,
+        wavelength: u64,
+    ) -> Result<Option<PruneReport<BlockIdentity>>, LiveIngressError> {
+        if self.future_epoch.is_some() || self.bonds.is_empty() {
+            return Ok(None);
+        }
+        let mut validators: Vec<_> = self.bonds.keys().cloned().collect();
+        validators.sort();
+        let report = checkpoint_after_weighted_finality(
+            self.mirror.blocklace_mut(),
+            wavelength,
+            &self.bonds,
+            |wave| {
+                let index = usize::try_from(wave).ok()? % validators.len();
+                Some(validators[index].clone())
+            },
+        )
+        .map_err(LiveIngressError::Pruning)?;
+        if report.is_some() {
+            self.ordering_cache = OrderingCache::default();
+            self.last_finalized_output_fingerprint = None;
+            self.finalized_prefix_reuse = None;
+        }
+        Ok(report)
     }
 
     /// Return blocks that are waiting on missing predecessors.
