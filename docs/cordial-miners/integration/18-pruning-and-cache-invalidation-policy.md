@@ -37,6 +37,34 @@ All three reject invalid moves: unknown checkpoints, backwards checkpoints
 (depth regression), and disconnected checkpoints are returned as `PruneError`
 variants rather than applied silently.
 
+### Live ingress
+
+`LiveIngress::checkpoint_and_prune(wavelength)` opts into the existing weighted
+checkpoint operation. The ordered-output server calls it after a successful
+finalized-output poll, using the same wavelength and current bonds. Leaders are
+selected round-robin over sorted validators. The core proves finality first.
+
+Every checkpoint advance resets `ordering_cache`,
+`last_finalized_output_fingerprint` and `finalized_prefix_reuse`, including
+advances that remove no blocks. An active future PoR epoch, empty bonds or no new
+final leader returns `None`. Pruning errors are logged as warnings; serving the
+computed finalized output continues.
+
+#### Known limitations
+
+- A checkpoint is a logical ancestry boundary: traversals stop there.
+  `dag.latest_messages_map`, `dag.finalized_blocks_set`, `tips`, `parents`,
+  `justifications` and `on_chain_state.active_validators` reflect post-checkpoint
+  history. The finalized hash and ordered output remain unchanged.
+- Blocks are physically removed only where the protected closure allows it.
+  Fully connected rounds protect every candidate: the 120-round measurement
+  produced **480 ingested / 480 retained / 0 removed** across 40 advances.
+- Restart still replays every stored block; checkpoint-aware recovery is absent.
+- Late references to pruned predecessors have no special handling.
+- The pending map remains unbounded.
+- Finalized identity prefixes and shared ordered output keep growing with
+  total finalized history.
+
 ---
 
 ## 2. Structural Closure Retained for Future Block Validation
