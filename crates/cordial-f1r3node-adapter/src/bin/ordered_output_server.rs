@@ -321,7 +321,13 @@ async fn main() -> Result<()> {
                 // Recompute ordered output over the accumulated blocklace.
                 let output_res = {
                     let mut ingress_guard = ingress.lock().await;
-                    ingress_guard.latest_finalized_ordered_output(wave_length)
+                    let finalized = ingress_guard.latest_finalized_ordered_output(wave_length);
+                    if finalized.is_ok()
+                        && let Err(err) = ingress_guard.checkpoint_and_prune(wave_length)
+                    {
+                        tracing::warn!(error = %err, "checkpoint pruning failed; serving finalized output");
+                    }
+                    finalized
                 };
 
                 match output_res {
