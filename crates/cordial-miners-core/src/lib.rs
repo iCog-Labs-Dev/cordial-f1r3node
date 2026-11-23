@@ -20,5 +20,5 @@ pub mod types;
 pub mod wave;
 
 pub use block::Block;
-pub use blocklace::{Blocklace, CheckpointOrigin};
+pub use blocklace::{Blocklace, CheckpointOrigin, CheckpointRestoreError};
 pub use types::{BlockContent, BlockIdentity, NodeId};
