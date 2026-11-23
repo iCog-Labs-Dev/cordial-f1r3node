@@ -24,6 +24,9 @@ pub enum RepoError {
 
     #[error("Incompatible blocklace storage: {0}")]
     IncompatibleStorage(String),
+
+    #[error("Invalid checkpoint record: {0}")]
+    Checkpoint(String),
 }
 
 impl<T> From<std::sync::PoisonError<T>> for RepoError {

@@ -5,6 +5,7 @@
 //! - [`recovery`]         — boot recovery and topological sort
 //! - [`repository_impl`]  — [`BlocklaceRepository`] trait implementation
 
+pub mod checkpoint;
 pub mod open;
 pub mod recovery;
 pub mod repository_impl;
