@@ -20,17 +20,19 @@ block and the finalized cursor.
 |---|---|---|
 | Raw blocks (block body + identity) | ✅ Yes | `cordial-blocks` LMDB database |
 | Finalized cursor (latest anchor `BlockIdentity`) | ✅ Yes | `cordial-meta` LMDB database |
-| In-memory `Blocklace` DAG structure | ❌ No — reconstructed from LMDB blocks on boot | — |
-| `OrderedFinalizedOutput` (full tau output) | ❌ No — recomputed from reconstructed blocklace | — |
+| Versioned checkpoint record (identity, origin, depth, both ordering prefixes) | ✅ When checkpoint persistence writes removed IDs | `cordial-meta`, key `checkpoint_record`, bincode version 1 |
+| Pruned identities | ✅ With the checkpoint record | `cordial-meta`, key `pruned/` + bincode(identity), empty value |
+| Native identity mappings and height cursor | ✅ Through the native persistence APIs | `cordial-meta` |
+| In-memory `Blocklace` DAG structure | ❌ No — restored from checkpoint state and unmarked archive blocks, or the full archive | — |
+| `OrderedFinalizedOutput` container | ❌ No — recomputed from restored blocklace state | — |
 | `OrderingCache` entries | ❌ No — ephemeral, warm up after first ordering call | — |
 | Core `Blocklace` — native `BlocklaceStore` decision | 📌 Deferred — LMDB stays at the adapter level for now | — |
 
-The design principle: LMDB stores the minimum durable facts (blocks and the
-finalized cursor). Everything derived from those facts — the DAG structure,
-ordering cache, and tau output — is cheap to recompute on boot and is never
-itself written to disk. This keeps the write path narrow (two tables, two
-methods) and avoids a second source of truth that could drift from the
-blocklace's own consensus rules.
+The block archive is never deleted. Checkpoint metadata stores the logical
+boundary and ordering identity prefixes established by core pruning. Recovery
+uses this state to avoid loading marked block bodies; ordering caches and
+ordered output are recomputed. Without a record, recovery replays the full
+archive as before.
 
 ### Block-hash format compatibility
 
@@ -64,23 +66,39 @@ LMDB write commits leaves nothing written, which is equally safe.
 
 On restart, `LiveIngress::with_persistent_store` rebuilds a fresh mirror by:
 
-1. Reading every block out of `cordial-blocks`.
-2. Topologically sorting them by computed DAG height (`recover_into_engine`,
-   implemented in `cordial-f1r3space-adapter`), so predecessors are always
-   replayed before their successors regardless of the order they were
-   originally written in.
-3. Replaying each block into the mirror's `Blocklace` through the supplied
-   verifier. Corrupt or rejected entries are logged and skipped, never
-   panicked on.
-4. Returning the finalized cursor read from `cordial-meta`, if any, so the
-   caller can log the resume point.
+1. Reading the cursor and checkpoint record. Corrupt or unknown-version records
+   fail closed. With a record, the checkpoint block must exist in the archive;
+   `Blocklace::restore_from_checkpoint` verifies its signature and restores its
+   origin, depth and prefixes without requiring pruned predecessors.
+2. Scanning `cordial-blocks`. With a record, the checkpoint and marked entries
+   are skipped by key before block-body deserialization. Without a record,
+   every entry follows the existing full replay path.
+3. Topologically sorting surviving blocks and inserting them through the caller's
+   verifier. Corrupt entries and rejected blocks are warned and skipped.
+4. Rebuilding native mappings, excluding marked identities. An unmarked mapping
+   to an unrecovered block still fails closed.
+5. Returning the finalized cursor so the caller can log the resume point.
+
+### Checkpoint writes and crash points
+
+`checkpoint_prune_and_persist` prunes RAM first, then writes the record and all
+queued removed identities in one transaction. Failed writes keep those IDs for
+retry; no pending removals means no record write, even after a zero-removal
+advance. Lower depth and a different checkpoint at equal depth are rejected;
+rewriting the same checkpoint at equal depth is idempotent and adds markers.
+A crash before commit restores the older record, or none, and loads more blocks.
+A crash after commit restores the new boundary and markers together.
+Late archived blocks that reference pruned predecessors are rejected by `insert`
+during recovery, warned and skipped. Their archive entries remain intact.
 
 ## 3. Startup Lifecycle
 
 ```rust,ignore
 let repo = open_block_store(&data_dir)?;
 let (mut ingress, cursor) =
-    LiveIngress::with_persistent_store(adapter, &repo, &verifier)?;
+    LiveIngress::with_persistent_store(
+        adapter, bonds, shard_conf, "root", &repo, &verifier,
+    )?;
 
 // cursor is the last known finalized block identity — log it, or use it
 // to decide which ranges are already known-finalized.
@@ -91,6 +109,7 @@ ingress.ingest_and_persist(block, &repo)?;
 
 // After each ordered-output advance:
 if ingress.latest_finalized_ordered_output(WAVELENGTH)?.anchor.is_some() {
+    ingress.checkpoint_prune_and_persist(WAVELENGTH, &repo)?;
     ingress.persist_finalized_cursor(&repo)?;
 }
 ```

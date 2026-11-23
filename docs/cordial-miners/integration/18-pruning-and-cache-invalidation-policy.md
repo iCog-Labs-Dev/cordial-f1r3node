@@ -50,6 +50,13 @@ advances that remove no blocks. An active future PoR epoch, empty bonds or no ne
 final leader returns `None`. Pruning errors are logged as warnings; serving the
 computed finalized output continues.
 
+`LiveIngress::checkpoint_prune_and_persist(wavelength, repo)` adds opt-in durable
+checkpoint storage. It prunes RAM first, then atomically stores the checkpoint
+record and queued removed IDs without deleting archive blocks. Failed writes
+retain IDs for retry, even without another finality advance. No pending removed
+IDs means no record write. Recovery restores an available record and filters
+marked archive entries before decoding their block bodies.
+
 #### Known limitations
 
 - A checkpoint is a logical ancestry boundary: traversals stop there.
@@ -59,11 +66,16 @@ computed finalized output continues.
 - Blocks are physically removed only where the protected closure allows it.
   Fully connected rounds protect every candidate: the 120-round measurement
   produced **480 ingested / 480 retained / 0 removed** across 40 advances.
-- Restart still replays every stored block; checkpoint-aware recovery is absent.
-- Late references to pruned predecessors have no special handling.
+- Restart restores a checkpoint record when one exists; otherwise it replays
+  every archived block. Marker identities and tau identity prefixes still grow
+  with finalized history.
+- Late references have no special live-ingress handling. At recovery, blocks
+  referencing pruned predecessors are rejected with a warning and skipped.
 - The pending map remains unbounded.
 - Finalized identity prefixes and shared ordered output keep growing with
   total finalized history.
+- No binary calls the persistence method yet. The ordered-output server has no
+  LMDB store; its existing pruning call affects RAM only.
 
 ---
 
