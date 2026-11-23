@@ -2,13 +2,13 @@ use std::collections::{HashMap, HashSet};
 
 use cordial_f1r3node_adapter::{
     grpc_ingest::BlocklaceAdapter,
-    live_ingress::{AlreadyValidatedVerifier, LiveIngress},
+    live_ingress::{AlreadyValidatedVerifier, LiveIngress, LiveIngressError},
     ordered_output::OrderedFinalizedOutput,
     repository::{BlocklaceRepository, RSpaceBlocklaceRepository, RepoError},
     shard_conf::CasperShardConf,
 };
 use cordial_f1r3space_adapter::lmdb_store::checkpoint::{
-    CHECKPOINT_RECORD_VERSION, CheckpointRecord,
+    CHECKPOINT_RECORD_KEY, CHECKPOINT_RECORD_VERSION, CheckpointRecord,
 };
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId, crypto::block_hash};
 
@@ -102,7 +102,10 @@ fn chain_checkpoint_actually_removes_blocks() {
         reference.ingest_trusted_block(block.clone()).unwrap();
     }
     let before = output(&mut live);
-    let report = live.checkpoint_and_prune(W).unwrap().unwrap();
+    let report = live
+        .checkpoint_prune_and_persist(W, &repo)
+        .unwrap()
+        .unwrap();
     println!(
         "ingested={}, retained={}, removed={}",
         3 * W,
@@ -112,8 +115,6 @@ fn chain_checkpoint_actually_removes_blocks() {
     assert!(!report.removed.is_empty());
     assert_order(&output(&mut live), &before);
     assert_order(&before, &output(&mut reference));
-    repo.put_checkpoint(&record(&live), &report.removed)
-        .unwrap();
     let retained = live.blocklace().dom().len();
     drop(live);
     repo.close();
@@ -235,7 +236,6 @@ fn recovery_skips_pruned_mappings_and_late_blocks_but_rejects_unknown_mappings()
 
 #[test]
 fn corrupt_record_and_missing_checkpoint_fail_closed() {
-    use cordial_f1r3space_adapter::lmdb_store::checkpoint::CHECKPOINT_RECORD_KEY;
     let dir = tempfile::tempdir().unwrap();
     let repo = RSpaceBlocklaceRepository::open(dir.path(), MAP_SIZE).unwrap();
     metadata(
@@ -265,5 +265,55 @@ fn corrupt_record_and_missing_checkpoint_fail_closed() {
     assert!(
         matches!(restart(&repo), Err(RepoError::Checkpoint(message)) if message.contains("missing"))
     );
+    repo.close();
+}
+
+#[test]
+fn failed_persistence_retries_all_removals_and_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = RSpaceBlocklaceRepository::open(dir.path(), MAP_SIZE).unwrap();
+    let prune = |live: &mut Ingress| live.checkpoint_prune_and_persist(W, &repo);
+    let mut live = fresh();
+    let blocks = chain(4 * W);
+    feed(&mut live, &repo, &blocks[..1]);
+    assert!(prune(&mut live).unwrap().is_none());
+    assert_eq!(repo.checkpoint_record().unwrap(), None);
+    feed(&mut live, &repo, &blocks[1..W as usize]);
+    assert!(prune(&mut live).unwrap().unwrap().removed.is_empty());
+    assert_eq!(repo.checkpoint_record().unwrap(), None);
+    feed(&mut live, &repo, &blocks[W as usize..(3 * W) as usize]);
+    metadata(
+        dir.path(),
+        &[(CHECKPOINT_RECORD_KEY.to_vec(), Some(vec![255; 4]))],
+    );
+    assert!(matches!(
+        prune(&mut live),
+        Err(LiveIngressError::Persistence(_))
+    ));
+    let first_depth = live.blocklace().checkpoint_depth().unwrap();
+    assert!(live.blocklace().get(&blocks[0].identity).is_none());
+    assert!(!repo.is_pruned(&blocks[0].identity).unwrap());
+    feed(&mut live, &repo, &blocks[(3 * W) as usize..]);
+    assert!(matches!(
+        prune(&mut live),
+        Err(LiveIngressError::Persistence(_))
+    ));
+    assert!(live.blocklace().checkpoint_depth().unwrap() > first_depth);
+    // Repair only the deliberately corrupt metadata, then retry with no advance.
+    metadata(dir.path(), &[(CHECKPOINT_RECORD_KEY.to_vec(), None)]);
+    assert!(prune(&mut live).unwrap().is_none());
+    assert_eq!(repo.checkpoint_record().unwrap().unwrap(), record(&live));
+    for block in &blocks[..(3 * W) as usize] {
+        assert!(repo.is_pruned(&block.identity).unwrap());
+        assert!(repo.get_block(&block.identity).unwrap().is_some());
+    }
+    assert!(prune(&mut live).unwrap().is_none());
+    assert_eq!(repo.checkpoint_record().unwrap().unwrap(), record(&live));
+    let mut recovered = restart(&repo).unwrap();
+    assert_eq!(
+        recovered.blocklace().dom().len(),
+        live.blocklace().dom().len()
+    );
+    assert_order(&output(&mut recovered), &output(&mut live));
     repo.close();
 }

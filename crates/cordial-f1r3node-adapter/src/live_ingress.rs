@@ -7,9 +7,12 @@
 //! Persistent ingress restores the native identity index at startup. No host
 //! transport calls this native entry point yet.
 //!
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::time::Instant;
 
+use cordial_f1r3space_adapter::lmdb_store::checkpoint::{
+    CHECKPOINT_RECORD_VERSION, CheckpointRecord,
+};
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
@@ -400,6 +403,7 @@ pub struct LiveIngress<A> {
     ordering_cache: OrderingCache,
     last_finalized_output_fingerprint: Option<FinalizedOutputFingerprint>,
     finalized_prefix_reuse: Option<FinalizedPrefixReuse>,
+    unpersisted_removed: BTreeSet<BlockIdentity>,
     ordering_diagnostics: OrderingDiagnostics,
     shared_ordered_output: SharedOrderedOutput,
     bonds: HashMap<NodeId, u64>,
@@ -461,6 +465,7 @@ impl<A> LiveIngress<A> {
             ordering_cache: OrderingCache::default(),
             last_finalized_output_fingerprint: None,
             finalized_prefix_reuse: None,
+            unpersisted_removed: BTreeSet::new(),
             ordering_diagnostics: OrderingDiagnostics::default(),
             shared_ordered_output: SharedOrderedOutput::new(),
             bonds: HashMap::new(),
@@ -487,6 +492,7 @@ impl<A> LiveIngress<A> {
             ordering_cache: OrderingCache::default(),
             last_finalized_output_fingerprint: None,
             finalized_prefix_reuse: None,
+            unpersisted_removed: BTreeSet::new(),
             ordering_diagnostics: OrderingDiagnostics::default(),
             shared_ordered_output: SharedOrderedOutput::new(),
             bonds,
@@ -550,6 +556,7 @@ impl<A> LiveIngress<A> {
             ordering_cache: OrderingCache::default(),
             last_finalized_output_fingerprint: None,
             finalized_prefix_reuse: None,
+            unpersisted_removed: BTreeSet::new(),
             ordering_diagnostics: OrderingDiagnostics::default(),
             shared_ordered_output: SharedOrderedOutput::new(),
             bonds,
@@ -627,7 +634,8 @@ impl<A> LiveIngress<A> {
     /// # Known limitations
     ///
     /// Checkpoints are logical ancestry boundaries; physical removal depends
-    /// on the protected closure. Restart still replays every stored block.
+    /// on the protected closure. Restart replays every stored block unless
+    /// a durable checkpoint record is available.
     /// Late references to pruned predecessors have no special handling, and
     /// the pending map is unbounded. Finalized identity prefixes and shared
     /// ordered output keep growing.
@@ -654,6 +662,45 @@ impl<A> LiveIngress<A> {
             self.ordering_cache = OrderingCache::default();
             self.last_finalized_output_fingerprint = None;
             self.finalized_prefix_reuse = None;
+        }
+        Ok(report)
+    }
+
+    /// Prune in RAM, then atomically persist checkpoint state and removed IDs.
+    ///
+    /// Failed writes keep removed IDs queued for the next successful write,
+    /// even when that call has no new final leader. The archive is never deleted;
+    /// recovery from an older record simply loads more blocks after a crash.
+    /// No record is written without pending removals, including zero-removal
+    /// advances. The pruning method's logical-boundary limitations still apply.
+    pub fn checkpoint_prune_and_persist(
+        &mut self,
+        wavelength: u64,
+        repo: &RSpaceBlocklaceRepository,
+    ) -> Result<Option<PruneReport<BlockIdentity>>, LiveIngressError> {
+        let report = self.checkpoint_and_prune(wavelength)?;
+        if let Some(report) = &report {
+            self.unpersisted_removed
+                .extend(report.removed.iter().cloned());
+        }
+        if !self.unpersisted_removed.is_empty() {
+            let lace = self.blocklace();
+            let missing = || {
+                LiveIngressError::Persistence(RepoError::Checkpoint(
+                    "incomplete in-memory checkpoint state".into(),
+                ))
+            };
+            let record = CheckpointRecord {
+                version: CHECKPOINT_RECORD_VERSION,
+                checkpoint: lace.checkpoint().cloned().ok_or_else(missing)?,
+                origin: lace.checkpoint_origin().ok_or_else(missing)?,
+                depth: lace.checkpoint_depth().ok_or_else(missing)?,
+                order_prefix: lace.checkpoint_order_prefix().to_vec(),
+                weighted_order_prefix: lace.checkpoint_weighted_order_prefix().to_vec(),
+            };
+            repo.put_checkpoint(&record, &self.unpersisted_removed)
+                .map_err(LiveIngressError::Persistence)?;
+            self.unpersisted_removed.clear();
         }
         Ok(report)
     }
