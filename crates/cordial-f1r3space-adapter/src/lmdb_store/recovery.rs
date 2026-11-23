@@ -22,11 +22,12 @@ use crate::error::RepoError;
 use crate::repository::BlocklaceRepository;
 
 use super::RSpaceBlocklaceRepository;
+use super::checkpoint::pruned_key;
 
 // ── Public: recover_into_engine ───────────────────────────────────────────
 
 impl RSpaceBlocklaceRepository {
-    /// Replay all persisted blocks into the in-memory `Blocklace` engine.
+    /// Restore a durable checkpoint, then replay unmarked archived blocks.
     ///
     /// Called **once at node startup**, before the node accepts any new
     /// gRPC blocks. The node must not accept blocks until this returns.
@@ -34,8 +35,9 @@ impl RSpaceBlocklaceRepository {
     /// ## Steps
     ///
     /// 1. Read `finalized_cursor` from `cordial-meta`.
-    /// 2. Full scan of `cordial-blocks` — corrupt entries are warned
-    ///    and skipped, never panicked.
+    /// 2. Restore checkpoint state if present; invalid state fails closed.
+    ///    Scan `cordial-blocks`, checking markers before decoding block bodies.
+    ///    Without a record, retain the original full replay path.
     /// 3. Topological sort by computed DAG height — predecessors always
     ///    before successors, deterministic across runs.
     /// 4. `engine.insert` for each block — engine rejects bad blocks
@@ -50,9 +52,58 @@ impl RSpaceBlocklaceRepository {
         let cursor = self.finalized_cursor()?;
         info!("Boot recovery starting. Finalized cursor: {:?}", cursor);
 
+        let checkpoint = self.checkpoint_record()?;
+        let checkpoint_key = checkpoint
+            .as_ref()
+            .map(|record| bincode::serialize(&record.checkpoint))
+            .transpose()?;
+        if let Some(record) = &checkpoint {
+            let block = self.get_block(&record.checkpoint)?.ok_or_else(|| {
+                RepoError::Checkpoint("checkpoint block is missing from the archive".into())
+            })?;
+            if block.identity != record.checkpoint {
+                return Err(RepoError::Checkpoint(
+                    "checkpoint archive identity mismatch".into(),
+                ));
+            }
+            *engine = Blocklace::restore_from_checkpoint(
+                block,
+                record.origin,
+                record.depth,
+                record.order_prefix.clone(),
+                record.weighted_order_prefix.clone(),
+                verifier,
+            )
+            .map_err(|error| RepoError::Checkpoint(error.to_string()))?;
+        }
+
         // Step 2 — collect all blocks from LMDB
         // Lock is held only for the scan, released before engine work.
-        let all_blocks: Vec<Block> = {
+        let all_blocks: Vec<Block> = if let Some(checkpoint_key) = checkpoint_key {
+            let db = self.blocks_db.lock()?;
+            let meta = self.meta_db.lock()?;
+            let txn = self.env.read_txn()?;
+            let mut blocks = Vec::new();
+            for entry in db.iter(&txn)? {
+                let (key, value) = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        warn!("LMDB iter error during recovery: {error}");
+                        continue;
+                    }
+                };
+                // Marker keys use the archive identity bytes, so removed bodies
+                // are never deserialized or admitted to the replay collection.
+                if key == checkpoint_key || meta.get(&txn, &pruned_key(key))?.is_some() {
+                    continue;
+                }
+                match bincode::deserialize(value) {
+                    Ok(block) => blocks.push(block),
+                    Err(error) => warn!("Skipping corrupt block: {error}"),
+                }
+            }
+            blocks
+        } else {
             let db = self.blocks_db.lock()?;
             let rtxn = self.env.read_txn()?;
 

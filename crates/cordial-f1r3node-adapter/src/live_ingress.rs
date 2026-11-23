@@ -499,8 +499,9 @@ impl<A> LiveIngress<A> {
 
     /// Create a live ingress instance pre-hydrated from a persistent block store.
     ///
-    /// Called once at startup. Replays all blocks from `repo` into the in-memory
-    /// mirror before accepting any new blocks from the live gRPC stream.
+    /// Called once at startup. Restores the durable checkpoint and replays
+    /// unmarked blocks, or replays the full archive when no record exists,
+    /// before accepting any new blocks from the live gRPC stream.
     ///
     /// Returns the finalized cursor read from the store (if any) so callers can
     /// log the resume point or skip already-finalized ranges.
@@ -519,6 +520,9 @@ impl<A> LiveIngress<A> {
         let cursor = repo.recover_into_engine(&mut mirror.blocklace, verifier)?;
         let mut native_index = NativeBlockIdentityIndex::new();
         for (wire_hash, identity) in repo.native_block_mappings()? {
+            if repo.is_pruned(&identity)? {
+                continue;
+            }
             let block = mirror.blocklace.get(&identity).ok_or_else(|| {
                 RepoError::NativeMapping(format!(
                     "native wire hash references an unrecovered Cordial block: {identity:?}"
