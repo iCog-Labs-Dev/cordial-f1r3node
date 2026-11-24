@@ -149,6 +149,14 @@ the other rule's prefix is empty. Invalid state returns `CheckpointRestoreError`
 The restored graph has no trusted-window boundaries. Subsequent blocks undergo
 normal `insert` validation; prefix and depth trust comes from durable state.
 
+The `ordered_output_server` binary accepts optional `--store-path <dir>`.
+It opens LMDB at `<dir>/blocklace`, restores checkpoint state on startup,
+persists trusted blocks before insertion and writes checkpoint records with
+pruned markers after successful finalized-output polls. Checkpoint write errors
+are warned while serving continues. Without the option, no store is opened.
+Archive blocks are never deleted; pending entries and finalized identity lists
+remain unbounded, and physical removal depends on the protected closure.
+
 The central data structure -- a set of blocks stored as `HashMap<BlockIdentity, BlockContent>`.
 
 ### Invariants

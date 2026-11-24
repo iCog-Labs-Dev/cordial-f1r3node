@@ -118,12 +118,29 @@ The node must not accept new gRPC blocks until step 1 (`with_persistent_store`)
 returns — the same rule `RSpaceBlocklaceRepository::recover_into_engine`
 already documents for the lower-level recovery path.
 
+### Ordered-output server
+
+`ordered_output_server --store-path <dir>` opens the repository at
+`<dir>/blocklace` and restores any checkpoint record before polling gRPC.
+The server retains its trusted gRPC ingress model and uses
+`AlreadyValidatedVerifier` when replaying these reconstructions.
+Trusted light-block reconstructions are archived through `ingest_and_persist`
+before mirror insertion. After each successful finalized-output poll, the
+server calls `checkpoint_prune_and_persist` with the same wavelength, writing
+the record and pruned markers when removals are pending. Checkpoint errors are
+logged as warnings while the computed output continues to be served.
+
+Without `--store-path`, no LMDB environment is opened; ingestion and pruning
+remain in memory. Archive blocks are never deleted. The pending map remains
+unbounded, and marker identities, finalized identity prefixes and shared ordered
+history still grow. Physical removal still depends on the protected closure.
+
 ## 4. Why the Verifier Differs From Live Ingestion
 
-`with_persistent_store` replays disk-sourced blocks through the caller's
-real `CryptoVerifier`, not `AlreadyValidatedVerifier`. Blocks on disk were
-written by a prior process and haven't been re-checked since; recovery is
-the one path where Cordial re-validates signatures before trusting old
+Library integrations can supply a signature-verifying `CryptoVerifier` to
+`with_persistent_store`. Blocks on disk were
+written by a prior process and haven't been re-checked since; using that
+verifier during recovery re-validates their signatures before trusting old
 state. Live ingestion through `ingest_and_persist` / `ingest_trusted_block`
 continues to use the already-validated trust boundary, since those blocks
 were checked at the gRPC/adapter boundary moments earlier.

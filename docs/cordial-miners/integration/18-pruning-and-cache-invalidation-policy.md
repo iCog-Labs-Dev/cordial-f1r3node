@@ -40,9 +40,10 @@ variants rather than applied silently.
 ### Live ingress
 
 `LiveIngress::checkpoint_and_prune(wavelength)` opts into the existing weighted
-checkpoint operation. The ordered-output server calls it after a successful
-finalized-output poll, using the same wavelength and current bonds. Leaders are
-selected round-robin over sorted validators. The core proves finality first.
+checkpoint operation. Without `--store-path`, the ordered-output server calls it
+after a successful finalized-output poll, using the same wavelength and current
+bonds. Leaders are selected round-robin over sorted validators. The core proves
+finality first.
 
 Every checkpoint advance resets `ordering_cache`,
 `last_finalized_output_fingerprint` and `finalized_prefix_reuse`, including
@@ -56,6 +57,11 @@ record and queued removed IDs without deleting archive blocks. Failed writes
 retain IDs for retry, even without another finality advance. No pending removed
 IDs means no record write. Recovery restores an available record and filters
 marked archive entries before decoding their block bodies.
+
+With `--store-path <dir>`, the ordered-output server opens `<dir>/blocklace`,
+restores checkpoint state on startup and archives blocks before mirror insertion.
+It calls `checkpoint_prune_and_persist` after successful finalized-output polls
+under the same ingress lock. Write errors are warned and serving continues.
 
 #### Known limitations
 
@@ -74,8 +80,8 @@ marked archive entries before decoding their block bodies.
 - The pending map remains unbounded.
 - Finalized identity prefixes and shared ordered output keep growing with
   total finalized history.
-- No binary calls the persistence method yet. The ordered-output server has no
-  LMDB store; its existing pruning call affects RAM only.
+- Server persistence is opt-in through `--store-path`; without it, pruning
+  affects RAM only and restart has no local checkpoint to restore.
 
 ---
 
