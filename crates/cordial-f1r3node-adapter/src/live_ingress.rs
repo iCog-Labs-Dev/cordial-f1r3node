@@ -7,15 +7,18 @@
 //! Persistent ingress restores the native identity index at startup. No host
 //! transport calls this native entry point yet.
 //!
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::time::Instant;
 
+use cordial_f1r3space_adapter::lmdb_store::checkpoint::{
+    CHECKPOINT_RECORD_VERSION, CheckpointRecord,
+};
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    OrderingCache, WeightSnapshot, WeightedEpochBoundary, WeightedEpochError, depth,
-    last_round_of_wave, wave_of_round, weighted_final_leader_for_wave,
-    weighted_tau_after_epoch_boundary,
+    OrderingCache, PruneError, PruneReport, WeightSnapshot, WeightedEpochBoundary,
+    WeightedEpochError, checkpoint_after_weighted_finality, depth, last_round_of_wave,
+    wave_of_round, weighted_final_leader_for_wave, weighted_tau_after_epoch_boundary,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::types::BlockIdentity;
@@ -67,6 +70,8 @@ pub enum LiveIngressError {
     Mirror(String),
     /// Persisting a block or the finalized cursor to the LMDB store failed.
     Persistence(RepoError),
+    /// The core rejected a finalized checkpoint advance.
+    Pruning(PruneError<BlockIdentity>),
 }
 
 impl std::fmt::Display for LiveIngressError {
@@ -76,6 +81,7 @@ impl std::fmt::Display for LiveIngressError {
             Self::Adapter(err) => write!(f, "adapter rejected live block: {err}"),
             Self::Mirror(err) => write!(f, "failed to mirror live block: {err}"),
             Self::Persistence(err) => write!(f, "failed to persist live block: {err}"),
+            Self::Pruning(err) => write!(f, "checkpoint pruning failed: {err:?}"),
         }
     }
 }
@@ -275,6 +281,10 @@ where
         &self.blocklace
     }
 
+    pub(crate) fn blocklace_mut(&mut self) -> &mut Blocklace {
+        &mut self.blocklace
+    }
+
     pub fn pending(&self) -> &HashMap<BlockIdentity, Block> {
         &self.pending
     }
@@ -393,6 +403,7 @@ pub struct LiveIngress<A> {
     ordering_cache: OrderingCache,
     last_finalized_output_fingerprint: Option<FinalizedOutputFingerprint>,
     finalized_prefix_reuse: Option<FinalizedPrefixReuse>,
+    unpersisted_removed: BTreeSet<BlockIdentity>,
     ordering_diagnostics: OrderingDiagnostics,
     shared_ordered_output: SharedOrderedOutput,
     bonds: HashMap<NodeId, u64>,
@@ -454,6 +465,7 @@ impl<A> LiveIngress<A> {
             ordering_cache: OrderingCache::default(),
             last_finalized_output_fingerprint: None,
             finalized_prefix_reuse: None,
+            unpersisted_removed: BTreeSet::new(),
             ordering_diagnostics: OrderingDiagnostics::default(),
             shared_ordered_output: SharedOrderedOutput::new(),
             bonds: HashMap::new(),
@@ -480,6 +492,7 @@ impl<A> LiveIngress<A> {
             ordering_cache: OrderingCache::default(),
             last_finalized_output_fingerprint: None,
             finalized_prefix_reuse: None,
+            unpersisted_removed: BTreeSet::new(),
             ordering_diagnostics: OrderingDiagnostics::default(),
             shared_ordered_output: SharedOrderedOutput::new(),
             bonds,
@@ -492,8 +505,9 @@ impl<A> LiveIngress<A> {
 
     /// Create a live ingress instance pre-hydrated from a persistent block store.
     ///
-    /// Called once at startup. Replays all blocks from `repo` into the in-memory
-    /// mirror before accepting any new blocks from the live gRPC stream.
+    /// Called once at startup. Restores the durable checkpoint and replays
+    /// unmarked blocks, or replays the full archive when no record exists,
+    /// before accepting any new blocks from the live gRPC stream.
     ///
     /// Returns the finalized cursor read from the store (if any) so callers can
     /// log the resume point or skip already-finalized ranges.
@@ -512,6 +526,9 @@ impl<A> LiveIngress<A> {
         let cursor = repo.recover_into_engine(&mut mirror.blocklace, verifier)?;
         let mut native_index = NativeBlockIdentityIndex::new();
         for (wire_hash, identity) in repo.native_block_mappings()? {
+            if repo.is_pruned(&identity)? {
+                continue;
+            }
             let block = mirror.blocklace.get(&identity).ok_or_else(|| {
                 RepoError::NativeMapping(format!(
                     "native wire hash references an unrecovered Cordial block: {identity:?}"
@@ -539,6 +556,7 @@ impl<A> LiveIngress<A> {
             ordering_cache: OrderingCache::default(),
             last_finalized_output_fingerprint: None,
             finalized_prefix_reuse: None,
+            unpersisted_removed: BTreeSet::new(),
             ordering_diagnostics: OrderingDiagnostics::default(),
             shared_ordered_output: SharedOrderedOutput::new(),
             bonds,
@@ -604,6 +622,87 @@ impl<A> LiveIngress<A> {
     /// Return the current local blocklace mirror.
     pub fn blocklace(&self) -> &Blocklace {
         self.mirror.blocklace()
+    }
+
+    /// Opt in to pruning at a proven weighted final leader.
+    ///
+    /// Uses current bonds and round-robin leaders over sorted validators, as
+    /// live ordering does. Returns `None` without bonds or a new final leader.
+    /// Future PoR epochs are skipped because their ordering replays separately.
+    /// Every advance clears ordering reuse, even when no blocks are removed.
+    ///
+    /// # Known limitations
+    ///
+    /// Checkpoints are logical ancestry boundaries; physical removal depends
+    /// on the protected closure. Restart replays every stored block unless
+    /// a durable checkpoint record is available.
+    /// Late references to pruned predecessors have no special handling, and
+    /// the pending map is unbounded. Finalized identity prefixes and shared
+    /// ordered output keep growing.
+    pub fn checkpoint_and_prune(
+        &mut self,
+        wavelength: u64,
+    ) -> Result<Option<PruneReport<BlockIdentity>>, LiveIngressError> {
+        if self.future_epoch.is_some() || self.bonds.is_empty() {
+            return Ok(None);
+        }
+        let mut validators: Vec<_> = self.bonds.keys().cloned().collect();
+        validators.sort();
+        let report = checkpoint_after_weighted_finality(
+            self.mirror.blocklace_mut(),
+            wavelength,
+            &self.bonds,
+            |wave| {
+                let index = usize::try_from(wave).ok()? % validators.len();
+                Some(validators[index].clone())
+            },
+        )
+        .map_err(LiveIngressError::Pruning)?;
+        if report.is_some() {
+            self.ordering_cache = OrderingCache::default();
+            self.last_finalized_output_fingerprint = None;
+            self.finalized_prefix_reuse = None;
+        }
+        Ok(report)
+    }
+
+    /// Prune in RAM, then atomically persist checkpoint state and removed IDs.
+    ///
+    /// Failed writes keep removed IDs queued for the next successful write,
+    /// even when that call has no new final leader. The archive is never deleted;
+    /// recovery from an older record simply loads more blocks after a crash.
+    /// No record is written without pending removals, including zero-removal
+    /// advances. The pruning method's logical-boundary limitations still apply.
+    pub fn checkpoint_prune_and_persist(
+        &mut self,
+        wavelength: u64,
+        repo: &RSpaceBlocklaceRepository,
+    ) -> Result<Option<PruneReport<BlockIdentity>>, LiveIngressError> {
+        let report = self.checkpoint_and_prune(wavelength)?;
+        if let Some(report) = &report {
+            self.unpersisted_removed
+                .extend(report.removed.iter().cloned());
+        }
+        if !self.unpersisted_removed.is_empty() {
+            let lace = self.blocklace();
+            let missing = || {
+                LiveIngressError::Persistence(RepoError::Checkpoint(
+                    "incomplete in-memory checkpoint state".into(),
+                ))
+            };
+            let record = CheckpointRecord {
+                version: CHECKPOINT_RECORD_VERSION,
+                checkpoint: lace.checkpoint().cloned().ok_or_else(missing)?,
+                origin: lace.checkpoint_origin().ok_or_else(missing)?,
+                depth: lace.checkpoint_depth().ok_or_else(missing)?,
+                order_prefix: lace.checkpoint_order_prefix().to_vec(),
+                weighted_order_prefix: lace.checkpoint_weighted_order_prefix().to_vec(),
+            };
+            repo.put_checkpoint(&record, &self.unpersisted_removed)
+                .map_err(LiveIngressError::Persistence)?;
+            self.unpersisted_removed.clear();
+        }
+        Ok(report)
     }
 
     /// Return blocks that are waiting on missing predecessors.

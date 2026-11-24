@@ -18,6 +18,26 @@ pub enum CheckpointOrigin {
     Explicit,
 }
 
+/// Invalid persisted checkpoint state or failed checkpoint authentication.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckpointRestoreError {
+    InvalidPrefix(CheckpointOrigin),
+    InvalidSignature(String),
+    IdentityConflict(Box<BlockIdentity>),
+}
+
+impl std::fmt::Display for CheckpointRestoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidPrefix(origin) => write!(f, "inconsistent {origin:?} checkpoint prefixes"),
+            Self::InvalidSignature(error) => write!(f, "invalid checkpoint signature: {error}"),
+            Self::IdentityConflict(id) => write!(f, "checkpoint identity conflict: {id:?}"),
+        }
+    }
+}
+
+impl std::error::Error for CheckpointRestoreError {}
+
 // The blocklace B - a set of blocks satisfying the closure and axioms
 // From definition 2.3, A blocklace B is a set of blocks subject to some invariants.
 // since each block has a unique identity, we can represent the blocklace as a HashMap from BlockIdentity to Block content.
@@ -63,6 +83,49 @@ impl Blocklace {
             cache_identity: Arc::new(()),
             ancestor_index: Mutex::new(None),
         }
+    }
+
+    /// Restore trusted checkpoint state without requiring its pruned predecessors.
+    ///
+    /// Signature verification authenticates the block, not the historical
+    /// finality proof. The caller must supply trusted depth, origin and prefixes.
+    /// Prefix provenance and checkpoint membership match checkpoint pruning;
+    /// prefix identities may omit signatures. Later blocks use normal insertion.
+    pub fn restore_from_checkpoint<V: CryptoVerifier>(
+        checkpoint: Block,
+        origin: CheckpointOrigin,
+        depth: u64,
+        order_prefix: Vec<BlockIdentity>,
+        weighted_order_prefix: Vec<BlockIdentity>,
+        verifier: &V,
+    ) -> Result<Self, CheckpointRestoreError> {
+        let (prefix, inactive) = match origin {
+            CheckpointOrigin::WeightedFinal => (&weighted_order_prefix, &order_prefix),
+            CheckpointOrigin::PaperFinal | CheckpointOrigin::Explicit => {
+                (&order_prefix, &weighted_order_prefix)
+            }
+        };
+        if !inactive.is_empty()
+            || !prefix
+                .iter()
+                .any(|id| id.same_consensus_identity(&checkpoint.identity))
+        {
+            return Err(CheckpointRestoreError::InvalidPrefix(origin));
+        }
+        verifier
+            .verify_block(
+                &checkpoint.content,
+                &checkpoint.identity.signature,
+                &checkpoint.identity.creator,
+            )
+            .map_err(|error| CheckpointRestoreError::InvalidSignature(format!("{error:?}")))?;
+        let mut restored = Self::new();
+        let id = checkpoint.identity;
+        restored
+            .commit_validated(id.clone(), checkpoint.content)
+            .map_err(|id| CheckpointRestoreError::IdentityConflict(Box::new(id)))?;
+        restored.set_checkpoint_state(id, origin, depth, order_prefix, weighted_order_prefix);
+        Ok(restored)
     }
 }
 

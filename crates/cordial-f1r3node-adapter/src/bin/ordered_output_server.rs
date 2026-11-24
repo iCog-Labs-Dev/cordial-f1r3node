@@ -68,8 +68,9 @@ use cordial_f1r3node_adapter::live_grpc::{
     LiveGrpcBlockClient, reconcile_trusted_predecessor_creators,
     trusted_block_from_light_block_info_with_options,
 };
-use cordial_f1r3node_adapter::live_ingress::LiveIngress;
+use cordial_f1r3node_adapter::live_ingress::{AlreadyValidatedVerifier, LiveIngress};
 use cordial_f1r3node_adapter::ordered_output_server::{PollOutcome, poll_once, serve};
+use cordial_f1r3node_adapter::repository::{RSpaceBlocklaceRepository, open_block_store};
 use cordial_f1r3node_adapter::shard_conf::CasperShardConf;
 use cordial_f1r3node_adapter::shared_ordered_output::SharedOrderedOutput;
 use cordial_miners_core::Block;
@@ -119,14 +120,18 @@ struct Args {
     /// 100 so a read-only mirror can still compute finality.
     #[arg(long)]
     bonds_file: Option<PathBuf>,
+
+    /// Persist the trusted mirror under <dir>/blocklace and restore it on restart.
+    #[arg(long)]
+    store_path: Option<PathBuf>,
 }
 
 // ── Passthrough adapter ───────────────────────────────────────────────────────
 
 /// Minimal adapter that discards block-level side-effects.
 ///
-/// The ordered-output server only reads consensus state; it does not need to
-/// write to any external store on each block ingestion.
+/// Storage is selected by the ingress call so this callback stays independent
+/// of whether a persistent repository is attached.
 struct PassthroughAdapter;
 
 impl BlocklaceAdapter<BlockIdentity> for PassthroughAdapter {
@@ -177,6 +182,7 @@ fn mirror_blocks(
     ingress: &mut LiveIngress<PassthroughAdapter>,
     blocks: &[models::casper::LightBlockInfo],
     known_creators: &mut HashMap<[u8; 32], NodeId>,
+    repo: Option<&RSpaceBlocklaceRepository>,
 ) -> Result<usize> {
     let mut applied = 0;
     let mut translated = Vec::with_capacity(blocks.len());
@@ -194,15 +200,31 @@ fn mirror_blocks(
     }
     for (info, mut block) in blocks.iter().zip(translated) {
         reconcile_trusted_predecessor_creators(&mut block, known_creators);
-        let update = ingress
-            .ingest_trusted_block(block)
-            .with_context(|| format!("failed to mirror live block {}", info.block_hash))?;
+        let update = match repo {
+            Some(repo) => ingress.ingest_and_persist(block, repo),
+            None => ingress.ingest_trusted_block(block),
+        }
+        .with_context(|| format!("failed to mirror live block {}", info.block_hash))?;
         use cordial_f1r3node_adapter::live_ingress::MirrorDisposition;
         if update.disposition != MirrorDisposition::Duplicate {
             applied += 1;
         }
     }
     Ok(applied)
+}
+
+fn prune_step(
+    ingress: &mut LiveIngress<PassthroughAdapter>,
+    wavelength: u64,
+    repo: Option<&RSpaceBlocklaceRepository>,
+) {
+    let result = match repo {
+        Some(repo) => ingress.checkpoint_prune_and_persist(wavelength, repo),
+        None => ingress.checkpoint_and_prune(wavelength),
+    };
+    if let Err(err) = result {
+        tracing::warn!(error = %err, "checkpoint pruning failed; serving finalized output");
+    }
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -221,16 +243,40 @@ async fn main() -> Result<()> {
         ..CasperShardConf::default()
     };
 
-    let ingress = LiveIngress::with_consensus_view(
-        PassthroughAdapter,
-        HashMap::new(),
-        shard_conf,
-        &args.shard_id,
-    );
+    let repo = args
+        .store_path
+        .as_deref()
+        .map(open_block_store)
+        .transpose()?;
+    let ingress = match &repo {
+        Some(repo) => {
+            LiveIngress::with_persistent_store(
+                PassthroughAdapter,
+                HashMap::new(),
+                shard_conf,
+                &args.shard_id,
+                repo,
+                &AlreadyValidatedVerifier,
+            )?
+            .0
+        }
+        None => LiveIngress::with_consensus_view(
+            PassthroughAdapter,
+            HashMap::new(),
+            shard_conf,
+            &args.shard_id,
+        ),
+    };
+    let mut known_creators: HashMap<_, _> = ingress
+        .blocklace()
+        .dom()
+        .into_iter()
+        .map(|id| (id.content_hash, id.creator.clone()))
+        .collect();
 
     let shared = Arc::new(Mutex::new(SharedOrderedOutput::new()));
     let ingress = Arc::new(Mutex::new(ingress));
-    let initial_bonds = match &args.bonds_file {
+    let mut initial_bonds = match &args.bonds_file {
         Some(path) => {
             let bonds = load_bonds_from_file(path)
                 .with_context(|| format!("failed to load bonds from {}", path.display()))?;
@@ -242,6 +288,12 @@ async fn main() -> Result<()> {
             HashMap::new()
         }
     };
+    for creator in known_creators
+        .values()
+        .filter(|creator| !creator.0.is_empty())
+    {
+        initial_bonds.entry(creator.clone()).or_insert(100);
+    }
     let bonds = Arc::new(Mutex::new(initial_bonds));
 
     // ── Background polling task ───────────────────────────────────────────────
@@ -257,7 +309,6 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             let mut client: Option<LiveGrpcBlockClient> = None;
             let mut bootstrapped = false;
-            let mut known_creators: HashMap<[u8; 32], NodeId> = HashMap::new();
 
             loop {
                 // Ensure gRPC client is connected
@@ -275,7 +326,7 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                let c = client.as_mut().unwrap();
+                let Some(c) = client.as_mut() else { continue };
                 let blocks_res = c.recent_light_blocks(depth).await;
 
                 let blocks = match blocks_res {
@@ -299,7 +350,12 @@ async fn main() -> Result<()> {
                 // Append new blocks into the long-lived ingress.
                 let new_blocks_res = {
                     let mut ingress_guard = ingress.lock().await;
-                    mirror_blocks(&mut ingress_guard, &blocks, &mut known_creators)
+                    mirror_blocks(
+                        &mut ingress_guard,
+                        &blocks,
+                        &mut known_creators,
+                        repo.as_ref(),
+                    )
                 };
 
                 let new_blocks = match new_blocks_res {
@@ -321,7 +377,11 @@ async fn main() -> Result<()> {
                 // Recompute ordered output over the accumulated blocklace.
                 let output_res = {
                     let mut ingress_guard = ingress.lock().await;
-                    ingress_guard.latest_finalized_ordered_output(wave_length)
+                    let finalized = ingress_guard.latest_finalized_ordered_output(wave_length);
+                    if finalized.is_ok() {
+                        prune_step(&mut ingress_guard, wave_length, repo.as_ref());
+                    }
+                    finalized
                 };
 
                 match output_res {
@@ -363,4 +423,124 @@ async fn main() -> Result<()> {
         .with_context(|| format!("HTTP server on {} failed", args.addr))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cordial_f1r3space_adapter::lmdb_store::checkpoint::CHECKPOINT_RECORD_KEY;
+    use heed::{Database, EnvOpenOptions, types::Bytes};
+    use models::casper::LightBlockInfo;
+
+    const W: u64 = 12;
+    const MAP_SIZE: usize = 10 * 1024 * 1024;
+
+    fn fixture(repo: Option<&RSpaceBlocklaceRepository>) -> LiveIngress<PassthroughAdapter> {
+        // Sequential witnesses over four equal-weight validators allow removal.
+        let blocks: Vec<_> = (0..3 * W)
+            .map(|r| LightBlockInfo {
+                block_hash: hex::encode([r as u8 + 1; 32]),
+                sender: hex::encode([((r / W + r % 4) % 4 + 1) as u8]),
+                block_number: r as i64,
+                parents_hash_list: if r == 0 {
+                    vec![]
+                } else {
+                    vec![hex::encode([r as u8; 32])]
+                },
+                ..LightBlockInfo::default()
+            })
+            .collect();
+        let mut bonds = HashMap::new();
+        merge_bonds(&mut bonds, &blocks);
+        let mut ingress = LiveIngress::with_consensus_view(
+            PassthroughAdapter,
+            bonds,
+            CasperShardConf::default(),
+            "root",
+        );
+        mirror_blocks(&mut ingress, &blocks, &mut HashMap::new(), repo).unwrap();
+        assert_eq!(ingress.blocklace().dom().len(), blocks.len());
+        ingress
+    }
+
+    #[test]
+    fn store_path_is_optional() {
+        let without = Args::try_parse_from(["server"]).unwrap();
+        let with = Args::try_parse_from(["server", "--store-path", "local store"]).unwrap();
+        assert!(without.store_path.is_none());
+        assert_eq!(with.store_path, Some(PathBuf::from("local store")));
+    }
+
+    #[test]
+    fn persistent_prune_step_recovers_ordered_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = RSpaceBlocklaceRepository::open(dir.path(), MAP_SIZE).unwrap();
+        let mut ingress = fixture(Some(&repo));
+        let before = ingress.latest_finalized_ordered_output(W).unwrap();
+        let bonds = ingress.bonds().clone();
+        prune_step(&mut ingress, W, Some(&repo));
+        assert!(ingress.blocklace().dom().len() < (3 * W) as usize);
+        assert!(repo.checkpoint_record().unwrap().is_some());
+        repo.close();
+        let repo = RSpaceBlocklaceRepository::open(dir.path(), MAP_SIZE).unwrap();
+        let (mut recovered, _) = LiveIngress::with_persistent_store(
+            PassthroughAdapter,
+            bonds,
+            CasperShardConf::default(),
+            "root",
+            &repo,
+            &AlreadyValidatedVerifier,
+        )
+        .unwrap();
+        let after = recovered.latest_finalized_ordered_output(W).unwrap();
+        assert_eq!(after.blocks, before.blocks);
+        assert_eq!(after.anchor, before.anchor);
+        repo.close();
+    }
+
+    #[test]
+    fn memory_prune_step_needs_no_store() {
+        let mut ingress = fixture(None);
+        prune_step(&mut ingress, W, None);
+        assert!(ingress.blocklace().checkpoint().is_some());
+        assert!(ingress.blocklace().dom().len() < (3 * W) as usize);
+    }
+
+    #[test]
+    fn failed_checkpoint_write_is_logged_and_keeps_serving() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = RSpaceBlocklaceRepository::open(dir.path(), MAP_SIZE).unwrap();
+        let mut ingress = fixture(Some(&repo));
+        let before = ingress.latest_finalized_ordered_output(W).unwrap();
+        {
+            let env = unsafe {
+                EnvOpenOptions::new()
+                    .map_size(MAP_SIZE)
+                    .max_dbs(10)
+                    .max_readers(128)
+                    .open(dir.path().join("blocklace"))
+                    .unwrap()
+            };
+            let mut txn = env.write_txn().unwrap();
+            let meta: Database<Bytes, Bytes> =
+                env.create_database(&mut txn, Some("cordial-meta")).unwrap();
+            meta.put(&mut txn, CHECKPOINT_RECORD_KEY, &[255; 4])
+                .unwrap();
+            txn.commit().unwrap();
+        }
+        let log = tempfile::NamedTempFile::new().unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .without_time()
+            .with_writer(log.reopen().unwrap())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || prune_step(&mut ingress, W, Some(&repo)));
+        let logged = std::fs::read_to_string(log.path()).unwrap();
+        assert!(logged.contains("checkpoint pruning failed; serving finalized output"));
+        assert!(repo.checkpoint_record().is_err());
+        let after = ingress.latest_finalized_ordered_output(W).unwrap();
+        assert_eq!(after.blocks, before.blocks);
+        assert_eq!(after.anchor, before.anchor);
+        repo.close();
+    }
 }

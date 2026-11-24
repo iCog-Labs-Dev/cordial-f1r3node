@@ -141,6 +141,22 @@ A complete block combining identity and content. All core types derive `Serializ
 
 ## Blocklace (src/blocklace.rs)
 
+`Blocklace::restore_from_checkpoint` reconstructs a logical checkpoint from a
+trusted origin, depth and ordering prefixes. It verifies the checkpoint signature
+but bypasses predecessor closure for that one block, whose ancestors may have
+been pruned. The active prefix must contain the checkpoint's consensus identity;
+the other rule's prefix is empty. Invalid state returns `CheckpointRestoreError`.
+The restored graph has no trusted-window boundaries. Subsequent blocks undergo
+normal `insert` validation; prefix and depth trust comes from durable state.
+
+The `ordered_output_server` binary accepts optional `--store-path <dir>`.
+It opens LMDB at `<dir>/blocklace`, restores checkpoint state on startup,
+persists trusted blocks before insertion and writes checkpoint records with
+pruned markers after successful finalized-output polls. Checkpoint write errors
+are warned while serving continues. Without the option, no store is opened.
+Archive blocks are never deleted; pending entries and finalized identity lists
+remain unbounded, and physical removal depends on the protected closure.
+
 The central data structure -- a set of blocks stored as `HashMap<BlockIdentity, BlockContent>`.
 
 ### Invariants

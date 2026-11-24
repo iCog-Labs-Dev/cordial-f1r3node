@@ -37,6 +37,52 @@ All three reject invalid moves: unknown checkpoints, backwards checkpoints
 (depth regression), and disconnected checkpoints are returned as `PruneError`
 variants rather than applied silently.
 
+### Live ingress
+
+`LiveIngress::checkpoint_and_prune(wavelength)` opts into the existing weighted
+checkpoint operation. Without `--store-path`, the ordered-output server calls it
+after a successful finalized-output poll, using the same wavelength and current
+bonds. Leaders are selected round-robin over sorted validators. The core proves
+finality first.
+
+Every checkpoint advance resets `ordering_cache`,
+`last_finalized_output_fingerprint` and `finalized_prefix_reuse`, including
+advances that remove no blocks. An active future PoR epoch, empty bonds or no new
+final leader returns `None`. Pruning errors are logged as warnings; serving the
+computed finalized output continues.
+
+`LiveIngress::checkpoint_prune_and_persist(wavelength, repo)` adds opt-in durable
+checkpoint storage. It prunes RAM first, then atomically stores the checkpoint
+record and queued removed IDs without deleting archive blocks. Failed writes
+retain IDs for retry, even without another finality advance. No pending removed
+IDs means no record write. Recovery restores an available record and filters
+marked archive entries before decoding their block bodies.
+
+With `--store-path <dir>`, the ordered-output server opens `<dir>/blocklace`,
+restores checkpoint state on startup and archives blocks before mirror insertion.
+It calls `checkpoint_prune_and_persist` after successful finalized-output polls
+under the same ingress lock. Write errors are warned and serving continues.
+
+#### Known limitations
+
+- A checkpoint is a logical ancestry boundary: traversals stop there.
+  `dag.latest_messages_map`, `dag.finalized_blocks_set`, `tips`, `parents`,
+  `justifications` and `on_chain_state.active_validators` reflect post-checkpoint
+  history. The finalized hash and ordered output remain unchanged.
+- Blocks are physically removed only where the protected closure allows it.
+  Fully connected rounds protect every candidate: the 120-round measurement
+  produced **480 ingested / 480 retained / 0 removed** across 40 advances.
+- Restart restores a checkpoint record when one exists; otherwise it replays
+  every archived block. Marker identities and tau identity prefixes still grow
+  with finalized history.
+- Late references have no special live-ingress handling. At recovery, blocks
+  referencing pruned predecessors are rejected with a warning and skipped.
+- The pending map remains unbounded.
+- Finalized identity prefixes and shared ordered output keep growing with
+  total finalized history.
+- Server persistence is opt-in through `--store-path`; without it, pruning
+  affects RAM only and restart has no local checkpoint to restore.
+
 ---
 
 ## 2. Structural Closure Retained for Future Block Validation
