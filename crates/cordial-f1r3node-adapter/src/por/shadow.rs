@@ -64,6 +64,49 @@ pub struct ShadowStatus {
     pub source_height: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StatusSummary {
+    active_por_round: u64,
+    weight_commitment: String,
+    weight_count: usize,
+    finalized_anchor: Option<String>,
+    finalized_count: usize,
+    mirrored_blocks: usize,
+    source_height: i64,
+}
+
+impl From<&ShadowStatus> for StatusSummary {
+    fn from(status: &ShadowStatus) -> Self {
+        Self {
+            active_por_round: status.active_por_round,
+            weight_commitment: status.weight_commitment.clone(),
+            weight_count: status.weights.len(),
+            finalized_anchor: status.finalized_anchor.clone(),
+            finalized_count: status.finalized_hashes.len(),
+            mirrored_blocks: status.mirrored_blocks,
+            source_height: status.source_height,
+        }
+    }
+}
+
+fn log_status_if_changed(status: &ShadowStatus, previous: &mut Option<StatusSummary>) {
+    let summary = StatusSummary::from(status);
+    if previous.as_ref() == Some(&summary) {
+        return;
+    }
+    tracing::info!(
+        active_por_round = summary.active_por_round,
+        weight_commitment = %summary.weight_commitment,
+        weight_count = summary.weight_count,
+        finalized_count = summary.finalized_count,
+        finalized_anchor = summary.finalized_anchor.as_deref().unwrap_or("none"),
+        mirrored_blocks = summary.mirrored_blocks,
+        source_height = summary.source_height,
+        "PoR shadow status"
+    );
+    *previous = Some(summary);
+}
+
 impl ShadowStatus {
     fn from_runtime(
         runtime: &PorRuntime<PassthroughAdapter>,
@@ -213,6 +256,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
     let previous = read_status(&path)?;
     let mut scanned_height: Option<i64> = None;
     let mut client: Option<LiveGrpcBlockClient> = None;
+    let mut last_logged_summary = None;
 
     loop {
         if client.is_none() {
@@ -270,7 +314,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
                     .with_context(|| format!("cannot mirror block {}", info.block_hash))?;
             }
             scanned_height = Some(end);
-            tracing::info!(start, end, block_count, "PoR shadow replayed height batch");
+            tracing::debug!(start, end, block_count, "PoR shadow replayed height batch");
             if end == head {
                 break;
             }
@@ -290,7 +334,7 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
             published.validate_recovered(&status)?;
         }
         write_status(&path, &status)?;
-        println!("{}", serde_json::to_string(&status)?);
+        log_status_if_changed(&status, &mut last_logged_summary);
         tokio::time::sleep(config.poll_interval).await;
     }
 }
@@ -298,6 +342,20 @@ pub async fn run_shadow(config: ShadowConfig) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    struct TestWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for TestWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn status(hashes: &[&str]) -> ShadowStatus {
         ShadowStatus {
@@ -322,6 +380,69 @@ mod tests {
         let mut drifted = status(&["a", "b"]);
         drifted.weights.insert("key".into(), 2);
         assert!(old.validate_recovered(&drifted).is_err());
+    }
+
+    #[test]
+    fn status_summary_logs_first_and_changed_status_but_suppresses_repeats() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer_output = Arc::clone(&output);
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || TestWriter(Arc::clone(&writer_output)))
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            let first = status(&["a", "b"]);
+            let mut last_logged = None;
+            log_status_if_changed(&first, &mut last_logged);
+            log_status_if_changed(&first, &mut last_logged);
+
+            let mut changed = first;
+            changed.source_height += 1;
+            log_status_if_changed(&changed, &mut last_logged);
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert_eq!(output.matches("PoR shadow status").count(), 2);
+        assert!(output.contains("source_height=10"));
+        assert!(output.contains("source_height=11"));
+    }
+
+    #[test]
+    fn status_summary_stays_bounded_for_long_finalized_history() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer_output = Arc::clone(&output);
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || TestWriter(Arc::clone(&writer_output)))
+            .finish();
+
+        let mut long_history = status(&[]);
+        long_history.finalized_hashes = (0..10_000).map(|index| format!("{index:064x}")).collect();
+        long_history.finalized_anchor = long_history.finalized_hashes.last().cloned();
+        long_history.mirrored_blocks = long_history.finalized_hashes.len();
+        let first_hash = long_history.finalized_hashes[0].clone();
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_status_if_changed(&long_history, &mut None);
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(output.len() < 512, "summary was {} bytes", output.len());
+        assert!(!output.contains(&first_hash));
+        assert!(!output.contains("finalized_hashes"));
+        assert!(output.contains("active_por_round=0"));
+        assert!(output.contains("weight_commitment=abc"));
+        assert!(output.contains("weight_count=1"));
+        assert!(output.contains("finalized_count=10000"));
+        assert!(output.contains("finalized_anchor="));
+        assert!(
+            output.contains("000000000000000000000000000000000000000000000000000000000000270f")
+        );
+        assert!(output.contains("mirrored_blocks=10000"));
+        assert!(output.contains("source_height=10"));
     }
 
     #[test]

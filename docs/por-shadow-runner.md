@@ -35,9 +35,10 @@ cargo run -j 1 -p cordial-f1r3node-adapter --bin live_por_shadow -- \
 ```
 
 Use a separate persistent data directory for each observed node, outside the
-repository. The runner polls every two seconds by default. It emits a JSON
-status line after each successful poll and atomically writes the same document
-to `<data-dir>/por/shadow-status.json`. The document contains
+repository. The runner polls every two seconds by default. It prints a concise
+startup summary and reports status only when its summary changes. It atomically
+writes the complete status document after every successful poll to
+`<data-dir>/por/shadow-status.json`. The document contains
 `active_por_round`, `weight_commitment`, the exact hex-keyed `weights` map,
 `finalized_anchor`, and `finalized_hashes`. The full finalized hash sequence
 is retained so startup can reject a replay that changes or loses the previously
@@ -132,10 +133,10 @@ wait; it does not reduce replay memory or work. A live test at roughly 3,200
 heights mirrored around 12,000 blocks per observer, then consumed about 19 GiB
 of resident memory per optimized observer during ordering without publishing
 a status. That run was stopped, so long-history recovery is not yet verified.
-Runner logs now report each completed height batch to distinguish replay from
-the subsequent ordering calculation. Use the isolated fresh-cluster procedure
-for the recovery smoke until the long-history path has bounded memory and a
-durable mirror checkpoint.
+Completed height batches are available at debug level (`RUST_LOG=debug`), to
+distinguish replay from the subsequent ordering calculation. Use the isolated
+fresh-cluster procedure for the recovery smoke until the long-history path has
+bounded memory and a durable mirror checkpoint.
 
 All observers currently retain the genesis reputation round because the live
 shadow runner does not yet produce ratings or activate later rounds. Agreement

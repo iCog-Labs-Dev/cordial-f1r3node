@@ -44,7 +44,7 @@ axum.workspace = true
 
 # ── logging ───────────────────────────────────────────────────────────────
 tracing      = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # ── error handling ────────────────────────────────────────────────────────
 thiserror    = "1"
