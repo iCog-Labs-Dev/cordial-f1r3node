@@ -53,6 +53,10 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    let filter = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(tracing::Level::INFO.into())
+        .from_env()?;
+
     let leader_comparison_policy =
         if let Some(schedule_length) = args.leader_comparison_schedule_length {
             Some(ShadowLeaderComparisonPolicy {
@@ -66,8 +70,16 @@ async fn main() -> Result<()> {
             None
         };
     tracing_subscriber::fmt()
+        .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .init();
+    tracing::info!(
+        grpc_url = %args.grpc_url,
+        shard_id = %args.shard_id,
+        data_dir = %args.data_dir.display(),
+        poll_interval_ms = args.poll_interval_ms,
+        "starting PoR shadow"
+    );
     run_shadow(ShadowConfig {
         grpc_url: args.grpc_url,
         bonds_file: args.bonds_file,

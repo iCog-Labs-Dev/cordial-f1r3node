@@ -357,4 +357,3 @@ example : commitPenaltyTransition defaultSlashingConfig
   native_decide
 
 end CordialMiners.SlashingTransitionExamples
-
