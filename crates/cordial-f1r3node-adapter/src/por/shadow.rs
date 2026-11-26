@@ -1090,7 +1090,6 @@ mod tests {
     }
 
     #[test]
-
     fn status_summary_logs_first_and_changed_status_but_suppresses_repeats() {
         let output = Arc::new(Mutex::new(Vec::new()));
         let writer_output = Arc::clone(&output);
