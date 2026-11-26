@@ -41,8 +41,10 @@ pub(crate) const CORDIAL_ID_PREFIX: &[u8] = b"cordial_id/";
 /// Version 1/unversioned data included predecessor signature bytes in a
 /// descendant's content hash. Version 2 uses signature-independent
 /// predecessor identities. The formats cannot be mixed because previously
-/// persisted signatures authenticate the version-1 hash.
-pub const BLOCK_HASH_FORMAT_VERSION: u32 = 2;
+/// persisted signatures authenticate the version-1 hash. Version 3 binds the
+/// block's creator into the hash (`BLOCK_HASH_DOMAIN`); v2 stores must be
+/// resynchronized.
+pub const BLOCK_HASH_FORMAT_VERSION: u32 = 3;
 
 /// Metadata key containing [`BLOCK_HASH_FORMAT_VERSION`] as big-endian bytes.
 pub const BLOCK_HASH_FORMAT_VERSION_KEY: &[u8] = b"block_hash_format_version";

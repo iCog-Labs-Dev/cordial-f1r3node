@@ -49,6 +49,7 @@ fn block() -> ReputationBlock {
             version: REPUTATION_BLOCK_VERSION,
             shard_id: b"root".to_vec(),
             source_finalized_wave: 0,
+            source_checkpoint: None,
             round: 1,
             previous_reputation_hash: None,
             config_hash: [0x11; 32],

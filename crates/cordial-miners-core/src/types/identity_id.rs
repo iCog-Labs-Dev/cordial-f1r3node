@@ -1,6 +1,7 @@
 use super::node_id::NodeId;
 
-/// The cryptographic identity of a block: hash(C) signed by its creator.
+/// The cryptographic identity of a block: a domain-separated hash of
+/// `(creator, C)`, signed by that creator.
 ///
 /// From the paper (§2.2):
 ///   i = signedhash((v, P), k_p)
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct BlockIdentity {
-    /// SHA-256 (or similar) of the serialized BlockContent.
+    /// Blake2b-256 of the format-v3 domain, creator, and serialized content.
     pub content_hash: [u8; 32],
 
     /// The node that signed this hash.

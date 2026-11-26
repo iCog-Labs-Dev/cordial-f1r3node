@@ -1,7 +1,9 @@
 use cordial_miners_core::NodeId;
 use cordial_por::{
-    InteractionEvidence, InteractionKind, PorConfig, PorError, ReputationState,
-    admit_interaction_evidence, build_rating_from_interaction, score_admitted_interaction,
+    CheckpointInteractionEvidence, InteractionEvidence, InteractionKind, PorConfig, PorError,
+    RatingSourceCheckpoint, ReputationState, admit_checkpoint_interaction_evidence,
+    admit_interaction_evidence, build_rating_from_interaction,
+    score_admitted_checkpoint_interaction, score_admitted_interaction, validate_checkpoint_rater,
 };
 
 const FINALIZED_WAVE: u64 = 4;
@@ -27,6 +29,71 @@ fn evidence() -> InteractionEvidence {
         recipient: node(2),
         evidence_ref: vec![9; 32],
     }
+}
+
+fn checkpoint_evidence() -> CheckpointInteractionEvidence {
+    CheckpointInteractionEvidence {
+        source: RatingSourceCheckpoint {
+            round: RATING_ROUND,
+            finalized_prefix_len: 80,
+            finalized_prefix_hash: [7; 32],
+        },
+        kind: InteractionKind::BlockProduction,
+        rater: node(1),
+        recipient: node(2),
+        evidence_ref: vec![9; 32],
+    }
+}
+
+#[test]
+fn checkpoint_evidence_uses_source_round_and_the_same_participant_policy() {
+    let evidence = checkpoint_evidence();
+    let admitted = admit_checkpoint_interaction_evidence(evidence.clone(), &state()).unwrap();
+    assert_eq!(admitted.evidence(), &evidence);
+    assert_eq!(
+        score_admitted_checkpoint_interaction(&admitted, &PorConfig::default()),
+        Ok(PorConfig::default().maximum_rating)
+    );
+
+    let mut self_rating = evidence;
+    self_rating.recipient = self_rating.rater.clone();
+    assert_eq!(
+        admit_checkpoint_interaction_evidence(self_rating, &state()),
+        Err(PorError::SelfInteraction)
+    );
+}
+
+#[test]
+fn checkpoint_evidence_rejects_invalid_source_and_stale_state() {
+    let mut evidence = checkpoint_evidence();
+    evidence.source.finalized_prefix_len = 79;
+    assert_eq!(
+        admit_checkpoint_interaction_evidence(evidence, &state()),
+        Err(PorError::InvalidRatingSourceCheckpoint)
+    );
+    assert_eq!(
+        admit_checkpoint_interaction_evidence(checkpoint_evidence(), &ReputationState::new(3)),
+        Err(PorError::InvalidInteractionStateRound)
+    );
+}
+
+#[test]
+fn checkpoint_rater_policy_applies_without_any_recipient_evidence() {
+    let source = checkpoint_evidence().source;
+    assert_eq!(
+        validate_checkpoint_rater(&source, &node(1), &state()),
+        Ok(())
+    );
+    assert_eq!(
+        validate_checkpoint_rater(&source, &node(3), &state()),
+        Err(PorError::UnknownInteractionRater)
+    );
+    let mut ejected = state();
+    ejected.eject_validator(&node(1)).unwrap();
+    assert_eq!(
+        validate_checkpoint_rater(&source, &node(1), &ejected),
+        Err(PorError::EjectedInteractionRater)
+    );
 }
 
 #[test]

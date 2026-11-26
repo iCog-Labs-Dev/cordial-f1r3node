@@ -52,6 +52,10 @@ ci:
     just test
     just check-core-boundaries
 
+# Issue #285: validate Rust slashing fixtures and replay the Lean reference.
+slashing-conformance:
+    bash scripts/slashing_conformance.sh
+
 lean-build:
     cd lean && lake build
 
@@ -59,24 +63,24 @@ lean-check-sorry:
     cd lean && lake build 2>&1 | tee /tmp/lean-build.log
     ! grep -q "declaration uses 'sorry'" /tmp/lean-build.log
 
-# Issue #188: generate deterministic Rust traces, then independently replay
+# Generate deterministic Rust traces, then independently replay
 # the positive and deliberately-invalid cases through the Lean CMRef.
-issue188-rust:
+trace-conformance-rust:
     cargo +{{toolchain}} build -j 2 -p cordial-miners-core
     cargo +{{toolchain}} test -j 2 -p cordial-miners-core
     cargo +{{toolchain}} test -j 2 -p cordial-miners-core --features trace
     cargo +{{toolchain}} test -j 2 -p cordial-miners-core --features trace --test generate_trace_fixtures generate_all_fixtures -- --exact --nocapture --test-threads=1
 
-issue188-lean:
+trace-conformance-lean:
     cd lean && lake build replay_runner conformance_tests
     cd lean && lake exe replay_runner
     cd lean && lake exe conformance_tests
     just lean-check-sorry
 
-issue188-mutation:
-    bash scripts/issue188_mutation_test.sh
+quorum-threshold-mutation:
+    bash scripts/quorum_threshold_mutation_test.sh
 
-issue188-conformance: issue188-rust issue188-lean issue188-mutation
+trace-conformance: trace-conformance-rust trace-conformance-lean quorum-threshold-mutation
 
 demo-cordial-env:
     test -e {{docker_env}} || cp docker/.env.example {{docker_env}}
@@ -185,3 +189,19 @@ demo-cordial-ordered-output-status:
     curl -s http://127.0.0.1:7080/ordered-output/status | jq .
     @printf '%s\n' "--- latest ---"
     curl -s http://127.0.0.1:7080/ordered-output/latest | jq '{anchor_hash: .anchor.content_hash, len: (.blocks|length), wavelength, bond_count, total_mirrored_blocks}'
+
+# Small Criterion suite with provenance and archived reports.
+bench:
+    python3 scripts/benchmark.py
+
+bench-smoke:
+    python3 scripts/benchmark.py --smoke
+
+bench-large:
+    python3 scripts/benchmark.py --large
+
+bench-rspace:
+    python3 scripts/benchmark.py --rspace --package cordial-f1r3node-adapter --bench execution
+
+bench-harness-tests:
+    python3 -m unittest discover -s scripts/tests -p 'test_multi_node_load.py'

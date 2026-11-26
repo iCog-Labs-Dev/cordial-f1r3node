@@ -1,3 +1,10 @@
+mod ancestor_index;
+
+/// Shared benchmark fixtures, excluded unless explicitly enabled.
+#[cfg(feature = "bench-support")]
+#[doc(hidden)]
+pub mod bench_support;
+
 pub mod block;
 pub mod blocklace;
 pub mod consensus;
@@ -13,5 +20,5 @@ pub mod types;
 pub mod wave;
 
 pub use block::Block;
-pub use blocklace::Blocklace;
+pub use blocklace::{Blocklace, CheckpointOrigin};
 pub use types::{BlockContent, BlockIdentity, NodeId};

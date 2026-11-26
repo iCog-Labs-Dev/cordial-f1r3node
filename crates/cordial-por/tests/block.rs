@@ -1,15 +1,18 @@
 use cordial_miners_core::NodeId;
 use cordial_miners_core::crypto::{Blake2b256Hasher, Hasher};
 use cordial_por::{
+    CHECKPOINT_REPUTATION_BLOCK_VERSION, CheckpointReputationBlockContext,
+    MAX_REPUTATION_BLOCK_SHARD_ID_LEN, POR_CHECKPOINT_REPUTATION_BLOCK_WIRE_VERSION, PorConfig,
+    PorError, REPUTATION_BLOCK_VERSION, RatingBatch, RatingRecord, RatingSourceCheckpoint,
+    ReputationBlockContext, ReputationEntry, ReputationList, build_checkpoint_reputation_block,
+    build_rating_batch, build_reputation_block, checkpoint_rating_batch_commitment,
+    config_commitment, rating_batch_commitment, reputation_block_hash, reputation_list_commitment,
+    validate_reputation_block,
+};
+use cordial_por::{
     MAX_REPUTATION_BLOCK_NODE_ID_LEN, MAX_REPUTATION_BLOCK_WIRE_LEN, POR_REPUTATION_BLOCK_MAGIC,
     POR_REPUTATION_BLOCK_WIRE_VERSION, ReputationBlock, decode_reputation_block,
     encode_reputation_block,
-};
-use cordial_por::{
-    MAX_REPUTATION_BLOCK_SHARD_ID_LEN, PorConfig, PorError, REPUTATION_BLOCK_VERSION, RatingBatch,
-    RatingRecord, ReputationBlockContext, ReputationEntry, ReputationList, build_rating_batch,
-    build_reputation_block, config_commitment, rating_batch_commitment, reputation_block_hash,
-    reputation_list_commitment, validate_reputation_block,
 };
 
 const SHARD_ID: &[u8] = b"root";
@@ -269,11 +272,11 @@ fn structural_validation_rejects_header_or_root_tampering() {
     )
     .unwrap();
 
-    block.header.version += 1;
+    block.header.version += 2;
     assert_eq!(
         validate_reputation_block(&block),
         Err(PorError::UnsupportedReputationBlockVersion(
-            REPUTATION_BLOCK_VERSION + 1
+            REPUTATION_BLOCK_VERSION + 2
         ))
     );
 
@@ -317,6 +320,115 @@ fn v2_wire_round_trips_genesis_and_chained_blocks() {
         assert!(encoded.starts_with(POR_REPUTATION_BLOCK_MAGIC));
         assert_eq!(decode_reputation_block(&encoded), Ok(block));
     }
+}
+
+#[test]
+fn v3_checkpoint_block_round_trips_and_commits_its_source() {
+    let config = PorConfig::default();
+    let source = RatingSourceCheckpoint {
+        round: 1,
+        finalized_prefix_len: 16,
+        finalized_prefix_hash: [0x31; 32],
+    };
+    let ratings = batch(1);
+    let block = build_checkpoint_reputation_block(
+        CheckpointReputationBlockContext {
+            shard_id: SHARD_ID,
+            source,
+            previous_block: None,
+        },
+        &ratings,
+        list(1, vec![entry(1, 80), entry(2, 70)]),
+        &config,
+    )
+    .unwrap();
+
+    assert_eq!(block.header.version, CHECKPOINT_REPUTATION_BLOCK_VERSION);
+    assert_eq!(block.header.source_finalized_wave, 0);
+    assert_eq!(block.header.source_checkpoint, Some(source));
+    assert_eq!(
+        block.header.ratings_hash,
+        checkpoint_rating_batch_commitment(&ratings, &source, &config).unwrap()
+    );
+    let encoded = encode_reputation_block(&block).unwrap();
+    let version_offset = POR_REPUTATION_BLOCK_MAGIC.len();
+    assert_eq!(
+        &encoded[version_offset..version_offset + 2],
+        &POR_CHECKPOINT_REPUTATION_BLOCK_WIRE_VERSION.to_be_bytes()
+    );
+    assert_eq!(decode_reputation_block(&encoded), Ok(block.clone()));
+
+    let mut changed = block.clone();
+    changed
+        .header
+        .source_checkpoint
+        .as_mut()
+        .unwrap()
+        .finalized_prefix_hash = [0x42; 32];
+    assert_ne!(
+        reputation_block_hash(&block),
+        reputation_block_hash(&changed)
+    );
+    assert_ne!(
+        encode_reputation_block(&block),
+        encode_reputation_block(&changed)
+    );
+
+    changed
+        .header
+        .source_checkpoint
+        .as_mut()
+        .unwrap()
+        .finalized_prefix_len = 17;
+    assert_eq!(
+        validate_reputation_block(&changed),
+        Err(PorError::InvalidReputationBlockSourceCheckpoint)
+    );
+}
+
+#[test]
+fn v3_block_rejects_missing_or_mixed_source_fields() {
+    let source = RatingSourceCheckpoint {
+        round: 1,
+        finalized_prefix_len: 16,
+        finalized_prefix_hash: [0x31; 32],
+    };
+    assert_eq!(
+        checkpoint_rating_batch_commitment(
+            &RatingBatch {
+                round: 1,
+                ratings: vec![],
+            },
+            &RatingSourceCheckpoint {
+                finalized_prefix_len: 17,
+                ..source
+            },
+            &PorConfig::default(),
+        ),
+        Err(PorError::InvalidRatingSourceCheckpoint)
+    );
+    let mut block = build_checkpoint_reputation_block(
+        CheckpointReputationBlockContext {
+            shard_id: SHARD_ID,
+            source,
+            previous_block: None,
+        },
+        &batch(1),
+        list(1, vec![]),
+        &PorConfig::default(),
+    )
+    .unwrap();
+    block.header.source_finalized_wave = 3;
+    assert_eq!(
+        validate_reputation_block(&block),
+        Err(PorError::InvalidReputationBlockSourceCheckpoint)
+    );
+    block.header.source_finalized_wave = 0;
+    block.header.source_checkpoint = None;
+    assert_eq!(
+        validate_reputation_block(&block),
+        Err(PorError::InvalidReputationBlockSourceCheckpoint)
+    );
 }
 
 #[test]
@@ -377,11 +489,11 @@ fn wire_rejects_bad_magic_version_length_and_truncation() {
     let mut unsupported = encoded.clone();
     let version_offset = POR_REPUTATION_BLOCK_MAGIC.len();
     unsupported[version_offset..version_offset + 2]
-        .copy_from_slice(&(POR_REPUTATION_BLOCK_WIRE_VERSION + 1).to_be_bytes());
+        .copy_from_slice(&(POR_REPUTATION_BLOCK_WIRE_VERSION + 2).to_be_bytes());
     assert_eq!(
         decode_reputation_block(&unsupported),
         Err(PorError::UnsupportedReputationBlockWireVersion(
-            POR_REPUTATION_BLOCK_WIRE_VERSION + 1
+            POR_REPUTATION_BLOCK_WIRE_VERSION + 2
         ))
     );
 

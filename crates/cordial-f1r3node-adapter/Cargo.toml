@@ -50,6 +50,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 thiserror    = "1"
 
 [dev-dependencies]
+cordial-miners-core = { path = "../cordial-miners-core", features = ["bench-support"] }
+# Public APIs used by the untimed RSpace benchmark bootstrap.
+rholang = { path = "../../../f1r3node-rust/rholang" }
+rspace_plus_plus = { path = "../../../f1r3node-rust/rspace++" }
+shared = { path = "../../../f1r3node-rust/shared" }
 tempfile  = "3"
 heed      = "0.20"
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -60,9 +65,25 @@ name = "ordered_output"
 harness = false
 
 [[bench]]
+name = "opt_ordering"
+harness = false
+
+[[bench]]
 name = "block_translation"
 harness = false
 
 [[bench]]
 name = "lmdb_persistence"
+harness = false
+
+[[bench]]
+name = "startup_recovery"
+harness = false
+
+[[bench]]
+name = "execution"
+harness = false
+
+[[bench]]
+name = "por_checkpoint"
 harness = false

@@ -300,6 +300,79 @@ before children. It rejects cyclic input.
 
 Rust: `ordering.rs:tau`.
 
+### Equivocation safety of the complete τ output
+
+[`OrderingEquivocation.lean`](../../lean/LeanVerification/OrderingEquivocation.lean)
+proves exclusion across the entire recursive output, including pairs drawn
+from different leader epochs. There are two distinct contracts:
+
+```lean
+-- For a successful tauRef run over a domain of present blocks:
+tauRef_forkFree : ForkFree B output
+tauRef_no_equivocating_pair :
+  ∀ left right, Equivocation B hV left right →
+    ¬ (left ∈ output ∧ right ∈ output)
+```
+
+These are theorem signatures with the shared run parameters and hypotheses
+omitted here. They require `ValidBlocklace B`, a successful executable
+`tauRef` computation, and `∀ block ∈ domain, block ∈ B.keys`. They do not
+assume acknowledgement, honest leaders, an output invariant, or an epoch
+prefix. `ForkFree` excludes every structural fork, including unequal-depth
+forks, so it is stronger than the same-depth `Equivocation` corollary.
+
+The proof follows the actual recursion. Every block emitted by an epoch is
+approved by its leader (`tauRef_approval_provenance`). A leader ratifies the
+previous final leader, hence observes it and the complete earlier output.
+Approving a new branch while observing its competitor is impossible by
+`Approves`. Induction establishes conflict-freedom for earlier pairs, pairs
+within a new fragment, and pairs crossing the fragment boundary. Topological
+sorting cannot introduce a block outside the approved fragment.
+
+The stronger statement that **neither branch of any equivocation occurs**
+requires an additional visibility condition:
+
+```lean
+-- Also require every nonempty emitting epoch's leader to acknowledge
+-- every equivocation pair in this blocklace:
+tauRef_excludes_all_equivocations :
+  ∀ left right, Equivocation B hV left right →
+    left ∉ output ∧ right ∉ output
+```
+
+`tauRef_excludes_acknowledged_equivocation` gives the same guarantee for one
+pair. The acknowledgement premise is quantified over leaders in the computed
+epoch plan, including earlier emitting epochs. Acknowledgement by the latest
+leader alone does not remove blocks from an earlier output prefix.
+
+Unconditional exclusion of every branch is false for the existing algorithm.
+[`OrderingEquivocationExamples.lean`](../../lean/LeanVerification/OrderingEquivocationExamples.lean)
+contains a machine-checked counterexample with a complete replay domain: two
+same-creator roots equivocate, while a finalized honest leader observes only
+the first. The complete τ output contains that first branch. The equivocator
+has zero stake and the honest leader has all positive stake, so the example
+does not rely on Byzantine majority weight. `blanket_exclusion_false` formally
+refutes the unconditional statement.
+
+[`OrderingEquivocationWavelength3Examples.lean`](../../lean/LeanVerification/OrderingEquivocationWavelength3Examples.lean)
+exercises the configured wavelength of three rounds with two consecutive
+waves. Their leaders are at depths 3 and 6, with finality witnesses in the
+last rounds at depths 5 and 8. Both snapshots use their complete blocklace
+domains and return explicitly checked, nonempty τ outputs. The first leader
+observes only one branch of a genuine equivocation. The second leader
+acknowledges both and approves neither, but the first branch remains in the
+earlier emitted prefix. Executable checks verify the previous-final-leader
+link, the two emitting epochs, and exclusion of the conflicting pair before
+and after acknowledgement. Both runs also instantiate `tauRef_forkFree`.
+The fixture retains the single bonded validator used by the wavelength-one
+examples; it checks wavelength-three ordering and acknowledgement rather than
+simulating a multi-validator deployment.
+
+These results concern the existing Lean `tauRef` model of `ordering.rs:tau`.
+They do not establish source-level Rust refinement, agreement between
+unrelated snapshots, or separate correctness of weighted epoch-boundary,
+checkpoint, and cached Rust paths. No consensus algorithm is changed.
+
 ### Prefix-safety under valid blocklace growth
 
 ```lean
@@ -401,6 +474,9 @@ cycle rejection, a real two-wave formal blocklace, and prefix extension.
 | `CMRef.xsortRef` | `ordering.rs:xsort` |
 | `CMRef.previousFinalLeader?` | `ordering.rs:previous_final_leader` |
 | `CMRef.computeTauPlan`, `tauRef` | `ordering.rs:tau` |
+| `tauRef_approval_provenance` | `approved_blocks_for_leader`, recursive `tau` fragments |
+| `tauRef_forkFree`, `tauRef_no_equivocating_pair` | Whole `tau` output, including conflicts across recursive fragments |
+| `tauRef_excludes_acknowledged_equivocation`, `tauRef_excludes_all_equivocations` | Complete-output exclusion under acknowledgement by every emitting leader |
 | `AppendOnlyDomain`, `approvedBlocks_stable` | Old-domain preservation and proof that appended blocks cannot enter an old approved fragment |
 | `xsortRef_eq_of_parents_eq_on`, `earlierFragment_stable` | Deterministic `xsort` stability derived for earlier fragments |
 | `StableEarlierFinality` | Stability of repeated `final_leader_for_wave` results only through the old replay horizon |

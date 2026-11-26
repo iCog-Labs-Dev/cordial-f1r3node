@@ -663,7 +663,7 @@ fn strict_two_thirds(support_weight: u128, total_weight: u128) -> bool {
     weighted_support > threshold
 }
 
-/// Deliberately weakened quorum predicate for the Issue #188 mutation test.
+/// Deliberately weakened quorum predicate for the trace conformance mutation test.
 ///
 /// This is compiled only by the dedicated mutation harness. It exercises the
 /// real approval, certificate and finality call graph while demonstrating

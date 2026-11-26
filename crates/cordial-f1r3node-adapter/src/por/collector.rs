@@ -13,19 +13,24 @@ use std::{
 use cordial_miners_core::{Blocklace, NodeId};
 use cordial_por::{
     PorConfig, PorError, RatingBatch, RatingRecord, ReputationRound, ReputationState,
-    canonical_rating_payload, score_admitted_interaction,
+    canonical_rating_payload, score_admitted_checkpoint_interaction, score_admitted_interaction,
+    validate_checkpoint_rater,
 };
 
 use crate::ordered_output::OrderedFinalizedOutput;
 
 use super::{
-    finality::FinalizedRatingRound,
+    finality::{FinalizedPrefixCheckpoint, FinalizedRatingRound},
     interactions::{
-        PorInteractionError, admit_finalized_block_production_interactions,
+        PorInteractionError, admit_checkpoint_block_production_interactions,
+        admit_finalized_block_production_interactions, validate_finalized_checkpoint_window,
         validate_finalized_rating_round,
     },
-    ratings::{PorRatingError, build_verified_rating_batch, validate_signed_rating},
-    transport::wire::BlockProductionRatingEnvelopeV1,
+    ratings::{
+        PorRatingError, build_verified_checkpoint_rating_batch, build_verified_rating_batch,
+        validate_checkpoint_signed_rating, validate_signed_rating,
+    },
+    transport::wire::{BlockProductionRatingEnvelopeV1, BlockProductionRatingEnvelopeV2},
 };
 
 /// Failures while collecting an evidence-backed PoR rating round.
@@ -35,6 +40,9 @@ pub enum PorRatingCollectorError {
     Rating(PorRatingError),
     InvalidStateRound,
     InvalidFinalizedWave,
+    InvalidCheckpointSource,
+    NoAuthorizedRaters,
+    UnauthorizedRater(NodeId),
     InvalidRatingRound,
     InvalidBatchRound,
     MissingFinalizedInteraction,
@@ -58,6 +66,18 @@ impl fmt::Display for PorRatingCollectorError {
                     f,
                     "rating envelope does not belong to the collector's finalized wave"
                 )
+            }
+            Self::InvalidCheckpointSource => {
+                write!(
+                    f,
+                    "rating envelope does not belong to the collector's source checkpoint"
+                )
+            }
+            Self::NoAuthorizedRaters => {
+                write!(f, "checkpoint rating round has no authorized raters")
+            }
+            Self::UnauthorizedRater(rater) => {
+                write!(f, "rating rater {rater:?} is not an authorized validator")
             }
             Self::InvalidRatingRound => {
                 write!(f, "rating does not belong to the collector's opened round")
@@ -117,6 +137,211 @@ impl From<PorRatingError> for PorRatingCollectorError {
 impl From<PorError> for PorRatingCollectorError {
     fn from(error: PorError) -> Self {
         Self::Rating(PorRatingError::Protocol(error))
+    }
+}
+
+/// Accumulates v2 ratings for one immutable finalized-prefix checkpoint.
+///
+/// The authorized set is supplied by Cordial. PoR checks membership but does
+/// not choose validators. Required raters exclude only keys ejected in the
+/// preceding state; membership records and zero-weight active keys are retained.
+/// Every accepted rating is checked against the exact
+/// source window, preceding reputation state, deterministic score, and v2
+/// signature before it can enter a canonical batch.
+pub struct CheckpointBlockProductionRatingCollector<'a> {
+    blocklace: &'a Blocklace,
+    output: &'a OrderedFinalizedOutput,
+    checkpoint: FinalizedPrefixCheckpoint,
+    authorized_raters: BTreeSet<NodeId>,
+    state: &'a ReputationState,
+    config: &'a PorConfig,
+    ratings: BTreeMap<(NodeId, NodeId), RatingRecord>,
+}
+
+impl<'a> CheckpointBlockProductionRatingCollector<'a> {
+    pub fn new(
+        blocklace: &'a Blocklace,
+        output: &'a OrderedFinalizedOutput,
+        checkpoint: FinalizedPrefixCheckpoint,
+        authorized_raters: impl IntoIterator<Item = NodeId>,
+        state: &'a ReputationState,
+        config: &'a PorConfig,
+    ) -> Result<Self, PorRatingCollectorError> {
+        validate_finalized_checkpoint_window(blocklace, output, &checkpoint)?;
+        if state.round().checked_add(1) != Some(checkpoint.por_round) {
+            return Err(PorRatingCollectorError::InvalidStateRound);
+        }
+        Ok(Self {
+            blocklace,
+            output,
+            checkpoint,
+            authorized_raters: authorized_raters
+                .into_iter()
+                .filter(|rater| !state.is_ejected(rater))
+                .collect(),
+            state,
+            config,
+            ratings: BTreeMap::new(),
+        })
+    }
+
+    pub fn source(&self) -> cordial_por::RatingSourceCheckpoint {
+        self.checkpoint.rating_source()
+    }
+
+    pub fn len(&self) -> usize {
+        self.ratings.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ratings.is_empty()
+    }
+
+    pub fn is_rater_complete(&self, rater: &NodeId) -> Result<bool, PorRatingCollectorError> {
+        if !self.authorized_raters.contains(rater) {
+            return Err(PorRatingCollectorError::UnauthorizedRater(rater.clone()));
+        }
+        validate_checkpoint_rater(&self.source(), rater, self.state)
+            .map_err(PorInteractionError::Admission)?;
+        let expected = admit_checkpoint_block_production_interactions(
+            self.blocklace,
+            self.output,
+            &self.checkpoint,
+            rater,
+            self.state,
+        )?
+        .len();
+        let collected = self
+            .ratings
+            .values()
+            .filter(|rating| &rating.rater == rater)
+            .count();
+        Ok(collected == expected)
+    }
+
+    /// A checkpoint closes only after every non-ejected authorized rater's deterministic
+    /// evidence-backed batch is complete. Zero expected ratings are complete.
+    pub fn all_authorized_raters_complete(&self) -> Result<bool, PorRatingCollectorError> {
+        if self.authorized_raters.is_empty() {
+            return Err(PorRatingCollectorError::NoAuthorizedRaters);
+        }
+        for rater in &self.authorized_raters {
+            if !self.is_rater_complete(rater)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    pub fn insert(&mut self, rating: RatingRecord) -> Result<(), PorRatingCollectorError> {
+        self.validate_submission(&self.ratings, &rating)?;
+        self.ratings.insert(rating_key(&rating), rating);
+        Ok(())
+    }
+
+    pub fn insert_envelope(
+        &mut self,
+        envelope: BlockProductionRatingEnvelopeV2,
+    ) -> Result<(), PorRatingCollectorError> {
+        if envelope.source() != self.source() {
+            return Err(PorRatingCollectorError::InvalidCheckpointSource);
+        }
+        self.insert(envelope.into_parts().1)
+    }
+
+    /// Reject the whole submitted batch when any rating fails admission.
+    pub fn insert_batch(&mut self, batch: RatingBatch) -> Result<(), PorRatingCollectorError> {
+        if batch.round != self.checkpoint.por_round {
+            return Err(PorRatingCollectorError::InvalidBatchRound);
+        }
+        let mut staged = self.ratings.clone();
+        for rating in batch.ratings {
+            self.validate_submission(&staged, &rating)?;
+            staged.insert(rating_key(&rating), rating);
+        }
+        self.ratings = staged;
+        Ok(())
+    }
+
+    /// Snapshot accepted ratings; incomplete rater prefixes may be present.
+    pub fn build_batch(&self) -> Result<RatingBatch, PorRatingCollectorError> {
+        Ok(build_verified_checkpoint_rating_batch(
+            &self.source(),
+            self.ratings.values().cloned().collect(),
+            self.config,
+        )?)
+    }
+
+    pub fn finish(self) -> Result<RatingBatch, PorRatingCollectorError> {
+        self.build_batch()
+    }
+
+    /// Exclude every partial rater prefix from a closed-round candidate.
+    pub fn build_complete_batch(&self) -> Result<RatingBatch, PorRatingCollectorError> {
+        let raters = self
+            .ratings
+            .values()
+            .map(|rating| rating.rater.clone())
+            .collect::<BTreeSet<_>>();
+        let mut complete_raters = BTreeSet::new();
+        for rater in raters {
+            if self.is_rater_complete(&rater)? {
+                complete_raters.insert(rater);
+            }
+        }
+        Ok(build_verified_checkpoint_rating_batch(
+            &self.source(),
+            self.ratings
+                .values()
+                .filter(|rating| complete_raters.contains(&rating.rater))
+                .cloned()
+                .collect(),
+            self.config,
+        )?)
+    }
+
+    fn validate_submission(
+        &self,
+        accepted: &BTreeMap<(NodeId, NodeId), RatingRecord>,
+        rating: &RatingRecord,
+    ) -> Result<(), PorRatingCollectorError> {
+        if rating.round != self.checkpoint.por_round {
+            return Err(PorRatingCollectorError::InvalidRatingRound);
+        }
+        if !self.authorized_raters.contains(&rating.rater) {
+            return Err(PorRatingCollectorError::UnauthorizedRater(
+                rating.rater.clone(),
+            ));
+        }
+        validate_checkpoint_signed_rating(rating, &self.source(), self.config)?;
+
+        if let Some(existing) = accepted.get(&rating_key(rating)) {
+            return if canonical_rating_payload(existing) == canonical_rating_payload(rating) {
+                Err(PorRatingCollectorError::DuplicateRating)
+            } else {
+                Err(PorRatingCollectorError::ConflictingRating)
+            };
+        }
+
+        let admitted = admit_checkpoint_block_production_interactions(
+            self.blocklace,
+            self.output,
+            &self.checkpoint,
+            &rating.rater,
+            self.state,
+        )?;
+        let interaction = admitted
+            .iter()
+            .find(|interaction| interaction.evidence().recipient == rating.recipient)
+            .ok_or(PorRatingCollectorError::MissingFinalizedInteraction)?;
+        if rating.interaction_ref.as_deref() != Some(interaction.evidence().evidence_ref.as_slice())
+        {
+            return Err(PorRatingCollectorError::InteractionReferenceMismatch);
+        }
+        if rating.score != score_admitted_checkpoint_interaction(interaction, self.config)? {
+            return Err(PorRatingCollectorError::ScoreMismatch);
+        }
+        Ok(())
     }
 }
 

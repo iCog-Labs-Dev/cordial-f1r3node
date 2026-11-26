@@ -4,8 +4,10 @@
 //!
 //! * **`select_predecessors`** — collecting honest tips across 4, 20, and 100
 //!   bonded validators under `Compatibility` vs `Strict` modes.
-//! * **`build_block_candidate`** — full block assembly including payload
-//!   packaging, content hashing, and predecessor selection.
+//! * **`build_block_candidate`** — block-content assembly including payload
+//!   ownership and predecessor selection; excludes signing and content hashing.
+
+use cordial_miners_core::bench_support as support;
 
 use std::collections::{HashMap, HashSet};
 
@@ -96,15 +98,26 @@ fn build_dag_with_validator_count(
 // ── benchmarks ────────────────────────────────────────────────────────────────
 
 fn bench_select_predecessors(c: &mut Criterion) {
-    let validator_counts: &[usize] = &[4, 20, 100];
+    let validator_counts = support::sizes(&[4, 20, 100], &[4, 20, 100]);
     const ROUNDS: usize = 5;
 
     let mut group = c.benchmark_group("proposer_selection/select_predecessors");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(2));
 
-    for &v in validator_counts {
+    for v in validator_counts {
         let (blocklace, bonds) = build_dag_with_validator_count(v, ROUNDS);
+        assert_eq!(blocklace.dom().len(), v * ROUNDS);
+        let compat = select_predecessors_with_mode(
+            &blocklace,
+            &bonds,
+            PredecessorSelectionMode::Compatibility,
+        );
+        let strict =
+            select_predecessors_with_mode(&blocklace, &bonds, PredecessorSelectionMode::Strict);
+        assert_eq!(compat.len(), v);
+        assert_eq!(compat, strict);
+        assert!(compat.iter().all(|id| blocklace.get(id).is_some()));
 
         group.bench_with_input(
             BenchmarkId::new(format!("compat_validators_{v}"), ""),
@@ -138,16 +151,36 @@ fn bench_select_predecessors(c: &mut Criterion) {
 }
 
 fn bench_build_block_candidate(c: &mut Criterion) {
-    let validator_counts: &[usize] = &[4, 20, 100];
+    let validator_counts = support::sizes(&[4, 20, 100], &[4, 20, 100]);
     const ROUNDS: usize = 5;
 
     let mut group = c.benchmark_group("proposer_selection/build_block_candidate");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(2));
 
-    for &v in validator_counts {
+    for v in validator_counts {
         let (blocklace, bonds) = build_dag_with_validator_count(v, ROUNDS);
+        assert_eq!(blocklace.dom().len(), v * ROUNDS);
+        let compat = select_predecessors_with_mode(
+            &blocklace,
+            &bonds,
+            PredecessorSelectionMode::Compatibility,
+        );
+        let strict =
+            select_predecessors_with_mode(&blocklace, &bonds, PredecessorSelectionMode::Strict);
+        assert_eq!(compat.len(), v);
+        assert_eq!(compat, strict);
+        assert!(compat.iter().all(|id| blocklace.get(id).is_some()));
         let payload = vec![0xAB; 256];
+        let candidate = build_block_candidate_with_mode(
+            &blocklace,
+            &bonds,
+            payload.clone(),
+            PredecessorSelectionMode::Compatibility,
+        )
+        .expect("candidate");
+        assert_eq!(candidate.payload, payload);
+        assert_eq!(candidate.predecessors.len(), v);
 
         group.bench_with_input(
             BenchmarkId::new(format!("validators_{v}"), ""),
@@ -160,6 +193,7 @@ fn bench_build_block_candidate(c: &mut Criterion) {
                         payload.clone(),
                         PredecessorSelectionMode::Compatibility,
                     )
+                    .expect("candidate")
                 });
             },
         );

@@ -98,6 +98,7 @@ fn tagged_hash(tag: u8) -> [u8; 32] {
 
 fn payload(block_number: u64, bonds: &HashMap<NodeId, u64>) -> CordialBlockPayload {
     CordialBlockPayload {
+        por_authorizations: vec![],
         state: BlockState {
             pre_state_hash: vec![block_number.saturating_sub(1) as u8; 32],
             post_state_hash: vec![block_number as u8; 32],

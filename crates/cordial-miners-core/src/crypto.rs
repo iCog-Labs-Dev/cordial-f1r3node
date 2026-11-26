@@ -9,7 +9,7 @@ use k256::ecdsa::{
 };
 use sha2::Sha256;
 
-use crate::types::BlockContent;
+use crate::types::{BlockContent, NodeId};
 
 // 1. Traits and Enums (Algorithm Abstractions)
 
@@ -49,7 +49,7 @@ impl CryptoVerifier for Secp256k1Scheme {
         signature: &[u8],
         creator: &crate::types::NodeId,
     ) -> Result<(), Self::Error> {
-        let hash = hash_content(content);
+        let hash = block_hash(creator, content);
         if verify(&hash, &creator.0, signature) {
             Ok(())
         } else {
@@ -148,11 +148,23 @@ impl SignatureScheme for Ed25519Scheme {
 
 // 4. Content Hashing Logic (Logical Parity)
 
-/// Generic content hashing.
-/// In f1r3node, the creator is usually part of the block message structure
-/// that gets hashed. We ensure the logical sequence is preserved.
-pub fn hash_content_ext(content: &BlockContent, hasher: &dyn Hasher) -> [u8; 32] {
+/// Domain tag for native Cordial block hashes. Bump together with
+/// `BLOCK_HASH_FORMAT_VERSION` in `cordial-f1r3space-adapter`.
+pub const BLOCK_HASH_DOMAIN: &[u8] = b"cordial-block-hash-v3";
+
+/// Content-addressed hash of a native block, bound to its creator.
+///
+/// Layout: `BLOCK_HASH_DOMAIN ‖ u64_le(len(creator)) ‖ creator ‖
+/// u64_le(len(payload)) ‖ payload ‖ u64_le(#preds) ‖ preds…`, where each
+/// predecessor is `content_hash ‖ u64_le(len(creator)) ‖ creator`, sorted by
+/// `(content_hash, creator)`. Predecessor signatures are excluded (see v2).
+/// Absent a cryptographic collision, including the creator makes otherwise
+/// identical content from two validators produce different hashes.
+pub fn block_hash_ext(creator: &NodeId, content: &BlockContent, hasher: &dyn Hasher) -> [u8; 32] {
     let mut buf = Vec::new();
+    buf.extend_from_slice(BLOCK_HASH_DOMAIN);
+    buf.extend_from_slice(&(creator.0.len() as u64).to_le_bytes());
+    buf.extend_from_slice(&creator.0);
 
     // 1. Payload
     buf.extend_from_slice(&(content.payload.len() as u64).to_le_bytes());
@@ -182,9 +194,9 @@ pub fn hash_content_ext(content: &BlockContent, hasher: &dyn Hasher) -> [u8; 32]
 
 // 5. Default Implementations (ALIGNED WITH FIRE NODE)
 
-/// Default hash uses Blake2b-256 for f1r3node alignment.
-pub fn hash_content(content: &BlockContent) -> [u8; 32] {
-    hash_content_ext(content, &Blake2b256Hasher)
+/// Default block hash (Blake2b-256).
+pub fn block_hash(creator: &NodeId, content: &BlockContent) -> [u8; 32] {
+    block_hash_ext(creator, content, &Blake2b256Hasher)
 }
 
 /// Default sign uses Secp256k1 for f1r3node alignment.

@@ -135,7 +135,7 @@ pub fn validate_block(
 
     // 1. Content hash verification
     if config.check_content_hash {
-        let expected = crypto::hash_content(&block.content);
+        let expected = crypto::block_hash(&block.identity.creator, &block.content);
         if block.identity.content_hash != expected {
             errors.push(InvalidBlock::InvalidContentHash {
                 expected,

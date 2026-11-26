@@ -6,7 +6,7 @@ use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
     CordialEvidencePool, EquivocationEvidence, EvidencePool, select_predecessors,
 };
-use cordial_miners_core::crypto::{CryptoVerifier, hash_content};
+use cordial_miners_core::crypto::{CryptoVerifier, block_hash};
 use cordial_miners_core::execution::{
     Bond, CordialBlockPayload, Deploy, DeployPool, DeployPoolConfig, DeploySignatureAlgorithm,
     ExecutionRequest, ExecutionResult, MockRuntime, ProcessedSystemDeploy, RuntimeError,
@@ -107,6 +107,7 @@ fn bonds(entries: &[(u8, u64)]) -> HashMap<NodeId, u64> {
 
 fn simple_payload(block_number: u64, post_byte: u8) -> CordialBlockPayload {
     CordialBlockPayload {
+        por_authorizations: vec![],
         state: cordial_miners_core::execution::BlockState {
             pre_state_hash: if block_number == 0 {
                 vec![]
@@ -143,7 +144,7 @@ fn make_block(
     };
     Block {
         identity: BlockIdentity {
-            content_hash: hash_content(&content),
+            content_hash: block_hash(&creator, &content),
             creator,
             signature: vec![0xAB; 72],
         },
@@ -744,4 +745,152 @@ fn proposer_prioritizes_formatted_slash_system_deploys() {
         request.system_deploys[1],
         SystemDeployRequest::CloseBlock
     ));
+}
+
+#[test]
+fn two_validators_proposing_in_idle_round_get_distinct_native_proposals() {
+    let bond_map = bonds(&[(1, 100), (2, 100)]);
+
+    let mut blocklace = Blocklace::new();
+    insert(
+        &mut blocklace,
+        make_block(node(1), simple_payload(0, 0x21), HashSet::new()),
+    );
+    insert(
+        &mut blocklace,
+        make_block(node(2), simple_payload(0, 0x22), HashSet::new()),
+    );
+
+    let sk1 = test_signing_key(1);
+    let creator1 = NodeId(test_public_key(&sk1));
+
+    let sk2 = test_signing_key(2);
+    let creator2 = NodeId(test_public_key(&sk2));
+
+    let pool = DeployPool::new(DeployPoolConfig::default());
+
+    let mut proposer1 = build_proposer(
+        creator1.clone(),
+        bond_map.clone(),
+        MockRuntime::permissive(),
+        Secp256k1BlockSigner::new(sk1),
+        RecordingBroadcaster::new(),
+        false,
+    );
+    let mut proposer2 = build_proposer(
+        creator2.clone(),
+        bond_map,
+        MockRuntime::permissive(),
+        Secp256k1BlockSigner::new(sk2),
+        RecordingBroadcaster::new(),
+        false,
+    );
+
+    let b1 = proposer1.propose(&blocklace, &pool).expect("propose 1");
+    let b2 = proposer2.propose(&blocklace, &pool).expect("propose 2");
+
+    // In an idle round, both validators have identical content (same payload and predecessors)
+    assert_eq!(b1.content.payload, b2.content.payload);
+    assert_eq!(b1.content.predecessors, b2.content.predecessors);
+
+    // But because of format v3 creator-binding, their native identities are distinct
+    assert_ne!(b1.identity.creator, b2.identity.creator);
+    assert_ne!(b1.identity.content_hash, b2.identity.content_hash);
+}
+
+#[test]
+fn proposer_carries_por_authorizations_through_block_translation() {
+    use cordial_f1r3node_adapter::block_translation::{block_to_message, message_to_block};
+    use cordial_miners_core::consensus::{
+        CordialEquivocationEvidence, verify_equivocation_evidence,
+    };
+    let blocklace = Blocklace::new();
+    let key = test_signing_key(8);
+    let offender = NodeId(test_public_key(&key));
+    let blocks = [1, 2].map(|tag| {
+        let content = BlockContent {
+            payload: vec![tag],
+            predecessors: HashSet::new(),
+        };
+        let content_hash = block_hash(&offender, &content);
+        Block {
+            identity: BlockIdentity {
+                content_hash,
+                creator: offender.clone(),
+                signature: cordial_miners_core::crypto::sign(&content_hash, &key),
+            },
+            content,
+        }
+    });
+    let proof = verify_equivocation_evidence(
+        &CordialEquivocationEvidence::new(offender, 0, blocks.to_vec()),
+        &blocklace,
+    )
+    .unwrap();
+    let context = cordial_por::EquivocationAuthorizationContext {
+        shard_id: b"root".to_vec(),
+        source_finalized_wave: 0,
+        round: 1,
+    };
+    let expected = cordial_por::equivocation_authorization_payload(&context, &proof).unwrap();
+    let proposer_key = test_signing_key(9);
+    let creator = NodeId(test_public_key(&proposer_key));
+    let mut proposer = build_proposer(
+        creator.clone(),
+        HashMap::from([(creator, 100)]),
+        MockRuntime::permissive(),
+        Secp256k1BlockSigner::new(proposer_key),
+        RecordingBroadcaster::new(),
+        true,
+    );
+    proposer
+        .queue_por_equivocation_authorization(context.clone(), &proof)
+        .unwrap();
+    proposer
+        .queue_por_equivocation_authorization(context, &proof)
+        .unwrap();
+    let checkpoint_expected =
+        cordial_por::checkpoint_equivocation_authorization_payload(b"root", 2, &proof).unwrap();
+    proposer
+        .queue_por_checkpoint_equivocation_authorization(b"root", 2, &proof)
+        .unwrap();
+    proposer
+        .queue_por_checkpoint_equivocation_authorization(b"root", 2, &proof)
+        .unwrap();
+    let block = proposer
+        .propose_at_time(
+            &blocklace,
+            &DeployPool::new(DeployPoolConfig::default()),
+            1000,
+        )
+        .unwrap();
+    let payload = CordialBlockPayload::from_bytes(&block.content.payload).unwrap();
+    assert_eq!(payload.por_authorizations.len(), 2);
+    assert_eq!(payload.por_authorizations[0].message, expected);
+    assert_eq!(payload.por_authorizations[1].message, checkpoint_expected);
+    assert_eq!(payload.por_authorizations[1].source_finalized_wave, 0);
+    assert_eq!(payload.por_authorizations[1].round, 2);
+    assert!(!payload.system_deploys.is_empty());
+    let message = block_to_message(&block, "root").unwrap();
+    assert!(!message.body.extra_bytes.is_empty());
+    let restored = message_to_block(&message).unwrap();
+    assert_eq!(restored, block);
+    assert!(cordial_miners_core::crypto::verify(
+        &restored.identity.content_hash,
+        &restored.identity.creator.0,
+        &restored.identity.signature
+    ));
+    let next = proposer
+        .propose_at_time(
+            &blocklace,
+            &DeployPool::new(DeployPoolConfig::default()),
+            1001,
+        )
+        .unwrap();
+    assert!(
+        CordialBlockPayload::from_bytes(&next.content.payload)
+            .unwrap()
+            .por_authorizations
+            .is_empty()
+    );
 }

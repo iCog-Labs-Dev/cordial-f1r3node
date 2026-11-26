@@ -238,8 +238,9 @@ reputation round. Pass the same event set to
 with `None`, which commits to the canonical empty event set for that round.
 `ReputationState::apply_reputation_block_with_penalties` audits before mutation.
 
-The host must supply an agreed, finalized event set and authenticate equivocation
-proofs. The library validates the round, offender membership and event shape.
+The host must supply an agreed, finalized event set. Equivocations now require
+core-verified proofs and an intact private authorization capability. The library
+validates authorization, context, round, offender membership and event shape.
 It rejects empty or oversized evidence, duplicate/overlapping offenders, and
 unknown or already-ejected keys. Inactivity requires absence from both sides of
 the rating batch and exactly one missed round per consecutive transition.
@@ -272,3 +273,44 @@ Legacy v1 blocks and snapshots are rejected. Deployment requires a coordinated
 upgrade and an explicitly prepared v2 checkpoint; no automatic v1 migration is
 provided. Rating signatures and the adapter's outer signed publication format
 remain v1.
+
+
+## 8. Verified evidence and protocol authorization
+
+The evidence pool retains untrusted claims. Core's
+verify_equivocation_evidence checks signed content hashes, nonempty Secp256k1
+signatures, creator identity, distinct consensus identities, complete ancestry,
+pairwise incomparability, and the derived evidence round. Only this verifier
+constructs VerifiedEquivocationEvidence. Missing/pruned ancestry fails closed.
+
+EquivocationPenalty::authorize derives the offender and canonical proof bytes
+from that verified value, then asks an explicit trusted
+EquivocationAuthorizationPolicy to approve the shard, source finalized wave and
+PoR round. The private capability binds this context and the exact claim.
+EquivocationPenalty::unverified grants no authority. Altered offender IDs,
+evidence bytes or rounds fail replay; block construction and audit also check
+the shard and finalized wave. There is no unchecked capability deserializer.
+
+The adapter's FinalizedEquivocationAuthorization policy requires the exact
+equivocation_authorization_payload in a correctly signed block by an authorized
+Cordial validator, included in trusted finalized output for the source wave.
+The offender must also be authorized, and both conflicting branches must belong
+to that wave or an earlier one. This consumes Cordial's existing finality path;
+signatures and PoR checkpoint attestations alone do not authorize penalties.
+Hosts must agree to this payload convention before enabling penalties.
+
+Use PorRuntime::authorize_equivocations to admit retained raw proofs against
+the runtime's own finalized output, ancestry, Cordial membership and shard.
+The lower-level CompletedPorRatingRound::with_authorized_equivocations accepts
+these trusted inputs explicitly.
+Admission is atomic. The resulting immutable events drive local construction,
+checkpoint verification and durable application. Receivers repeat this admission
+locally: a signed checkpoint without matching local authorized events fails
+audit. The host must retain raw proofs, ancestry and authorization blocks for
+replay; a commitment alone never reconstructs or authenticates them.
+
+Correlation uses previous active weights grouped by the verified Cordial
+evidence round, independently of the PoR processing round. For conflicting
+branches at different depths, the evidence round is their minimum depth.
+Inactivity authentication and retained-capital transfer remain host-owned;
+the new adapter evidence admission path admits equivocations only.

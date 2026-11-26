@@ -1,8 +1,9 @@
 //! Versioned durable encoding for finalized Proof-of-Reputation state.
 //!
-//! This module owns bytes and validation, not filesystem I/O. The v2 snapshot
+//! This module owns bytes and validation, not filesystem I/O. Each snapshot
 //! stores the current reputation list, permanent ejection registry, and latest
-//! audited block in one checksummed envelope. Pending ratings are deliberately
+//! audited block in one checksummed envelope. V2 snapshots contain wave-based
+//! blocks; v3 snapshots contain checkpoint-bound blocks. Pending ratings are
 //! rejected because they have not crossed the finalized-state boundary.
 
 use std::collections::BTreeSet;
@@ -14,7 +15,8 @@ use cordial_miners_core::{
 
 use crate::{
     block::{
-        MAX_REPUTATION_BLOCK_ENTRIES, MAX_REPUTATION_BLOCK_NODE_ID_LEN,
+        CHECKPOINT_REPUTATION_BLOCK_VERSION, MAX_REPUTATION_BLOCK_ENTRIES,
+        MAX_REPUTATION_BLOCK_NODE_ID_LEN, REPUTATION_BLOCK_VERSION,
         decode_reputation_block_payload, encode_reputation_block_payload,
     },
     commitments::validate_reputation_entries,
@@ -26,8 +28,10 @@ use crate::{
 /// Fixed prefix identifying a durable PoR state snapshot.
 pub const POR_STATE_SNAPSHOT_MAGIC: &[u8; 17] = b"cordial-por-state";
 
-/// Durable PoR state format emitted by this crate.
+/// Durable wave-based PoR state format.
 pub const POR_STATE_SNAPSHOT_VERSION: u16 = 2;
+/// Durable checkpoint-bound PoR state format.
+pub const POR_CHECKPOINT_STATE_SNAPSHOT_VERSION: u16 = 3;
 
 /// Maximum accepted encoded snapshot size (64 MiB).
 pub const MAX_REPUTATION_STATE_SNAPSHOT_LEN: usize = 64 * 1024 * 1024;
@@ -39,12 +43,19 @@ pub const MAX_REPUTATION_STATE_ENTRIES: usize = MAX_REPUTATION_BLOCK_ENTRIES;
 pub const MAX_REPUTATION_STATE_NODE_ID_LEN: usize = MAX_REPUTATION_BLOCK_NODE_ID_LEN;
 
 const SNAPSHOT_CHECKSUM_DOMAIN: &[u8] = b"cordial-por:state-snapshot:v2";
+const CHECKPOINT_SNAPSHOT_CHECKSUM_DOMAIN: &[u8] = b"cordial-por:state-snapshot:v3";
 const CHECKSUM_LEN: usize = 32;
 const FIXED_ENVELOPE_LEN: usize = POR_STATE_SNAPSHOT_MAGIC.len() + 2 + 8 + CHECKSUM_LEN;
 
-/// Encode a finalized reputation state into the canonical v2 snapshot format.
+/// Encode a finalized reputation state into its matching snapshot version.
 pub fn encode_reputation_state_snapshot(state: &ReputationState) -> Result<Vec<u8>, PorError> {
     state.validate_snapshot_invariants()?;
+    let version = match state.latest_block() {
+        Some(block) if block.header.version == CHECKPOINT_REPUTATION_BLOCK_VERSION => {
+            POR_CHECKPOINT_STATE_SNAPSHOT_VERSION
+        }
+        _ => POR_STATE_SNAPSHOT_VERSION,
+    };
 
     let mut payload = Vec::new();
     put_u64(&mut payload, state.round());
@@ -81,17 +92,17 @@ pub fn encode_reputation_state_snapshot(state: &ReputationState) -> Result<Vec<u
 
     let payload_len =
         u64::try_from(payload.len()).map_err(|_| PorError::ReputationStateSnapshotTooLarge)?;
-    let checksum = snapshot_checksum(POR_STATE_SNAPSHOT_VERSION, payload_len, &payload);
+    let checksum = snapshot_checksum(version, payload_len, &payload);
     let mut encoded = Vec::with_capacity(total_len);
     encoded.extend_from_slice(POR_STATE_SNAPSHOT_MAGIC);
-    encoded.extend_from_slice(&POR_STATE_SNAPSHOT_VERSION.to_be_bytes());
+    encoded.extend_from_slice(&version.to_be_bytes());
     encoded.extend_from_slice(&payload_len.to_be_bytes());
     encoded.extend_from_slice(&payload);
     encoded.extend_from_slice(&checksum);
     Ok(encoded)
 }
 
-/// Decode and fully validate a canonical v2 reputation state snapshot.
+/// Decode and fully validate a v2 or v3 reputation state snapshot.
 pub fn decode_reputation_state_snapshot(bytes: &[u8]) -> Result<ReputationState, PorError> {
     if bytes.len() > MAX_REPUTATION_STATE_SNAPSHOT_LEN {
         return Err(PorError::ReputationStateSnapshotTooLarge);
@@ -105,7 +116,7 @@ pub fn decode_reputation_state_snapshot(bytes: &[u8]) -> Result<ReputationState,
         return Err(PorError::MalformedReputationStateSnapshot);
     }
     let version = envelope.read_u16()?;
-    if version != POR_STATE_SNAPSHOT_VERSION {
+    if version != POR_STATE_SNAPSHOT_VERSION && version != POR_CHECKPOINT_STATE_SNAPSHOT_VERSION {
         return Err(PorError::UnsupportedReputationStateSnapshotVersion(version));
     }
     let payload_len_u64 = envelope.read_u64()?;
@@ -156,6 +167,14 @@ pub fn decode_reputation_state_snapshot(bytes: &[u8]) -> Result<ReputationState,
     };
     if decoder.remaining() != 0 {
         return Err(PorError::MalformedReputationStateSnapshot);
+    }
+    match (version, latest_block.as_ref()) {
+        (POR_STATE_SNAPSHOT_VERSION, None) => {}
+        (POR_STATE_SNAPSHOT_VERSION, Some(block))
+            if block.header.version == REPUTATION_BLOCK_VERSION => {}
+        (POR_CHECKPOINT_STATE_SNAPSHOT_VERSION, Some(block))
+            if block.header.version == CHECKPOINT_REPUTATION_BLOCK_VERSION => {}
+        _ => return Err(PorError::ReputationStateSnapshotBlockVersionMismatch),
     }
 
     ReputationState::from_snapshot_parts(
@@ -235,10 +254,14 @@ fn put_u64(output: &mut Vec<u8>, value: u64) {
 }
 
 fn snapshot_checksum(version: u16, payload_len: u64, payload: &[u8]) -> [u8; 32] {
-    let mut checksum_input = Vec::with_capacity(
-        SNAPSHOT_CHECKSUM_DOMAIN.len() + POR_STATE_SNAPSHOT_MAGIC.len() + 2 + 8 + payload.len(),
-    );
-    checksum_input.extend_from_slice(SNAPSHOT_CHECKSUM_DOMAIN);
+    let domain = match version {
+        POR_STATE_SNAPSHOT_VERSION => SNAPSHOT_CHECKSUM_DOMAIN,
+        POR_CHECKPOINT_STATE_SNAPSHOT_VERSION => CHECKPOINT_SNAPSHOT_CHECKSUM_DOMAIN,
+        _ => unreachable!("snapshot version was validated"),
+    };
+    let mut checksum_input =
+        Vec::with_capacity(domain.len() + POR_STATE_SNAPSHOT_MAGIC.len() + 2 + 8 + payload.len());
+    checksum_input.extend_from_slice(domain);
     checksum_input.extend_from_slice(POR_STATE_SNAPSHOT_MAGIC);
     checksum_input.extend_from_slice(&version.to_be_bytes());
     checksum_input.extend_from_slice(&payload_len.to_be_bytes());

@@ -6,7 +6,7 @@
 
 use cordial_miners_core::Block;
 use cordial_miners_core::blocklace::Blocklace;
-use cordial_miners_core::crypto::{hash_content, sign};
+use cordial_miners_core::crypto::{block_hash, sign};
 use cordial_miners_core::types::{BlockIdentity, NodeId};
 
 use cordial_f1r3node_adapter::block_translation::{
@@ -254,7 +254,7 @@ fn signed_native_parent_child_chain_resolves_to_cordial_ancestry() {
     );
     assert_eq!(
         child.block.identity.content_hash,
-        hash_content(&child.block.content)
+        block_hash(&child.block.identity.creator, &child.block.content)
     );
     accepted.check_candidate(&child).unwrap();
     blocklace

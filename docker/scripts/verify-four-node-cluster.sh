@@ -140,6 +140,10 @@ for node in $validators; do
       fi
     done
 
+  # The native API may return same-height blocks in a different order on
+  # different nodes. Compare the finalized set at each height.
+  LC_ALL=C sort -k1,1n -k2,2 "$finalized_file" -o "$finalized_file"
+
   if ! grep -Fxq "${target_height} ${target_hash}" "$finalized_file"; then
     echo "ERROR: ${node} has not finalized reference anchor ${target_hash} at height ${target_height}" >&2
     exit 1

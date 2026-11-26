@@ -1,6 +1,6 @@
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::crypto::CryptoVerifier;
-use cordial_miners_core::crypto::hash_content;
+use cordial_miners_core::crypto::block_hash;
 use cordial_miners_core::execution::{
     BlockState, Bond, CordialBlockPayload, Deploy, DeployPool, DeployPoolConfig,
     DeploySignatureAlgorithm, PoolError, ProcessedDeploy, SignedDeploy, compute_deploys_in_scope,
@@ -268,6 +268,7 @@ fn make_block_with_real_hash(
     deploys: Vec<SignedDeploy>,
 ) -> Block {
     let payload = CordialBlockPayload {
+        por_authorizations: vec![],
         state: BlockState {
             pre_state_hash: vec![tag_sig; 32],
             post_state_hash: vec![tag_sig; 32],
@@ -294,7 +295,7 @@ fn make_block_with_real_hash(
     };
     Block {
         identity: BlockIdentity {
-            content_hash: hash_content(&content),
+            content_hash: block_hash(&creator, &content),
             creator,
             signature: vec![tag_sig],
         },

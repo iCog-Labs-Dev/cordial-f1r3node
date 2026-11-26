@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::Block;
-use cordial_miners_core::crypto::hash_content;
+use cordial_miners_core::crypto::block_hash;
 use cordial_miners_core::execution::{
     BlockState, Bond as CmBond, CordialBlockPayload, DeployPoolConfig,
 };
@@ -63,7 +63,7 @@ fn make_block(
     };
     Block {
         identity: BlockIdentity {
-            content_hash: hash_content(&content),
+            content_hash: block_hash(&creator, &content),
             creator,
             signature: vec![sig_tag; 64],
         },
@@ -73,6 +73,7 @@ fn make_block(
 
 fn simple_payload(block_number: u64) -> CordialBlockPayload {
     CordialBlockPayload {
+        por_authorizations: vec![],
         state: BlockState {
             pre_state_hash: vec![0u8; 32],
             post_state_hash: vec![block_number as u8; 32],

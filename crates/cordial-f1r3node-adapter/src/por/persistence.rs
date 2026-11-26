@@ -20,8 +20,8 @@ use std::{
 };
 
 use cordial_por::{
-    MAX_REPUTATION_STATE_SNAPSHOT_LEN, PorConfig, PorError, ReputationState,
-    authorized_validator_weights, decode_reputation_state_snapshot,
+    MAX_REPUTATION_STATE_SNAPSHOT_LEN, PorConfig, PorError, RatingSourceCheckpoint,
+    ReputationState, authorized_validator_weights, decode_reputation_state_snapshot,
     encode_reputation_state_snapshot,
 };
 use thiserror::Error;
@@ -36,8 +36,10 @@ use super::{
     checkpoint::AttestedPorCheckpoint,
     history::{PorReputationBlockHistory, PorReputationBlockHistoryError},
     lifecycle::CompletedPorRatingRound,
+    lifecycle::checkpoint::CompletedCheckpointRatingRound,
     transition::{
-        AppliedPorReputationRound, stage_attested_checkpoint, stage_completed_reputation_round,
+        AppliedPorReputationRound, stage_attested_checkpoint, stage_completed_checkpoint_round,
+        stage_completed_reputation_round,
     },
 };
 
@@ -255,6 +257,17 @@ impl DurablePorState {
         Ok(&self.state)
     }
 
+    /// Source cursor committed in the latest v3 reputation block, if any.
+    pub fn committed_checkpoint_source(
+        &self,
+    ) -> Result<Option<RatingSourceCheckpoint>, DurablePorStateError> {
+        self.ensure_healthy()?;
+        Ok(self
+            .state
+            .latest_block()
+            .and_then(|block| block.header.source_checkpoint))
+    }
+
     /// Return the committed snapshot path for diagnostics and backup tooling.
     pub fn snapshot_path(&self) -> &Path {
         self.store.snapshot_path()
@@ -403,6 +416,23 @@ impl DurablePorState {
             stage_completed_reputation_round(completed, &self.state, config, shard_id)
                 .map_err(DurablePorStateError::Transition)?;
 
+        self.commit_staged(staged, applied)
+    }
+
+    /// Audit and durably commit one complete checkpoint rating round.
+    ///
+    /// The snapshot's v3 reputation block is the source cursor. Replaying a
+    /// completed source after restart fails the consecutive-round audit.
+    pub fn apply_completed_checkpoint_round(
+        &mut self,
+        completed: &CompletedCheckpointRatingRound,
+        config: &PorConfig,
+        shard_id: &[u8],
+    ) -> Result<AppliedPorReputationRound, DurablePorStateError> {
+        self.ensure_healthy()?;
+        let (staged, applied) =
+            stage_completed_checkpoint_round(completed, &self.state, config, shard_id)
+                .map_err(DurablePorStateError::Transition)?;
         self.commit_staged(staged, applied)
     }
 

@@ -40,12 +40,20 @@ case "$url" in
   */api/blocks/0/1)
     case "$url" in
       *cordial-validator-2*)
+        if [ "${MOCK_REORDER:-0}" = 1 ]; then
+          printf '[{"blockNumber":1,"blockHash":"anchor"},{"blockNumber":1,"blockHash":"peer"}]'
+          exit 0
+        fi
         if [ "${MOCK_DIVERGE:-0}" = 1 ]; then
           printf '[{"blockNumber":0,"blockHash":"extra"},{"blockNumber":1,"blockHash":"anchor"}]'
           exit 0
         fi
         ;;
     esac
+    if [ "${MOCK_REORDER:-0}" = 1 ]; then
+      printf '[{"blockNumber":1,"blockHash":"peer"},{"blockNumber":1,"blockHash":"anchor"}]'
+      exit 0
+    fi
     printf '[{"blockNumber":1,"blockHash":"anchor"}]'
     ;;
   */api/is-finalized/*)
@@ -62,6 +70,9 @@ chmod +x "$tmp_dir/curl"
 PATH="$tmp_dir:$PATH" sh "$repo_root/docker/scripts/verify-four-node-cluster.sh" >"$tmp_dir/pass.log"
 grep -q '^PASS:' "$tmp_dir/pass.log"
 
+MOCK_REORDER=1 PATH="$tmp_dir:$PATH" sh "$repo_root/docker/scripts/verify-four-node-cluster.sh" >"$tmp_dir/reorder.log"
+grep -q '^PASS:' "$tmp_dir/reorder.log"
+
 if MOCK_DIVERGE=1 PATH="$tmp_dir:$PATH" sh "$repo_root/docker/scripts/verify-four-node-cluster.sh" >"$tmp_dir/diverge.log" 2>&1; then
   echo 'Expected divergent finalized blocks to fail' >&2
   exit 1
@@ -74,4 +85,4 @@ if MOCK_UNBONDED=1 PATH="$tmp_dir:$PATH" sh "$repo_root/docker/scripts/verify-fo
 fi
 grep -q 'reports it is not a validator' "$tmp_dir/unbonded.log"
 
-echo 'PASS: cluster verifier accepts a shared finalized window and rejects divergence and explicit non-validator status.'
+echo 'PASS: cluster verifier accepts a shared finalized window in any API order and rejects divergence and explicit non-validator status.'

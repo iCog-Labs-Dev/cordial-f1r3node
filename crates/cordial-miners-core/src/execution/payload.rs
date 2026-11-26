@@ -1,4 +1,5 @@
 use crate::types::NodeId;
+use bincode::Options;
 use serde::{Deserialize, Serialize};
 
 /// Typed block payload for Cordial Miners consensus.
@@ -10,6 +11,10 @@ use serde::{Deserialize, Serialize};
 /// f1r3node equivalent: `Body { state, deploys, rejected_deploys, system_deploys }`
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CordialBlockPayload {
+    /// Signed protocol messages authorizing PoR penalties in a specific context.
+    /// These are claims; receivers must verify their proofs and authorization.
+    pub por_authorizations: Vec<PorEquivocationAuthorization>,
+
     /// State before and after executing deploys in this block.
     pub state: BlockState,
 
@@ -22,6 +27,20 @@ pub struct CordialBlockPayload {
     /// System-level deploys (slash equivocators, close block).
     pub system_deploys: Vec<ProcessedSystemDeploy>,
 }
+
+/// Context-tagged PoR authorization carried inside the signed block payload.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PorEquivocationAuthorization {
+    pub shard_id: Vec<u8>,
+    /// Wave for v1 messages; reserved zero for v2 checkpoint intents. The signed
+    /// message domain selects the mode, so wave zero is never a mode discriminator.
+    pub source_finalized_wave: u64,
+    pub round: u64,
+    pub message: Vec<u8>,
+}
+
+const PAYLOAD_V2: &[u8] = b"cordial:execution-payload:v2\0";
+const POR_EXTRA_V1: &[u8] = b"cordial:por-authorizations:v1\0";
 
 /// Block state tracking pre/post execution hashes and validator bonds.
 ///
@@ -207,12 +226,80 @@ pub enum ProcessedSystemDeploy {
 impl CordialBlockPayload {
     /// Serialize this payload into bytes for storage in `BlockContent.payload`.
     pub fn to_bytes(&self) -> Vec<u8> {
-        bincode::serialize(self).expect("payload serialization failed")
+        // Preserve existing block bytes and identities when no extension is present.
+        if self.por_authorizations.is_empty() {
+            bincode::serialize(&(
+                &self.state,
+                &self.deploys,
+                &self.rejected_deploys,
+                &self.system_deploys,
+            ))
+            .expect("payload serialization failed")
+        } else {
+            let mut bytes = PAYLOAD_V2.to_vec();
+            bytes.extend(bincode::serialize(self).expect("payload serialization failed"));
+            bytes
+        }
     }
 
     /// Deserialize a payload from `BlockContent.payload` bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
-        bincode::deserialize(bytes).map_err(|e| format!("payload deserialization failed: {e}"))
+        let options = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .with_limit(bytes.len() as u64)
+            .reject_trailing_bytes();
+        if let Some(body) = bytes.strip_prefix(PAYLOAD_V2) {
+            options
+                .deserialize(body)
+                .map_err(|e| format!("payload deserialization failed: {e}"))
+        } else {
+            let (state, deploys, rejected_deploys, system_deploys) = options
+                .deserialize(bytes)
+                .map_err(|e| format!("payload deserialization failed: {e}"))?;
+            Ok(Self {
+                state,
+                deploys,
+                rejected_deploys,
+                system_deploys,
+                por_authorizations: vec![],
+            })
+        }
+    }
+
+    /// Read only the explicit versioned carrier. Legacy/opaque payloads cannot
+    /// authorize PoR penalties; malformed versioned payloads fail closed.
+    pub fn por_authorizations_from_bytes(
+        bytes: &[u8],
+    ) -> Result<Vec<PorEquivocationAuthorization>, String> {
+        if bytes.starts_with(PAYLOAD_V2) {
+            Ok(Self::from_bytes(bytes)?.por_authorizations)
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    /// Preserve the signed carrier in the host Body.extra_bytes transport slot.
+    pub fn encode_por_extra(authorizations: &[PorEquivocationAuthorization]) -> Vec<u8> {
+        if authorizations.is_empty() {
+            return vec![];
+        }
+        let mut bytes = POR_EXTRA_V1.to_vec();
+        bytes.extend(
+            bincode::serialize(authorizations).expect("authorization serialization failed"),
+        );
+        bytes
+    }
+
+    pub fn decode_por_extra(bytes: &[u8]) -> Result<Vec<PorEquivocationAuthorization>, String> {
+        let Some(body) = bytes.strip_prefix(POR_EXTRA_V1) else {
+            return Ok(vec![]);
+        };
+        bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .with_limit(body.len() as u64)
+            .reject_trailing_bytes()
+            .deserialize(body)
+            .map_err(|e| format!("invalid PoR authorization carrier: {e}"))
     }
 }
 
@@ -220,6 +307,7 @@ impl CordialBlockPayload {
     /// Create an empty genesis payload with no deploys.
     pub fn genesis(bonds: Vec<Bond>) -> Self {
         Self {
+            por_authorizations: vec![],
             state: BlockState {
                 pre_state_hash: vec![],
                 post_state_hash: vec![],

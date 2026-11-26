@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
     OrderingCache, OrderingError, approved_blocks_for_leader, previous_final_leader, tau,
-    tau_with_cache, weighted_previous_final_leader, weighted_tau, weighted_tau_with_cache, xsort,
+    tau_with_cache, weighted_previous_final_leader, weighted_tau, weighted_tau_at_leader,
+    weighted_tau_with_cache, xsort,
 };
 use cordial_miners_core::crypto::CryptoVerifier;
 use cordial_miners_core::{Block, BlockContent, BlockIdentity, NodeId};
@@ -682,6 +683,17 @@ fn weighted_previous_final_leader_returns_latest_earlier_weighted_final_leader()
     );
 
     assert_eq!(result, Some(wave0_leader.identity.clone()));
+    let earlier = weighted_tau_at_leader(
+        &blocklace,
+        &wave0_leader.identity,
+        3,
+        &weights,
+        leader_node1,
+    )
+    .unwrap();
+    let latest = weighted_tau(&blocklace, 3, &weights, leader_node1).unwrap();
+    assert!(latest.starts_with(&earlier));
+    assert!(earlier.contains(&wave0_leader.identity));
 }
 
 #[test]
@@ -741,6 +753,10 @@ fn weighted_tau_returns_xsort_of_approved_blocks_for_single_weighted_final_leade
     let ordered = weighted_tau(&blocklace, 3, &weights, leader_node1).unwrap();
 
     assert_eq!(ordered, xsort(&approved).unwrap());
+    assert_eq!(
+        weighted_tau_at_leader(&blocklace, &leader.identity, 3, &weights, leader_node1).unwrap(),
+        ordered
+    );
 }
 
 #[test]

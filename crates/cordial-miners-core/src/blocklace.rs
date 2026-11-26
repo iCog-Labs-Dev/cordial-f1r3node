@@ -1,3 +1,4 @@
+use crate::ancestor_index::AncestorIndex;
 use crate::block::Block;
 #[cfg(feature = "trace")]
 use crate::consensus::round::{candidate_depth, depth};
@@ -6,6 +7,16 @@ use crate::crypto::CryptoVerifier;
 use crate::trace::{self, BlockLifecycleEvent, TraceEvent};
 use crate::types::{BlockContent, BlockIdentity, NodeId};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CheckpointOrigin {
+    PaperFinal,
+    WeightedFinal,
+    Explicit,
+}
 
 // The blocklace B - a set of blocks satisfying the closure and axioms
 // From definition 2.3, A blocklace B is a set of blocks subject to some invariants.
@@ -23,11 +34,18 @@ pub struct Blocklace {
     /// when a block was admitted.
     trusted_boundary_predecessors: HashMap<BlockIdentity, HashSet<BlockIdentity>>,
     pub(crate) checkpoint: Option<BlockIdentity>,
+    pub(crate) checkpoint_origin: Option<CheckpointOrigin>,
     pub(crate) checkpoint_depth: Option<u64>,
     pub(crate) checkpoint_order_prefix: Vec<BlockIdentity>,
     pub(crate) checkpoint_weighted_order_prefix: Vec<BlockIdentity>,
     /// Monotonic counter over structural mutations. See [`Blocklace::generation`].
     generation: u64,
+    /// Stable identity for this in-memory mirror, distinct across reconstruction.
+    cache_identity: Arc<()>,
+    /// Lazily built ancestor bit matrix, stamped with the generation it was
+    /// built at. It is rebuilt whenever the stamp no longer matches, so a
+    /// mutation path that forgot to clear it can never yield a stale answer.
+    ancestor_index: Mutex<Option<Arc<AncestorIndex>>>,
 }
 
 // Construction
@@ -37,10 +55,13 @@ impl Blocklace {
             blocks: HashMap::new(),
             trusted_boundary_predecessors: HashMap::new(),
             checkpoint: None,
+            checkpoint_origin: None,
             checkpoint_depth: None,
             checkpoint_order_prefix: Vec::new(),
             checkpoint_weighted_order_prefix: Vec::new(),
             generation: 0,
+            cache_identity: Arc::new(()),
+            ancestor_index: Mutex::new(None),
         }
     }
 }
@@ -60,6 +81,32 @@ impl Blocklace {
     /// distinguish from no change at all.
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    pub(crate) fn cache_identity(&self) -> &Arc<()> {
+        &self.cache_identity
+    }
+
+    /// Ancestor index for the current generation, built on first use.
+    ///
+    /// Costs O(N^2 / 64) words of memory (about 18 MiB at 12 000 blocks) and
+    /// is shared by every approval and ratification query until the next
+    /// structural mutation. See `crate::ancestor_index`.
+    pub(crate) fn ancestor_index(&self) -> Arc<AncestorIndex> {
+        let mut slot = self
+            .ancestor_index
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let fresh = slot
+            .as_ref()
+            .filter(|index| index.generation() == self.generation)
+            .map(Arc::clone);
+        if let Some(index) = fresh {
+            return index;
+        }
+        let index = Arc::new(AncestorIndex::build(self));
+        *slot = Some(Arc::clone(&index));
+        index
     }
 
     /// Insert validated content, bumping the generation.
@@ -129,11 +176,13 @@ impl Blocklace {
     pub(crate) fn set_checkpoint_state(
         &mut self,
         checkpoint: BlockIdentity,
+        origin: CheckpointOrigin,
         depth: u64,
         order_prefix: Vec<BlockIdentity>,
         weighted_order_prefix: Vec<BlockIdentity>,
     ) {
         self.checkpoint = Some(checkpoint);
+        self.checkpoint_origin = Some(origin);
         self.checkpoint_depth = Some(depth);
         self.checkpoint_order_prefix = order_prefix;
         self.checkpoint_weighted_order_prefix = weighted_order_prefix;
@@ -229,6 +278,34 @@ impl Blocklace {
         self.checkpoint.as_ref()
     }
 
+    pub fn checkpoint_origin(&self) -> Option<CheckpointOrigin> {
+        self.checkpoint_origin
+    }
+
+    /// Return the checkpoint identity only if its origin matches the requested finality rule.
+    /// Explicit checkpoints are not trusted as consensus final leaders.
+    ///
+    /// # Invariant & Scope
+    /// `trusted_checkpoint(FinalityRule::Weighted)` verifies provenance against
+    /// stake-weighted finality within the active weight epoch. When validator weights
+    /// change across epochs, callers must use `weighted_tau_across_epoch_boundary`
+    /// with a `WeightedEpochBoundary`, which binds historical prefixes and validates
+    /// finality across epoch boundaries, or re-initialize the DAG store.
+    pub fn trusted_checkpoint(
+        &self,
+        rule: crate::consensus::FinalityRule,
+    ) -> Option<&BlockIdentity> {
+        match (self.checkpoint_origin?, rule) {
+            (CheckpointOrigin::PaperFinal, crate::consensus::FinalityRule::Paper) => {
+                self.checkpoint.as_ref()
+            }
+            (CheckpointOrigin::WeightedFinal, crate::consensus::FinalityRule::Weighted) => {
+                self.checkpoint.as_ref()
+            }
+            _ => None,
+        }
+    }
+
     /// Logical depth of the checkpoint in the original, unpruned DAG.
     ///
     /// Consensus depth remains monotonic after pruning: descendants of the
@@ -237,11 +314,11 @@ impl Blocklace {
         self.checkpoint_depth
     }
 
-    pub(crate) fn checkpoint_order_prefix(&self) -> &[BlockIdentity] {
+    pub fn checkpoint_order_prefix(&self) -> &[BlockIdentity] {
         &self.checkpoint_order_prefix
     }
 
-    pub(crate) fn checkpoint_weighted_order_prefix(&self) -> &[BlockIdentity] {
+    pub fn checkpoint_weighted_order_prefix(&self) -> &[BlockIdentity] {
         &self.checkpoint_weighted_order_prefix
     }
 

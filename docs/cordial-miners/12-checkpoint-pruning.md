@@ -83,6 +83,25 @@ contents are removed instead of remaining traversable forever.
 Checkpoint pruning must preserve:
 
 - finalized tau output stability before and after GC
+- previous-final-leader searches stop at the current checkpoint: a newer
+  leader's recursion returns the checkpoint (already proven final) instead of
+  re-verifying it against post-pruning evidence or walking below it, so its
+  stored prefix is always replayed (see #275, and #170 for the same mechanism
+  in `latest_final_leader`)
+- explicit checkpoints: `prune_below_checkpoint` does not verify finality, so
+  callers must pass a block already proven final (prefer
+  `checkpoint_after_finality` / `checkpoint_after_weighted_finality`); the
+  previous-leader search only treats the checkpoint as a floor when it is the
+  unique leader block of its wave (`leader_block_for_wave`: leader round,
+  elected creator, no equivocation), and otherwise runs as it would without a
+  checkpoint floor. Explicit manual checkpoints cannot downgrade or overwrite an
+  already established consensus checkpoint (`PaperFinal` or `WeightedFinal`), and
+  ordering functions (`tau`, `weighted_tau`) fail closed on explicit checkpoints
+  to prevent truncated history.
+- weight epoch scoping: `trusted_checkpoint(FinalityRule::Weighted)` and
+  `latest_weighted_final_leader` checkpoints are scoped to a single active
+  weight epoch. Dynamic weight adjustments across epochs must proceed via
+  `weighted_tau_across_epoch_boundary` with a `WeightedEpochBoundary` or epoch re-genesis.
 - checkpoint monotonicity, meaning the checkpoint cannot move backwards
 - branch continuity, meaning a new checkpoint must observe the current one
 - closure for retained non-checkpoint blocks

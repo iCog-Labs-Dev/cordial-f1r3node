@@ -42,20 +42,16 @@
 //! Construction returns [`SnapshotError`] if any block's payload fails to
 //! decode. Partial state is not returned — snapshots are all-or-nothing.
 //!
-//! ## Known limitation: content-hash collisions
+//! ## Native block identity: creator-bound (format v3)
 //!
-//! The snapshot's `dag_set`, `block_number_map`, `height_map`, and
-//! `child_map` are keyed by `content_hash: [u8; 32]`. In the blocklace,
-//! `BlockIdentity` uses `(content_hash, creator, signature)` so two blocks
-//! with identical content but different creators can coexist — but they
-//! will collapse to one entry in the snapshot indices. This matters only
-//! when two validators sign over byte-identical `BlockContent`, which is
-//! rare in practice (payloads usually differ per block) but possible.
+//! Under format v3 (`block_hash`), native block hashes are domain-separated with
+//! `cordial-block-hash-v3` and commit to both the creator `NodeId` (length-prefixed)
+//! and the block content. Absent a cryptographic collision, blocks created by
+//! different validators with identical content (e.g. idle rounds with empty
+//! payloads and the same predecessors) therefore have distinct native hashes.
+//! Consequently, snapshot indices (`dag_set`, `block_number_map`, `height_map`,
+//! and `child_map`) never collapse distinct blocks into a single entry.
 //!
-//! The proper fix belongs to Phase 3.4 (crypto bridge): compute an
-//! f1r3node-style `block_hash` that mixes the creator into the hash, so
-//! distinct validators always produce distinct block hashes even over
-//! equal content.
 //!
 //! ## Single-validator fork awareness is shared across seams
 //!
@@ -78,8 +74,9 @@ use std::collections::{HashMap, HashSet};
 
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
-    OrderingCache, collect_validator_tips, compute_all_depths, fork_choice, last_round_of_wave,
-    latest_weighted_final_leader, wave_of_round, weighted_tau_with_cache, xsort,
+    OrderingCache, OrderingError, WeightedTauSuffixContext, collect_validator_tips,
+    compute_all_depths, fork_choice, last_round_of_wave, latest_weighted_final_leader,
+    wave_of_round, weighted_tau_suffix_with_cache, weighted_tau_with_cache, xsort,
 };
 use cordial_miners_core::execution::{CordialBlockPayload, compute_deploys_in_scope};
 use cordial_miners_core::types::{BlockIdentity, NodeId};
@@ -187,6 +184,11 @@ pub enum SnapshotError {
     /// Updating a shared ordered-output reader would rewrite a previously
     /// published finalized prefix.
     OrderedOutputPrefixViolation,
+
+    /// Weighted tau could not produce a complete ordering.
+    OrderingFailed(OrderingError),
+    /// A committed future-only PoR epoch could not be replayed.
+    EpochReplay(String),
 }
 
 /// Build a [`CasperSnapshot`] from the current blocklace state.
@@ -207,7 +209,9 @@ pub fn build_snapshot(
     // 1. Walk all blocks, decoding payloads as we go. We'll need the
     //    block_number per block for the height index and for max_block_num.
     let all_ids: Vec<BlockIdentity> = blocklace.dom().into_iter().cloned().collect();
-    let mut payload_for: HashMap<[u8; 32], CordialBlockPayload> = HashMap::new();
+    let mut decoded: Vec<(BlockIdentity, CordialBlockPayload)> = Vec::with_capacity(all_ids.len());
+    let mut payload_for: HashMap<([u8; 32], NodeId), CordialBlockPayload> =
+        HashMap::with_capacity(all_ids.len());
     for id in &all_ids {
         let content = blocklace.content(id).expect("id came from dom()");
         let payload = CordialBlockPayload::from_bytes(&content.payload).map_err(|e| {
@@ -216,15 +220,15 @@ pub fn build_snapshot(
                 reason: e,
             }
         })?;
-        payload_for.insert(id.content_hash, payload);
+        payload_for.insert((id.content_hash, id.creator.clone()), payload.clone());
+        decoded.push((id.clone(), payload));
     }
 
     // 2. Build the simplified DAG representation.
     let mut dag = DagRepresentation::default();
-    for id in &all_ids {
+    for (id, payload) in &decoded {
         dag.dag_set.insert(id.content_hash.to_vec());
 
-        let payload = payload_for.get(&id.content_hash).expect("indexed above");
         let block_number = i64::try_from(payload.state.block_number).map_err(|_| {
             SnapshotError::BlockNumberOverflow {
                 block_hash: id.content_hash,
@@ -403,7 +407,7 @@ pub(crate) fn latest_finalized_block_id(
     }
 
     if leaders.len() == 1 && blocklace.checkpoint().is_none() {
-        match single_validator_leader(blocklace, &leaders[0]) {
+        match single_validator_leader(blocklace, &leaders[0], CORDIAL_WAVELENGTH) {
             SingleValidatorLeader::Fork => return None,
             SingleValidatorLeader::Found(leader) => return Some(leader),
             SingleValidatorLeader::Incomplete => {
@@ -455,22 +459,32 @@ pub(crate) fn ordered_finalized_block_hashes(
 pub(crate) fn ordered_block_identities_with_cache(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,
+    wavelength: u64,
     cache: &mut OrderingCache,
 ) -> (Vec<BlockIdentity>, Option<BlockIdentity>) {
+    try_ordered_block_identities_with_cache(blocklace, bonds, wavelength, cache).unwrap_or_default()
+}
+
+pub(crate) fn try_ordered_block_identities_with_cache(
+    blocklace: &Blocklace,
+    bonds: &HashMap<NodeId, u64>,
+    wavelength: u64,
+    cache: &mut OrderingCache,
+) -> Result<(Vec<BlockIdentity>, Option<BlockIdentity>), OrderingError> {
     let leaders = ordered_validators(bonds);
 
     if leaders.is_empty() {
-        return (Vec::new(), None);
+        return Ok((Vec::new(), None));
     }
 
     if leaders.len() == 1 && blocklace.checkpoint().is_none() {
-        match single_validator_leader(blocklace, &leaders[0]) {
+        match single_validator_leader(blocklace, &leaders[0], wavelength) {
             SingleValidatorLeader::Fork => {
                 // Equivocation: this is a terminal answer, never fall
                 // through. Trusting weighted_tau here would let an
                 // equivocating validator's frontier drive the
                 // ordering/anchor.
-                return (Vec::new(), None);
+                return Ok((Vec::new(), None));
             }
             SingleValidatorLeader::Found(leader) => {
                 let observed = blocklace
@@ -478,8 +492,8 @@ pub(crate) fn ordered_block_identities_with_cache(
                     .into_iter()
                     .filter_map(|id| blocklace.get(&id))
                     .collect();
-                let blocks = xsort(&observed).unwrap_or_default();
-                return (blocks, Some(leader));
+                let blocks = xsort(&observed)?;
+                return Ok((blocks, Some(leader)));
             }
             SingleValidatorLeader::Incomplete => {
                 // No complete wave yet for this validator — genuinely fall
@@ -494,19 +508,48 @@ pub(crate) fn ordered_block_identities_with_cache(
         Some(leaders[idx].clone())
     };
 
-    let anchor = latest_weighted_final_leader(blocklace, CORDIAL_WAVELENGTH, bonds, leader_of_wave);
+    let anchor = latest_weighted_final_leader(blocklace, wavelength, bonds, leader_of_wave);
 
-    let blocks = weighted_tau_with_cache(
+    let blocks = weighted_tau_with_cache(blocklace, wavelength, bonds, 0, leader_of_wave, cache)?;
+
+    Ok((blocks, anchor))
+}
+
+/// Extend an existing weighted-tau prefix only for the multi-validator path.
+///
+/// The caller must establish that the blocklace changed exclusively through
+/// strict insertions deeper than the prior anchor's finality wave. A `None`
+/// result means the current final-leader chain does not verify that anchor.
+pub(crate) fn ordered_block_identities_with_verified_prefix(
+    blocklace: &Blocklace,
+    bonds: &HashMap<NodeId, u64>,
+    wavelength: u64,
+    cache: &mut OrderingCache,
+    previous_prefix: &[BlockIdentity],
+    previous_anchor: &BlockIdentity,
+) -> Result<Option<(Vec<BlockIdentity>, BlockIdentity)>, OrderingError> {
+    let leaders = ordered_validators(bonds);
+    if leaders.len() < 2 || blocklace.checkpoint().is_some() || blocklace.has_trusted_boundaries() {
+        return Ok(None);
+    }
+
+    let leader_of_wave = |wave: u64| -> Option<NodeId> {
+        let idx = usize::try_from(wave).ok()? % leaders.len();
+        Some(leaders[idx].clone())
+    };
+
+    weighted_tau_suffix_with_cache(
         blocklace,
-        CORDIAL_WAVELENGTH,
-        bonds,
-        0,
-        leader_of_wave,
+        WeightedTauSuffixContext {
+            wavelength,
+            bonds,
+            leader_selection_id: 0,
+            leader_selection: leader_of_wave,
+        },
+        previous_anchor,
+        previous_prefix,
         cache,
     )
-    .unwrap_or_default();
-
-    (blocks, anchor)
 }
 
 pub(crate) fn ordered_finalized_block_hashes_with_cache(
@@ -514,7 +557,8 @@ pub(crate) fn ordered_finalized_block_hashes_with_cache(
     bonds: &HashMap<NodeId, u64>,
     cache: &mut OrderingCache,
 ) -> Vec<Vec<u8>> {
-    let (blocks, _anchor) = ordered_block_identities_with_cache(blocklace, bonds, cache);
+    let (blocks, _anchor) =
+        ordered_block_identities_with_cache(blocklace, bonds, CORDIAL_WAVELENGTH, cache);
     blocks
         .into_iter()
         .map(|id| id.content_hash.to_vec())
@@ -533,8 +577,12 @@ pub(crate) fn ordered_finalized_output(
     blocklace: &Blocklace,
     bonds: &HashMap<NodeId, u64>,
 ) -> OrderedFinalizedOutput {
-    let (blocks, anchor) =
-        ordered_block_identities_with_cache(blocklace, bonds, &mut OrderingCache::default());
+    let (blocks, anchor) = ordered_block_identities_with_cache(
+        blocklace,
+        bonds,
+        CORDIAL_WAVELENGTH,
+        &mut OrderingCache::default(),
+    );
 
     OrderedFinalizedOutput::new(
         blocks,
@@ -574,18 +622,18 @@ enum SingleValidatorLeader {
 /// This is the single source of truth for "has this lone bonded validator
 /// equivocated, and if not, what did it finalize" — see
 /// [`SingleValidatorLeader`] and the module-level doc.
-fn single_validator_leader(blocklace: &Blocklace, validator: &NodeId) -> SingleValidatorLeader {
+fn single_validator_leader(
+    blocklace: &Blocklace,
+    validator: &NodeId,
+    wavelength: u64,
+) -> SingleValidatorLeader {
     let depths = compute_all_depths(blocklace);
 
     if has_same_round_fork(&depths, validator) {
         return SingleValidatorLeader::Fork;
     }
 
-    match latest_single_validator_finalized_block_id_from_depths(
-        &depths,
-        validator,
-        CORDIAL_WAVELENGTH,
-    ) {
+    match latest_single_validator_finalized_block_id_from_depths(&depths, validator, wavelength) {
         Some(leader) => SingleValidatorLeader::Found(leader),
         None => SingleValidatorLeader::Incomplete,
     }

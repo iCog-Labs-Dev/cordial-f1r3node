@@ -16,6 +16,26 @@ use super::{
 };
 
 impl RSpaceBlocklaceRepository {
+    /// Release this repository and explicitly close its LMDB environment.
+    ///
+    /// Heed 0.20 retains an environment in its process-wide registry even after
+    /// ordinary handles are dropped. Temporary-store users must close it before
+    /// deleting the directory to release mappings, file descriptors and TLS keys.
+    ///
+    /// Call only after operations have stopped. This waits for every other handle
+    /// to the same environment to be dropped; retaining another repository for
+    /// the same path on this thread would prevent completion.
+    pub fn close(self) {
+        let Self {
+            env,
+            blocks_db,
+            meta_db,
+        } = self;
+        drop(blocks_db);
+        drop(meta_db);
+        Arc::unwrap_or_clone(env).prepare_for_closing().wait();
+    }
+
     /// Open (or reopen) the LMDB environment at `data_dir/blocklace/`.
     ///
     /// ## Behaviour

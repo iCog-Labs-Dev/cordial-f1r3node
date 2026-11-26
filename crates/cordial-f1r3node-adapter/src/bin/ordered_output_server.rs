@@ -60,12 +60,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use casper::rust::util::bonds_parser::BondsParser;
 use clap::Parser;
 use cordial_f1r3node_adapter::grpc_ingest::BlocklaceAdapter;
 use cordial_f1r3node_adapter::live_grpc::{
-    LiveGrpcBlockClient, trusted_block_from_light_block_info_with_options,
+    LiveGrpcBlockClient, reconcile_trusted_predecessor_creators,
+    trusted_block_from_light_block_info_with_options,
 };
 use cordial_f1r3node_adapter::live_ingress::LiveIngress;
 use cordial_f1r3node_adapter::ordered_output_server::{PollOutcome, poll_once, serve};
@@ -175,11 +176,24 @@ fn merge_bonds(bonds: &mut HashMap<NodeId, u64>, blocks: &[models::casper::Light
 fn mirror_blocks(
     ingress: &mut LiveIngress<PassthroughAdapter>,
     blocks: &[models::casper::LightBlockInfo],
+    known_creators: &mut HashMap<[u8; 32], NodeId>,
 ) -> Result<usize> {
     let mut applied = 0;
+    let mut translated = Vec::with_capacity(blocks.len());
     for info in blocks {
         let block = trusted_block_from_light_block_info_with_options(info, true)
             .with_context(|| format!("failed to reconstruct trusted block {}", info.block_hash))?;
+        if let Some(creator) = known_creators.get(&block.identity.content_hash) {
+            if creator != &block.identity.creator {
+                bail!("live block {} changed creator", info.block_hash);
+            }
+        } else {
+            known_creators.insert(block.identity.content_hash, block.identity.creator.clone());
+        }
+        translated.push(block);
+    }
+    for (info, mut block) in blocks.iter().zip(translated) {
+        reconcile_trusted_predecessor_creators(&mut block, known_creators);
         let update = ingress
             .ingest_trusted_block(block)
             .with_context(|| format!("failed to mirror live block {}", info.block_hash))?;
@@ -243,6 +257,7 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             let mut client: Option<LiveGrpcBlockClient> = None;
             let mut bootstrapped = false;
+            let mut known_creators: HashMap<[u8; 32], NodeId> = HashMap::new();
 
             loop {
                 // Ensure gRPC client is connected
@@ -284,7 +299,7 @@ async fn main() -> Result<()> {
                 // Append new blocks into the long-lived ingress.
                 let new_blocks_res = {
                     let mut ingress_guard = ingress.lock().await;
-                    mirror_blocks(&mut ingress_guard, &blocks)
+                    mirror_blocks(&mut ingress_guard, &blocks, &mut known_creators)
                 };
 
                 let new_blocks = match new_blocks_res {

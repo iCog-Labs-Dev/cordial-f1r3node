@@ -10,7 +10,7 @@ use std::marker::PhantomData;
 
 use crate::block::Block;
 use crate::blocklace::Blocklace;
-use crate::consensus::round::depth;
+use crate::consensus::round::{candidate_depth, depth};
 use crate::consensus::validation::InvalidBlock;
 use crate::types::{BlockIdentity, NodeId};
 
@@ -26,7 +26,9 @@ impl EvidenceBlock<BlockIdentity> for Block {
     }
 }
 
-/// Raw proof that one validator created conflicting blocks in one round.
+/// Untrusted claim that one validator created conflicting blocks.
+/// Verification derives the evidence round as the earliest conflicting depth.
+/// Pool retention does not authenticate the blocks or authorize penalties.
 ///
 /// `P` is intentionally generic so the core can retain the host's native block
 /// object without knowing how that host serializes it. In this crate, the
@@ -239,9 +241,12 @@ where
             continue;
         };
 
+        let Some(rejected_round) = candidate_depth(blocklace, &rejected.content) else {
+            continue;
+        };
         if pool.record_equivocation(
             rejected.identity.creator.clone(),
-            round,
+            round.min(rejected_round),
             vec![rejected.clone(), held],
         ) {
             recorded = true;

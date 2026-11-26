@@ -7,6 +7,7 @@ use cordial_miners_core::NodeId;
 pub enum PorError {
     InvalidConfiguration(String),
     InvalidRatingRound,
+    InvalidRatingSourceCheckpoint,
     RatingRoundOverflow,
     InvalidInteractionRound,
     InvalidInteractionStateRound,
@@ -47,11 +48,14 @@ pub enum PorError {
     MissingReputationBlockShardId,
     ReputationBlockShardIdTooLong,
     InvalidReputationBlockSourceWave,
+    InvalidReputationBlockSourceCheckpoint,
     InvalidReputationBlockRound,
     InvalidPreviousReputationBlockRound,
     PreviousReputationBlockShardMismatch,
     ReputationBlockShardMismatch,
     ReputationBlockSourceWaveMismatch,
+    ReputationBlockSourceCheckpointMismatch,
+    UnsupportedReputationBlockAuditVersion(u16),
     ReputationBlockPreviousHashMismatch,
     ReputationBlockConfigHashMismatch,
     ReputationBlockRatingsHashMismatch,
@@ -67,6 +71,7 @@ pub enum PorError {
     ReputationStateSnapshotRoundMismatch,
     ReputationStateSnapshotExclusionMismatch,
     ReputationStateSnapshotBlockRoundMismatch,
+    ReputationStateSnapshotBlockVersionMismatch,
     ReputationStateSnapshotHasPendingRatings,
     // Audit-replay-specific errors
     MissingReputationBlockEntry,
@@ -97,6 +102,12 @@ impl fmt::Display for PorError {
             }
             Self::InvalidRatingRound => {
                 write!(f, "rating round does not match the target batch round")
+            }
+            Self::InvalidRatingSourceCheckpoint => {
+                write!(
+                    f,
+                    "rating source is not a valid finalized-prefix checkpoint"
+                )
             }
             Self::RatingRoundOverflow => {
                 write!(f, "finalized wave cannot advance to a rating round")
@@ -218,6 +229,10 @@ impl fmt::Display for PorError {
                 f,
                 "reputation block round does not immediately follow its finalized source wave"
             ),
+            Self::InvalidReputationBlockSourceCheckpoint => write!(
+                f,
+                "reputation block source is not a valid finalized-prefix checkpoint"
+            ),
             Self::InvalidReputationBlockRound => write!(
                 f,
                 "reputation block header round does not match the reputation list round"
@@ -239,6 +254,16 @@ impl fmt::Display for PorError {
                 f,
                 "reputation block source wave does not match the audit context"
             ),
+            Self::ReputationBlockSourceCheckpointMismatch => write!(
+                f,
+                "reputation block source checkpoint does not match the audit context"
+            ),
+            Self::UnsupportedReputationBlockAuditVersion(version) => {
+                write!(
+                    f,
+                    "reputation block version {version} is not supported by this audit"
+                )
+            }
             Self::ReputationBlockPreviousHashMismatch => {
                 write!(
                     f,
@@ -291,6 +316,12 @@ impl fmt::Display for PorError {
                 write!(
                     f,
                     "reputation state snapshot latest block is from another round"
+                )
+            }
+            Self::ReputationStateSnapshotBlockVersionMismatch => {
+                write!(
+                    f,
+                    "reputation state snapshot version does not match its block"
                 )
             }
             Self::ReputationStateSnapshotHasPendingRatings => {

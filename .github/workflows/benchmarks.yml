@@ -53,12 +53,12 @@ jobs:
 
       - name: Compile benchmarks
         working-directory: blocklace
-        run: cargo bench -p cordial-miners-core --no-run
+        run: cargo bench -p cordial-miners-core -p cordial-por -p cordial-app-runtime --no-run
 
       - name: Run cordial-miners-core benchmarks
         working-directory: blocklace
         run: |
-          cargo bench -p cordial-miners-core 2>&1 | tee bench-miners-core.txt
+          python3 scripts/benchmark.py --package cordial-miners-core --package cordial-por --package cordial-app-runtime
 
       - name: Upload benchmark results
         if: always()
@@ -66,7 +66,7 @@ jobs:
         with:
           name: criterion-miners-core-${{ github.sha }}
           path: |
-            blocklace/bench-miners-core.txt
+            blocklace/target/benchmark-runs/
             blocklace/target/criterion/
           retention-days: 90
           if-no-files-found: warn
@@ -112,7 +112,7 @@ jobs:
       - name: Run cordial-f1r3node-adapter benchmarks
         working-directory: blocklace
         run: |
-          cargo bench -p cordial-f1r3node-adapter 2>&1 | tee bench-adapter.txt
+          python3 scripts/benchmark.py --package cordial-f1r3node-adapter
 
       - name: Upload benchmark results
         if: always()
@@ -120,7 +120,7 @@ jobs:
         with:
           name: criterion-adapter-${{ github.sha }}
           path: |
-            blocklace/bench-adapter.txt
+            blocklace/target/benchmark-runs/
             blocklace/target/criterion/
           retention-days: 90
           if-no-files-found: warn

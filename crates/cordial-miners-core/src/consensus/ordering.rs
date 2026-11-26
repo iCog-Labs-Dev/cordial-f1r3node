@@ -1,13 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
+use std::sync::Arc;
 
 use crate::block::Block;
-use crate::blocklace::Blocklace;
+use crate::blocklace::{Blocklace, CheckpointOrigin};
 use crate::consensus::approval::{ApprovalMemo, approves_with_memo};
 use crate::consensus::cordiality::{ratifies, weighted_ratifies};
 use crate::consensus::finality::{
-    final_leader_for_wave, latest_final_leader, latest_weighted_final_leader,
-    weighted_final_leader_for_wave,
+    FinalityRule, final_leader_for_wave, latest_final_leader, latest_weighted_final_leader,
+    leader_block_for_wave, weighted_final_leader_for_wave,
 };
 use crate::consensus::round::depth;
 use crate::consensus::wave::wave_of_round;
@@ -18,6 +19,9 @@ use crate::types::{BlockIdentity, NodeId};
 
 #[derive(Debug, Clone, Default)]
 pub struct OrderingCache {
+    /// Identity of the mirror used to populate this cache. Generation values
+    /// are only comparable within one Blocklace instance.
+    cache_blocklace_identity: Option<Arc<()>>,
     /// Blocklace generation the cached entries were computed against, paired
     /// with the DAG size at that time.
     ///
@@ -26,8 +30,6 @@ pub struct OrderingCache {
     /// generation, a size change still invalidates the cache, so this can only
     /// be stricter than the size-based check it replaces — never looser.
     cache_generation: (u64, usize),
-    approved_blocks_by_leader: HashMap<BlockIdentity, HashSet<Block>>,
-    sorted_approved_by_leader: HashMap<BlockIdentity, Result<Vec<BlockIdentity>, OrderingError>>,
     previous_final_by_leader: HashMap<PreviousLeaderCacheKey, Option<BlockIdentity>>,
     weighted_previous_final_by_leader:
         HashMap<WeightedPreviousLeaderCacheKey, Option<BlockIdentity>>,
@@ -104,9 +106,53 @@ where
     leader_selection: F,
 }
 
+/// Inputs shared by a cached weighted-tau suffix calculation.
+pub struct WeightedTauSuffixContext<'a, F>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    pub wavelength: u64,
+    pub bonds: &'a HashMap<NodeId, u64>,
+    pub leader_selection_id: u64,
+    pub leader_selection: F,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OrderingError {
     CycleDetected,
+    IncompatibleCheckpointRule {
+        checkpoint_origin: CheckpointOrigin,
+        requested_rule: FinalityRule,
+    },
+    ExplicitCheckpointCannotProveFinality,
+}
+
+/// A previously finalized weighted output that a new weight epoch must retain.
+///
+/// The boundary is independent of the blocklace pruning checkpoint. Its full
+/// history stays in the blocklace so later reputation evidence remains
+/// replayable. The caller must also ensure no already-published output extends
+/// past this boundary when installing an epoch.
+pub struct WeightedEpochBoundary<'a> {
+    pub final_leader: &'a BlockIdentity,
+    pub ordered_prefix: &'a [BlockIdentity],
+    pub effective_wave: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WeightedEpochError {
+    InvalidBoundary,
+    ValidatorSetMismatch,
+    BoundaryNotFinal,
+    PrefixMismatch,
+    LeaderOutsideBoundary,
+    Ordering(OrderingError),
+}
+
+impl From<OrderingError> for WeightedEpochError {
+    fn from(error: OrderingError) -> Self {
+        Self::Ordering(error)
+    }
 }
 
 pub fn approved_blocks_for_leader(blocklace: &Blocklace, leader: &BlockIdentity) -> HashSet<Block> {
@@ -214,9 +260,7 @@ impl OrderingCache {
     /// populated at all, and lets tests distinguish "invalidation works" from
     /// "caching was silently disabled".
     pub fn cached_entries(&self) -> usize {
-        self.approved_blocks_by_leader.len()
-            + self.sorted_approved_by_leader.len()
-            + self.previous_final_by_leader.len()
+        self.previous_final_by_leader.len()
             + self.weighted_previous_final_by_leader.len()
             + self.tau_output_by_latest_leader.len()
             + self.weighted_tau_output_by_latest_leader.len()
@@ -230,33 +274,18 @@ impl OrderingCache {
 
 fn sync_cache_generation(blocklace: &Blocklace, cache: &mut OrderingCache) {
     let generation = (blocklace.generation(), blocklace.dom().len());
-    if cache.cache_generation != generation {
+    let same_blocklace = cache
+        .cache_blocklace_identity
+        .as_ref()
+        .is_some_and(|identity| Arc::ptr_eq(identity, blocklace.cache_identity()));
+    if !same_blocklace || cache.cache_generation != generation {
+        cache.cache_blocklace_identity = Some(Arc::clone(blocklace.cache_identity()));
         cache.cache_generation = generation;
-        cache.approved_blocks_by_leader.clear();
-        cache.sorted_approved_by_leader.clear();
         cache.previous_final_by_leader.clear();
         cache.weighted_previous_final_by_leader.clear();
         cache.tau_output_by_latest_leader.clear();
         cache.weighted_tau_output_by_latest_leader.clear();
     }
-}
-
-fn approved_blocks_for_leader_cached(
-    blocklace: &Blocklace,
-    leader: &BlockIdentity,
-    cache: &mut OrderingCache,
-) -> HashSet<Block> {
-    sync_cache_generation(blocklace, cache);
-
-    if let Some(blocks) = cache.approved_blocks_by_leader.get(leader) {
-        return blocks.clone();
-    }
-
-    let blocks = approved_blocks_for_leader(blocklace, leader);
-    cache
-        .approved_blocks_by_leader
-        .insert(leader.clone(), blocks.clone());
-    blocks
 }
 
 fn sorted_approved_fragment(
@@ -266,16 +295,14 @@ fn sorted_approved_fragment(
 ) -> Result<Vec<BlockIdentity>, OrderingError> {
     sync_cache_generation(blocklace, cache);
 
-    if let Some(sorted) = cache.sorted_approved_by_leader.get(leader) {
-        return sorted.clone();
-    }
-
-    let approved = approved_blocks_for_leader_cached(blocklace, leader, cache);
-    let sorted = xsort(&approved);
-    cache
-        .sorted_approved_by_leader
-        .insert(leader.clone(), sorted.clone());
-    sorted
+    // Nothing is retained per leader (#263). Each leader's fragment is
+    // requested once per ordering call, and the cache is cleared whenever the
+    // blocklace changes, so a stored sorted list was never read back. Keeping
+    // one per leader cost O(leaders x blocks) identities (about 570 MiB of the
+    // 590 MiB heap peak at 12,800 blocks) and the approved set it is built from
+    // holds full `Block` clones, so both are dropped as soon as the sort is done.
+    let approved = approved_blocks_for_leader(blocklace, leader);
+    xsort(&approved)
 }
 
 fn previous_final_leader_cached<F>(
@@ -348,6 +375,43 @@ where
     previous
 }
 
+/// Return the checkpoint and its wave when it lies strictly below `current_leader`
+/// and is the unique leader block of its wave (`leader_block_for_wave`).
+///
+/// A checkpoint is a leader already proven final, and its stored prefix stands
+/// in for the pruned history beneath it. After pruning, `observe()` stops at
+/// the checkpoint boundary, so re-checking ratification of the checkpoint can
+/// fail (see #170). Previous-leader searches therefore stop at the checkpoint
+/// instead of re-verifying it or walking below it. A checkpoint that is not
+/// the unique leader block of its wave (a non-leader or equivocating explicit
+/// checkpoint) is not used as a floor.
+fn checkpoint_floor<F>(
+    blocklace: &Blocklace,
+    rule: FinalityRule,
+    current_leader: &BlockIdentity,
+    wavelength: u64,
+    leader_selection: F,
+) -> Option<(BlockIdentity, u64)>
+where
+    F: Fn(u64) -> Option<NodeId>,
+{
+    let checkpoint = blocklace.trusted_checkpoint(rule)?;
+    if checkpoint == current_leader || !blocklace.precedes(checkpoint, current_leader) {
+        return None;
+    }
+    let round = depth(blocklace, checkpoint)?;
+    let wave = wave_of_round(round, wavelength)?;
+    // Only the unique leader block of its wave may stand in for the previous
+    // final leader (same definition as finality; an equivocating or
+    // non-leader explicit checkpoint is ignored here).
+    if leader_block_for_wave(blocklace, wave, wavelength, leader_selection).as_ref()
+        != Some(checkpoint)
+    {
+        return None;
+    }
+    Some((checkpoint.clone(), wave))
+}
+
 /// Return the newest earlier final leader ratified by `current_leader`.
 ///
 /// This is the recursion edge used by `tau`: given a current leader block,
@@ -373,7 +437,19 @@ where
         return None;
     }
 
+    let checkpoint_floor = checkpoint_floor(
+        blocklace,
+        FinalityRule::Paper,
+        current_leader,
+        wavelength,
+        leader_selection,
+    );
     for wave in (0..current_wave).rev() {
+        if let Some((checkpoint, checkpoint_wave)) = &checkpoint_floor
+            && wave <= *checkpoint_wave
+        {
+            return Some(checkpoint.clone());
+        }
         let Some(previous_leader) =
             final_leader_for_wave(blocklace, wave, wavelength, n, f, leader_selection)
         else {
@@ -414,7 +490,19 @@ where
         return None;
     }
 
+    let checkpoint_floor = checkpoint_floor(
+        blocklace,
+        FinalityRule::Weighted,
+        current_leader,
+        wavelength,
+        leader_selection,
+    );
     for wave in (0..current_wave).rev() {
+        if let Some((checkpoint, checkpoint_wave)) = &checkpoint_floor
+            && wave <= *checkpoint_wave
+        {
+            return Some(checkpoint.clone());
+        }
         let Some(previous_leader) =
             weighted_final_leader_for_wave(blocklace, wave, wavelength, bonds, leader_selection)
         else {
@@ -448,6 +536,19 @@ pub fn tau<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    match blocklace.checkpoint_origin() {
+        Some(CheckpointOrigin::WeightedFinal) => {
+            return Err(OrderingError::IncompatibleCheckpointRule {
+                checkpoint_origin: CheckpointOrigin::WeightedFinal,
+                requested_rule: FinalityRule::Paper,
+            });
+        }
+        Some(CheckpointOrigin::Explicit) => {
+            return Err(OrderingError::ExplicitCheckpointCannotProveFinality);
+        }
+        _ => {}
+    }
+
     let Some(latest_leader) = latest_final_leader(blocklace, wavelength, n, f, leader_selection)
     else {
         return Ok(Vec::new());
@@ -506,9 +607,10 @@ where
 
 /// Cached variant of [`tau`].
 ///
-/// Reuses per-leader approved block sets and sorted fragments across repeated
-/// calls. Cache entries are invalidated automatically when the blocklace size
-/// changes.
+/// Reuses previous-final-leader lookups and full ordered outputs across
+/// repeated calls. Per-leader approved sets and sorted fragments are recomputed
+/// rather than retained, which keeps memory linear in the history. Cache
+/// entries are invalidated automatically when the blocklace changes.
 pub fn tau_with_cache<F>(
     blocklace: &Blocklace,
     wavelength: u64,
@@ -521,6 +623,19 @@ pub fn tau_with_cache<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    match blocklace.checkpoint_origin() {
+        Some(CheckpointOrigin::WeightedFinal) => {
+            return Err(OrderingError::IncompatibleCheckpointRule {
+                checkpoint_origin: CheckpointOrigin::WeightedFinal,
+                requested_rule: FinalityRule::Paper,
+            });
+        }
+        Some(CheckpointOrigin::Explicit) => {
+            return Err(OrderingError::ExplicitCheckpointCannotProveFinality);
+        }
+        _ => {}
+    }
+
     sync_cache_generation(blocklace, cache);
 
     let Some(latest_leader) = latest_final_leader(blocklace, wavelength, n, f, leader_selection)
@@ -576,11 +691,61 @@ pub fn weighted_tau<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    match blocklace.checkpoint_origin() {
+        Some(CheckpointOrigin::PaperFinal) => {
+            return Err(OrderingError::IncompatibleCheckpointRule {
+                checkpoint_origin: CheckpointOrigin::PaperFinal,
+                requested_rule: FinalityRule::Weighted,
+            });
+        }
+        Some(CheckpointOrigin::Explicit) => {
+            return Err(OrderingError::ExplicitCheckpointCannotProveFinality);
+        }
+        _ => {}
+    }
+
     let Some(latest_leader) =
         latest_weighted_final_leader(blocklace, wavelength, bonds, leader_selection)
     else {
         return Ok(Vec::new());
     };
+
+    weighted_tau_at_leader(
+        blocklace,
+        &latest_leader,
+        wavelength,
+        bonds,
+        leader_selection,
+    )
+}
+
+/// Return the weighted ordered prefix anchored by a specified final leader.
+///
+/// The caller must establish that `leader` is a final leader under `bonds`.
+/// This uses the same recursion as [`weighted_tau`], allowing a consumer to
+/// replay an earlier finalized prefix after a newer leader has appeared.
+pub fn weighted_tau_at_leader<F>(
+    blocklace: &Blocklace,
+    leader: &BlockIdentity,
+    wavelength: u64,
+    bonds: &HashMap<NodeId, u64>,
+    leader_selection: F,
+) -> Result<Vec<BlockIdentity>, OrderingError>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    match blocklace.checkpoint_origin() {
+        Some(CheckpointOrigin::PaperFinal) => {
+            return Err(OrderingError::IncompatibleCheckpointRule {
+                checkpoint_origin: CheckpointOrigin::PaperFinal,
+                requested_rule: FinalityRule::Weighted,
+            });
+        }
+        Some(CheckpointOrigin::Explicit) => {
+            return Err(OrderingError::ExplicitCheckpointCannotProveFinality);
+        }
+        _ => {}
+    }
 
     let weights = WeightSnapshot::from_bonds(bonds);
     let config = WeightedTauConfig {
@@ -594,11 +759,11 @@ where
         emitted: BTreeSet::new(),
         ordered: Vec::new(),
     };
-    weighted_tau_from_leader(blocklace, &latest_leader, &config, &mut state)?;
+    weighted_tau_from_leader(blocklace, leader, &config, &mut state)?;
 
     #[cfg(feature = "trace")]
     {
-        let wave = depth(blocklace, &latest_leader)
+        let wave = depth(blocklace, leader)
             .and_then(|round| wave_of_round(round, wavelength))
             .unwrap_or(0);
         let ordered_block_hashes: Vec<String> = state
@@ -607,10 +772,10 @@ where
             .map(|id| trace::hex(&id.content_hash))
             .collect();
         trace::emit(TraceEvent::RunTauOrder(TauOrderEvent {
-            node_id: trace::hex(&latest_leader.creator.0),
+            node_id: trace::hex(&leader.creator.0),
             wave,
             wavelength,
-            latest_leader_hash: trace::hex(&latest_leader.content_hash),
+            latest_leader_hash: trace::hex(&leader.content_hash),
             ordered_block_hashes: ordered_block_hashes.clone(),
             output_len: state.ordered.len(),
         }));
@@ -627,11 +792,151 @@ where
     Ok(state.ordered)
 }
 
+/// Return weighted tau across one future-only weight epoch.
+///
+/// The old table must still finalize `boundary.final_leader` and reproduce its
+/// exact sealed prefix. The new table is used only for leaders in waves at or
+/// after `effective_wave`. If none is final yet, the old prefix is returned.
+/// A new final leader must descend from the sealed leader; a conflicting fork
+/// fails closed. This function does not install an epoch or persist its record.
+pub fn weighted_tau_after_epoch_boundary<F>(
+    blocklace: &Blocklace,
+    wavelength: u64,
+    old_bonds: &HashMap<NodeId, u64>,
+    new_bonds: &HashMap<NodeId, u64>,
+    boundary: WeightedEpochBoundary<'_>,
+    leader_selection: F,
+) -> Result<(Vec<BlockIdentity>, BlockIdentity), WeightedEpochError>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    if old_bonds.len() != new_bonds.len()
+        || !old_bonds
+            .keys()
+            .all(|validator| new_bonds.contains_key(validator))
+    {
+        return Err(WeightedEpochError::ValidatorSetMismatch);
+    }
+    let boundary_wave = depth(blocklace, boundary.final_leader)
+        .and_then(|round| wave_of_round(round, wavelength))
+        .ok_or(WeightedEpochError::InvalidBoundary)?;
+    if boundary.effective_wave <= boundary_wave {
+        return Err(WeightedEpochError::InvalidBoundary);
+    }
+    if !weighted_final_leader_for_wave(
+        blocklace,
+        boundary_wave,
+        wavelength,
+        old_bonds,
+        leader_selection,
+    )
+    .is_some_and(|leader| leader.same_consensus_identity(boundary.final_leader))
+    {
+        return Err(WeightedEpochError::BoundaryNotFinal);
+    }
+    let old_prefix = weighted_tau_at_leader(
+        blocklace,
+        boundary.final_leader,
+        wavelength,
+        old_bonds,
+        leader_selection,
+    )?;
+    if old_prefix != boundary.ordered_prefix {
+        return Err(WeightedEpochError::PrefixMismatch);
+    }
+
+    let Some(latest_leader) =
+        latest_weighted_final_leader(blocklace, wavelength, new_bonds, leader_selection)
+    else {
+        return Ok((old_prefix, boundary.final_leader.clone()));
+    };
+    let latest_wave = depth(blocklace, &latest_leader)
+        .and_then(|round| wave_of_round(round, wavelength))
+        .ok_or(WeightedEpochError::LeaderOutsideBoundary)?;
+    if latest_wave < boundary.effective_wave {
+        return Ok((old_prefix, boundary.final_leader.clone()));
+    }
+
+    let mut state = TauState {
+        emitted: old_prefix.iter().cloned().collect(),
+        ordered: old_prefix,
+    };
+    weighted_tau_from_epoch_leader(
+        blocklace,
+        &latest_leader,
+        wavelength,
+        new_bonds,
+        &boundary,
+        leader_selection,
+        &mut state,
+    )?;
+    Ok((state.ordered, latest_leader))
+}
+
+fn weighted_tau_from_epoch_leader<F>(
+    blocklace: &Blocklace,
+    leader: &BlockIdentity,
+    wavelength: u64,
+    bonds: &HashMap<NodeId, u64>,
+    boundary: &WeightedEpochBoundary<'_>,
+    leader_selection: F,
+    state: &mut TauState,
+) -> Result<(), WeightedEpochError>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    let current_wave = depth(blocklace, leader)
+        .and_then(|round| wave_of_round(round, wavelength))
+        .ok_or(WeightedEpochError::LeaderOutsideBoundary)?;
+    if current_wave < boundary.effective_wave || !blocklace.precedes(boundary.final_leader, leader)
+    {
+        return Err(WeightedEpochError::LeaderOutsideBoundary);
+    }
+    let current_block = blocklace
+        .get(leader)
+        .ok_or(WeightedEpochError::LeaderOutsideBoundary)?;
+
+    for wave in (boundary.effective_wave..current_wave).rev() {
+        let Some(previous) =
+            weighted_final_leader_for_wave(blocklace, wave, wavelength, bonds, leader_selection)
+        else {
+            continue;
+        };
+        let Some(previous_block) = blocklace.get(&previous) else {
+            continue;
+        };
+        if weighted_ratifies(blocklace, &current_block, &previous_block, bonds) {
+            weighted_tau_from_epoch_leader(
+                blocklace,
+                &previous,
+                wavelength,
+                bonds,
+                boundary,
+                leader_selection,
+                state,
+            )?;
+            break;
+        }
+    }
+
+    let newly_approved: HashSet<Block> = approved_blocks_for_leader(blocklace, leader)
+        .into_iter()
+        .filter(|block| !state.emitted.contains(&block.identity.consensus_identity()))
+        .collect();
+    for id in xsort(&newly_approved)? {
+        if state.emitted.insert(id.clone()) {
+            state.ordered.push(id);
+        }
+    }
+    Ok(())
+}
+
 /// Cached variant of [`weighted_tau`].
 ///
-/// Reuses per-leader approved block sets and sorted fragments across repeated
-/// calls. Cache entries are invalidated automatically when the blocklace size
-/// changes.
+/// Reuses previous-final-leader lookups and full ordered outputs across
+/// repeated calls. Per-leader approved sets and sorted fragments are recomputed
+/// rather than retained, which keeps memory linear in the history. Cache
+/// entries are invalidated automatically when the blocklace changes.
 pub fn weighted_tau_with_cache<F>(
     blocklace: &Blocklace,
     wavelength: u64,
@@ -643,6 +948,19 @@ pub fn weighted_tau_with_cache<F>(
 where
     F: Fn(u64) -> Option<NodeId> + Copy,
 {
+    match blocklace.checkpoint_origin() {
+        Some(CheckpointOrigin::PaperFinal) => {
+            return Err(OrderingError::IncompatibleCheckpointRule {
+                checkpoint_origin: CheckpointOrigin::PaperFinal,
+                requested_rule: FinalityRule::Weighted,
+            });
+        }
+        Some(CheckpointOrigin::Explicit) => {
+            return Err(OrderingError::ExplicitCheckpointCannotProveFinality);
+        }
+        _ => {}
+    }
+
     sync_cache_generation(blocklace, cache);
 
     let Some(latest_leader) =
@@ -689,6 +1007,88 @@ where
     ordered
 }
 
+/// Extend a previously computed weighted-tau prefix when its final leader is
+/// still on the current weighted-final leader chain.
+///
+/// `None` means that the prefix cannot be verified as a prefix of the current
+/// leader chain and the caller must use [`weighted_tau_with_cache`].
+pub fn weighted_tau_suffix_with_cache<F>(
+    blocklace: &Blocklace,
+    context: WeightedTauSuffixContext<'_, F>,
+    previous_anchor: &BlockIdentity,
+    previous_prefix: &[BlockIdentity],
+    cache: &mut OrderingCache,
+) -> Result<Option<(Vec<BlockIdentity>, BlockIdentity)>, OrderingError>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    sync_cache_generation(blocklace, cache);
+
+    if !previous_prefix
+        .last()
+        .is_some_and(|last| last.same_consensus_identity(previous_anchor))
+    {
+        return Ok(None);
+    }
+
+    let WeightedTauSuffixContext {
+        wavelength,
+        bonds,
+        leader_selection_id,
+        leader_selection,
+    } = context;
+
+    let Some(anchor_round) = depth(blocklace, previous_anchor) else {
+        return Ok(None);
+    };
+    let Some(anchor_wave) = wave_of_round(anchor_round, wavelength) else {
+        return Ok(None);
+    };
+    if weighted_final_leader_for_wave(blocklace, anchor_wave, wavelength, bonds, leader_selection)
+        .is_none_or(|leader| !leader.same_consensus_identity(previous_anchor))
+    {
+        return Ok(None);
+    }
+
+    let Some(latest_leader) =
+        latest_weighted_final_leader(blocklace, wavelength, bonds, leader_selection)
+    else {
+        return Ok(None);
+    };
+
+    let weights = WeightSnapshot::from_bonds(bonds);
+    let config = WeightedTauConfig {
+        wavelength,
+        bonds,
+        weights: &weights,
+        leader_selection_id,
+        leader_selection,
+    };
+    let mut state = TauState {
+        emitted: previous_prefix
+            .iter()
+            .map(BlockIdentity::consensus_identity)
+            .collect(),
+        ordered: previous_prefix
+            .iter()
+            .map(BlockIdentity::consensus_identity)
+            .collect(),
+    };
+
+    if !weighted_tau_suffix_from_leader_cached(
+        blocklace,
+        &latest_leader,
+        &config,
+        cache,
+        previous_anchor,
+        &mut state,
+    )? {
+        return Ok(None);
+    }
+
+    Ok(Some((state.ordered, latest_leader)))
+}
+
 fn tau_from_leader<F>(
     blocklace: &Blocklace,
     leader: &BlockIdentity,
@@ -711,7 +1111,8 @@ where
         config.leader_selection,
     ) {
         tau_from_leader(blocklace, &previous, config, state)?;
-    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, leader) {
+    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, FinalityRule::Paper, leader)
+    {
         emit_checkpoint_prefix(blocklace, checkpoint, state);
     }
 
@@ -745,7 +1146,8 @@ where
 
     if let Some(previous) = previous_final_leader_cached(blocklace, leader, config, cache) {
         tau_from_leader_cached(blocklace, &previous, config, cache, state)?;
-    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, leader) {
+    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, FinalityRule::Paper, leader)
+    {
         emit_checkpoint_prefix(blocklace, checkpoint, state);
     }
 
@@ -779,7 +1181,9 @@ where
         config.leader_selection,
     ) {
         weighted_tau_from_leader(blocklace, &previous, config, state)?;
-    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, leader) {
+    } else if let Some(checkpoint) =
+        checkpoint_predecessor(blocklace, FinalityRule::Weighted, leader)
+    {
         emit_weighted_checkpoint_prefix(blocklace, checkpoint, state);
     }
 
@@ -814,7 +1218,9 @@ where
     if let Some(previous) = weighted_previous_final_leader_cached(blocklace, leader, config, cache)
     {
         weighted_tau_from_leader_cached(blocklace, &previous, config, cache, state)?;
-    } else if let Some(checkpoint) = checkpoint_predecessor(blocklace, leader) {
+    } else if let Some(checkpoint) =
+        checkpoint_predecessor(blocklace, FinalityRule::Weighted, leader)
+    {
         emit_weighted_checkpoint_prefix(blocklace, checkpoint, state);
     }
 
@@ -827,12 +1233,60 @@ where
     Ok(())
 }
 
+fn weighted_tau_suffix_from_leader_cached<'a, F>(
+    blocklace: &Blocklace,
+    leader: &BlockIdentity,
+    config: &WeightedTauConfig<'a, F>,
+    cache: &mut OrderingCache,
+    previous_anchor: &BlockIdentity,
+    state: &mut TauState,
+) -> Result<bool, OrderingError>
+where
+    F: Fn(u64) -> Option<NodeId> + Copy,
+{
+    if leader.same_consensus_identity(previous_anchor) {
+        return Ok(true);
+    }
+
+    if emit_weighted_checkpoint_prefix(blocklace, leader, state) {
+        return Ok(false);
+    }
+
+    let reaches_previous_anchor = if let Some(previous) =
+        weighted_previous_final_leader_cached(blocklace, leader, config, cache)
+    {
+        weighted_tau_suffix_from_leader_cached(
+            blocklace,
+            &previous,
+            config,
+            cache,
+            previous_anchor,
+            state,
+        )?
+    } else {
+        false
+    };
+    if !reaches_previous_anchor {
+        return Ok(false);
+    }
+
+    for id in sorted_approved_fragment(blocklace, leader, cache)? {
+        if state.emitted.insert(id.clone()) {
+            state.ordered.push(id);
+        }
+    }
+
+    Ok(true)
+}
+
 fn emit_checkpoint_prefix(
     blocklace: &Blocklace,
     leader: &BlockIdentity,
     state: &mut TauState,
 ) -> bool {
-    if blocklace.checkpoint() != Some(leader) || blocklace.checkpoint_order_prefix().is_empty() {
+    if blocklace.trusted_checkpoint(FinalityRule::Paper) != Some(leader)
+        || blocklace.checkpoint_order_prefix().is_empty()
+    {
         return false;
     }
 
@@ -851,7 +1305,7 @@ fn emit_weighted_checkpoint_prefix(
     leader: &BlockIdentity,
     state: &mut TauState,
 ) -> bool {
-    if blocklace.checkpoint() != Some(leader)
+    if blocklace.trusted_checkpoint(FinalityRule::Weighted) != Some(leader)
         || blocklace.checkpoint_weighted_order_prefix().is_empty()
     {
         return false;
@@ -869,9 +1323,10 @@ fn emit_weighted_checkpoint_prefix(
 
 fn checkpoint_predecessor<'a>(
     blocklace: &'a Blocklace,
+    rule: FinalityRule,
     leader: &BlockIdentity,
 ) -> Option<&'a BlockIdentity> {
-    let checkpoint = blocklace.checkpoint()?;
+    let checkpoint = blocklace.trusted_checkpoint(rule)?;
     if checkpoint == leader || !blocklace.precedes(checkpoint, leader) {
         return None;
     }
@@ -902,6 +1357,55 @@ mod tests {
             .iter()
             .map(|(id, weight)| (node(*id), *weight))
             .collect()
+    }
+
+    #[test]
+    fn cache_invalidates_when_switching_between_same_generation_mirrors() {
+        let mut first = Blocklace::new();
+        first
+            .commit_validated(
+                block(1),
+                crate::types::BlockContent {
+                    payload: vec![1],
+                    predecessors: HashSet::new(),
+                },
+            )
+            .expect("first mirror block should commit");
+
+        let mut second = Blocklace::new();
+        second
+            .commit_validated(
+                block(2),
+                crate::types::BlockContent {
+                    payload: vec![2],
+                    predecessors: HashSet::new(),
+                },
+            )
+            .expect("second mirror block should commit");
+
+        assert_eq!(first.generation(), second.generation());
+        assert_eq!(first.dom().len(), second.dom().len());
+
+        let mut cache = OrderingCache::default();
+        sync_cache_generation(&first, &mut cache);
+        cache.tau_output_by_latest_leader.insert(
+            TauOutputCacheKey {
+                latest_leader: block(1),
+                wavelength: 3,
+                n: 4,
+                f: 1,
+                leader_selection_id: 0,
+            },
+            Ok(vec![block(1)]),
+        );
+
+        sync_cache_generation(&second, &mut cache);
+
+        assert!(
+            cache.tau_output_by_latest_leader.is_empty(),
+            "entries computed against another same-generation mirror must be discarded"
+        );
+        assert_eq!(cache.generation(), second.generation());
     }
 
     /// Two different weight tables forced to share a fingerprint, since a

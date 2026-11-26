@@ -1,189 +1,170 @@
-//! Benchmark: checkpoint pruning and garbage collection
-//!
-//! Measures memory-bounding operations on the in-memory blocklace:
-//!
-//! * **`prune_below_checkpoint`** — explicit GC pass removing finalized history
-//!   while retaining the structural closure at 500, 2 000, and 5 000 blocks.
-//! * **`checkpoint_after_weighted_finality`** — end-to-end leader discovery,
-//!   prefix export, and checkpoint pruning pass.
-//! * **Incremental GC loop** — continuous chain growth with periodic checkpointing.
-
-use std::collections::{HashMap, HashSet};
-
-use cordial_miners_core::Block;
+//! Checkpoint operations and sustained growth with periodic checkpointing.
+//! Graph construction/destruction is excluded. Sustained mode includes insertion,
+//! payload ownership, prefix materialization and pruning, as a node would.
+use cordial_miners_core::bench_support as support;
 use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::pruning::{CheckpointGc, checkpoint_after_weighted_finality};
-use cordial_miners_core::crypto::CryptoVerifier;
-use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
-
+use cordial_miners_core::consensus::weighted_final_leader_for_wave;
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::time::Duration;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-struct MockVerifier;
-
-impl CryptoVerifier for MockVerifier {
-    type Error = String;
-
-    fn verify_block(
-        &self,
-        _content: &BlockContent,
-        _sig: &[u8],
-        _creator: &NodeId,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
-fn node(id: u8) -> NodeId {
-    NodeId(vec![id])
-}
-
-fn make_id(creator: &NodeId, tag: u64) -> BlockIdentity {
-    let mut hash = [0u8; 32];
-    hash[0..8].copy_from_slice(&tag.to_le_bytes());
-    hash[8] = creator.0[0];
-
-    BlockIdentity {
-        content_hash: hash,
-        creator: creator.clone(),
-        signature: tag.to_le_bytes().to_vec(),
-    }
-}
-
-fn make_block(creator: &NodeId, tag: u64, predecessors: HashSet<BlockIdentity>) -> Block {
-    Block {
-        identity: make_id(creator, tag),
-        content: BlockContent {
-            payload: tag.to_le_bytes().to_vec(),
-            predecessors,
-        },
-    }
-}
-
-fn insert(blocklace: &mut Blocklace, block: &Block) {
-    blocklace
-        .insert(block.clone(), &MockVerifier)
-        .expect("bench block should insert");
-}
-
-fn build_multi_wave_dag(
-    num_validators: usize,
-    waves: u64,
-    wavelength: u64,
-) -> (Blocklace, BlockIdentity) {
-    let validators: Vec<NodeId> = (0..num_validators as u8).map(node).collect();
-    let mut blocklace = Blocklace::new();
-    let total_rounds = waves * wavelength;
-    let mut prev_round: Vec<Block> = Vec::new();
-    let mut tag: u64 = 1;
-    let mut midpoint_checkpoint = None;
-
-    let target_checkpoint_round = (waves / 2) * wavelength;
-
-    for round in 0..=total_rounds {
-        let preds: HashSet<BlockIdentity> = prev_round.iter().map(|b| b.identity.clone()).collect();
-        let mut this_round = Vec::new();
-        for v in &validators {
-            let block = make_block(v, tag, preds.clone());
-            tag += 1;
-            insert(&mut blocklace, &block);
-            this_round.push(block);
-        }
-        if round == target_checkpoint_round {
-            midpoint_checkpoint = this_round.first().map(|b| b.identity.clone());
-        }
-        prev_round = this_round;
-    }
-
-    (blocklace, midpoint_checkpoint.unwrap())
-}
-
-fn uniform_bonds(num_validators: usize) -> HashMap<NodeId, u64> {
-    (0..num_validators as u8)
-        .map(|id| (node(id), 100))
-        .collect()
-}
-
-fn leader_fn(wave: u64) -> Option<NodeId> {
-    Some(node((wave % 4) as u8))
-}
-
-// ── benchmarks ────────────────────────────────────────────────────────────────
-
-fn bench_prune_below_checkpoint(c: &mut Criterion) {
-    let wave_configs: &[(usize, u64)] = &[(4, 10), (4, 30), (4, 60)]; // produces ~120, ~360, ~720 blocks
-    const WAVELENGTH: u64 = 3;
-
-    let mut group = c.benchmark_group("pruning_gc/prune_below_checkpoint");
+fn bench_pruning(c: &mut Criterion) {
+    let mut group = c.benchmark_group("pruning_gc");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(2));
-
-    for &(validators, waves) in wave_configs {
-        let total_blocks = (validators as u64) * (waves * WAVELENGTH + 1);
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("blocks_{total_blocks}"), ""),
-            &(),
-            |b, _| {
-                b.iter_batched(
-                    || build_multi_wave_dag(validators, waves, WAVELENGTH),
-                    |(mut blocklace, checkpoint)| {
-                        blocklace
-                            .prune_below_checkpoint(&checkpoint)
-                            .expect("checkpoint pruning must succeed");
+    for waves in support::sizes(&[3, 10], &[3, 10, 30]) {
+        let layers = support::rounds(4, waves * 3 + 1);
+        let blocks = support::flatten(&layers);
+        let checkpoint_wave = waves / 2;
+        let checkpoint = layers[checkpoint_wave * 3][checkpoint_wave % 4]
+            .identity
+            .clone();
+        let weights = support::bonds(4);
+        for weighted in [false, true] {
+            let apply = |dag: &mut Blocklace| {
+                if weighted {
+                    checkpoint_after_weighted_finality(dag, 3, &weights, support::leader)
+                        .expect("weighted checkpoint")
+                        .expect("checkpoint advances")
+                } else {
+                    dag.prune_below_checkpoint(&checkpoint)
+                        .expect("explicit checkpoint")
+                }
+            };
+            let mut checked = support::insert_all(&blocks);
+            // The low-level pruning API trusts the caller to establish finality.
+            assert_eq!(
+                weighted_final_leader_for_wave(
+                    &checked,
+                    checkpoint_wave as u64,
+                    3,
+                    &weights,
+                    support::leader,
+                ),
+                Some(checkpoint.clone()),
+                "explicit checkpoint must be the proven final leader",
+            );
+            let report = apply(&mut checked);
+            assert_eq!(checked.checkpoint(), Some(&report.checkpoint));
+            assert_eq!(checked.dom().len(), report.retained_blocks);
+            assert_eq!(report.removed.len() + report.retained_blocks, blocks.len());
+            assert!(checked.is_closed());
+            // Peers at the checkpoint depth still reference its ancestors.
+            assert!(
+                report.removed.is_empty(),
+                "retained peer references protect history"
+            );
+            assert_eq!(report.retained_blocks, blocks.len());
+            group.bench_function(
+                BenchmarkId::new(
+                    if weighted {
+                        "checkpoint_after_weighted_finality_retained_references"
+                    } else {
+                        "prune_below_checkpoint_retained_references"
                     },
-                    criterion::BatchSize::SmallInput,
+                    blocks.len(),
+                ),
+                |b| {
+                    b.iter_batched_ref(
+                        || support::insert_all(&blocks),
+                        apply,
+                        BatchSize::PerIteration,
+                    );
+                },
+            );
+        }
+    }
+
+    for cycles in support::sizes(&[3], &[3, 10, 30]) {
+        for reclaimable in [false, true] {
+            let shape = if reclaimable {
+                "reclaimable"
+            } else {
+                "retained_references"
+            };
+            let layers = if reclaimable {
+                support::checkpoint_rounds(cycles * 3)
+            } else {
+                support::rounds(4, cycles * 3)
+            };
+            let inserted: usize = layers.iter().map(Vec::len).sum();
+            let weights = support::bonds(4);
+            let run = |dag: &mut Blocklace| {
+                let mut removed = 0;
+                for wave in layers.chunks(3) {
+                    for block in wave.iter().flatten() {
+                        dag.insert(block.clone(), &support::FixtureVerifier)
+                            .expect("growth");
+                    }
+                    let report =
+                        checkpoint_after_weighted_finality(dag, 3, &weights, support::leader)
+                            .expect("periodic checkpoint")
+                            .expect("checkpoint advances");
+                    removed += report.removed.len();
+                }
+                removed
+            };
+            let memory_before = std::fs::read_to_string("/proc/self/status").ok();
+            let mut checked = Blocklace::new();
+            let removed = run(&mut checked);
+            let memory_after = std::fs::read_to_string("/proc/self/status").ok();
+            for (label, status) in [
+                ("before_growth", memory_before),
+                ("after_growth", memory_after),
+            ] {
+                if let Some(status) = status {
+                    for line in status
+                        .lines()
+                        .filter(|line| line.starts_with("VmRSS:") || line.starts_with("VmHWM:"))
+                    {
+                        eprintln!(
+                            "process_memory shape={shape} cycles={cycles} phase={label} {line}; includes allocator, prefixes, fixtures and indexes"
+                        );
+                    }
+                }
+            }
+            let last_leader =
+                &layers[(cycles - 1) * 3][if reclaimable { 0 } else { (cycles - 1) % 4 }];
+            assert_eq!(checked.checkpoint(), Some(&last_leader.identity));
+            assert!(checked.is_closed());
+            assert_eq!(checked.dom().len() + removed, inserted);
+            if reclaimable {
+                assert_eq!(inserted, cycles * 9);
+                assert_eq!(checked.dom().len(), 9, "only the latest wave remains");
+                assert_eq!(removed, (cycles - 1) * 9);
+                assert!(checked.get(&layers[0][0].identity).is_none());
+            } else {
+                assert_eq!(inserted, cycles * 12);
+                assert_eq!(removed, 0, "peer references keep earlier history alive");
+                assert_eq!(checked.dom().len(), inserted);
+            }
+            for block in layers[(cycles - 1) * 3..].iter().flatten() {
+                support::assert_content_eq(
+                    &checked
+                        .get(&block.identity)
+                        .expect("latest wave retained")
+                        .content,
+                    &block.content,
                 );
-            },
-        );
+            }
+            let payload_bytes: usize = checked
+                .dom()
+                .iter()
+                .map(|id| checked.get(id).expect("retained").content.payload.len())
+                .sum();
+            eprintln!(
+                "sustained fixture: shape={shape} cycles={cycles} inserted_blocks={inserted} removed_blocks={removed} retained_blocks={} retained_payload_bytes={payload_bytes}; excludes indexes and saved prefix memory",
+                checked.dom().len()
+            );
+            group.bench_function(
+                BenchmarkId::new(format!("growth_and_periodic_checkpoint_{shape}"), cycles),
+                |b| {
+                    b.iter_batched_ref(Blocklace::new, run, BatchSize::PerIteration);
+                },
+            );
+        }
     }
     group.finish();
 }
-
-fn bench_checkpoint_after_weighted_finality(c: &mut Criterion) {
-    let wave_configs: &[(usize, u64)] = &[(4, 5), (4, 15), (4, 30)];
-    const WAVELENGTH: u64 = 3;
-
-    let mut group = c.benchmark_group("pruning_gc/checkpoint_after_weighted_finality");
-    group.sample_size(20);
-    group.measurement_time(Duration::from_secs(2));
-
-    for &(validators, waves) in wave_configs {
-        let bonds = uniform_bonds(validators);
-        let total_blocks = (validators as u64) * (waves * WAVELENGTH + 1);
-
-        group.bench_with_input(
-            BenchmarkId::new(format!("blocks_{total_blocks}"), ""),
-            &(),
-            |b, _| {
-                b.iter_batched(
-                    || {
-                        let (blocklace, _) = build_multi_wave_dag(validators, waves, WAVELENGTH);
-                        (blocklace, bonds.clone())
-                    },
-                    |(mut blocklace, bonds)| {
-                        checkpoint_after_weighted_finality(
-                            &mut blocklace,
-                            WAVELENGTH,
-                            &bonds,
-                            leader_fn,
-                        )
-                        .expect("weighted finality checkpoint must not error");
-                    },
-                    criterion::BatchSize::SmallInput,
-                );
-            },
-        );
-    }
-    group.finish();
-}
-
-criterion_group!(
-    benches,
-    bench_prune_below_checkpoint,
-    bench_checkpoint_after_weighted_finality,
-);
+criterion_group!(benches, bench_pruning);
 criterion_main!(benches);

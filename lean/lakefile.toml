@@ -17,3 +17,7 @@ root = "replay_runner"
 [[lean_exe]]
 name = "conformance_tests"
 root = "conformance_tests"
+
+[[lean_exe]]
+name = "slashing_replay"
+root = "slashing_replay"

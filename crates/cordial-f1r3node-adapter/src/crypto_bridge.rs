@@ -9,7 +9,7 @@
 //! - [`compute_adapter_snapshot_hash`] hashes a deterministic, selected-field
 //!   layout of the adapter-owned [`BlockMessage`]. It includes the sender to
 //!   distinguish otherwise identical snapshots from different validators.
-//! - Cordial's [`hash_content`] hashes the internal [`BlockContent`]; local
+//! - Cordial's [`block_hash`] hashes the creator and internal [`BlockContent`]; local
 //!   adapter messages carry signatures over this internal content hash.
 //! - f1r3node's `casper::rust::util::proto_util::hash_block` hashes the original
 //!   protobuf representation. [`crate::grpc_ingest::GrpcBlockMapper::from_protobuf`]
@@ -28,7 +28,7 @@ use sha2::{Digest, Sha256};
 
 use crate::block_translation::BlockMessage;
 
-use cordial_miners_core::crypto::{CryptoVerifier, hash_content};
+use cordial_miners_core::crypto::{CryptoVerifier, block_hash};
 use cordial_miners_core::types::{BlockContent, NodeId}; // The data types we need to work with
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -408,7 +408,7 @@ impl CryptoVerifier for F1r3flyCryptoAdapter {
         creator: &NodeId,
     ) -> Result<(), Self::Error> {
         // Recompute the content hash; the creator's signature must match it, so changed content fails verification.
-        let hash: [u8; 32] = hash_content(content); // Get the 32-byte hash of the block content.
+        let hash: [u8; 32] = block_hash(creator, content); // Get the 32-byte hash of the block content.
 
         // reject empty signatures
         if signature.is_empty() {

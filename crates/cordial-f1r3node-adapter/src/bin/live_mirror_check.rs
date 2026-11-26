@@ -8,7 +8,7 @@ use cordial_f1r3node_adapter::deploy_trace::{DeployTraceState, DeployTracer, Tra
 use cordial_f1r3node_adapter::grpc_ingest::BlocklaceAdapter;
 use cordial_f1r3node_adapter::http_observer::HttpObserver;
 use cordial_f1r3node_adapter::live_grpc::{
-    LiveGrpcBlockClient, light_block_info_to_block_message,
+    LiveGrpcBlockClient, light_block_info_to_block_message, reconcile_trusted_predecessor_creators,
     trusted_block_from_light_block_info_with_options,
 };
 use cordial_f1r3node_adapter::live_ingress::LiveIngress;
@@ -924,6 +924,7 @@ async fn bootstrap_by_heights(
 ) -> Result<usize> {
     let mut start = config.start_height.max(0);
     let mut bootstrapped = 0usize;
+    let mut known_creators: HashMap<[u8; 32], NodeId> = HashMap::new();
 
     println!(
         "[height-bootstrap] start_height={}, target_max_height={}, batch_size={}",
@@ -946,7 +947,24 @@ async fn bootstrap_by_heights(
             blocks.len()
         );
 
+        let mut translated = Vec::with_capacity(blocks.len());
         for info in &blocks {
+            let block = trusted_block_from_light_block_info_with_options(
+                info,
+                !config.parents_only_bootstrap,
+            )
+            .with_context(|| format!("failed to reconstruct trusted block {}", info.block_hash))?;
+            if let Some(creator) = known_creators.get(&block.identity.content_hash) {
+                if creator != &block.identity.creator {
+                    bail!("live block {} changed creator", info.block_hash);
+                }
+            } else {
+                known_creators.insert(block.identity.content_hash, block.identity.creator.clone());
+            }
+            translated.push(block);
+        }
+
+        for (info, mut block) in blocks.iter().zip(translated) {
             // Decode the full BlockMessage — it carries body.deploys with real
             // deploy signatures. We use it for deploy correlation, then ingest
             // the trusted block (which has correct predecessor links).
@@ -954,11 +972,7 @@ async fn bootstrap_by_heights(
                 .with_context(|| format!("failed to decode live block {}", info.block_hash))?;
             *decoded_messages += 1;
 
-            let block = trusted_block_from_light_block_info_with_options(
-                info,
-                !config.parents_only_bootstrap,
-            )
-            .with_context(|| format!("failed to reconstruct trusted block {}", info.block_hash))?;
+            reconcile_trusted_predecessor_creators(&mut block, &known_creators);
             if config.trusted_window_boundary {
                 ingress
                     .ingest_trusted_window_block(block)

@@ -349,13 +349,16 @@ zero-total result is rejected. PoR therefore changes values, never membership.
 1. derives authorized identities from the current Cordial bonds map;
 2. builds the complete projected map before mutation;
 3. rejects non-genesis PoR state without an audited checkpoint and verifies
-   that checkpoint's source wave is covered by published Cordial finality;
+   that its source wave, or its v3 finalized-prefix checkpoint, matches
+   published Cordial finality;
 4. prospectively recomputes weighted ordering and rejects an update that would
    rewrite the published finalized prefix; and
 5. atomically replaces weights and clears the ordering cache.
 
-This preserves the one-round delay: interactions finalized in wave `k` produce
-PoR round `k + 1`, whose weights can affect only subsequent Cordial decisions.
+This enforces source and published-prefix safety for single-table activation.
+It can leave a valid new PoR projection pending when that table would change
+an earlier final leader. The adapter's future-only epoch path instead seals
+the old-weight prefix and applies new weights from a durable effective wave.
 
 `DurablePorState::activate_weights` owns the commit-to-activation handoff. It
 derives the desired record from the latest committed state and the identities

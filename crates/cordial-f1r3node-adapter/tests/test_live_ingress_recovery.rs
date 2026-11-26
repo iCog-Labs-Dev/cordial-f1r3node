@@ -25,7 +25,7 @@ use cordial_f1r3space_adapter::lmdb_store::{
     BLOCK_HASH_FORMAT_VERSION, BLOCK_HASH_FORMAT_VERSION_KEY,
 };
 use cordial_miners_core::Block;
-use cordial_miners_core::crypto::hash_content;
+use cordial_miners_core::crypto::block_hash;
 use cordial_miners_core::types::{BlockContent, BlockIdentity, NodeId};
 use tempfile::tempdir;
 
@@ -69,7 +69,7 @@ fn make_block(creator: &NodeId, state_tag: u8, predecessors: &[BlockIdentity]) -
 
     Block {
         identity: BlockIdentity {
-            content_hash: hash_content(&content),
+            content_hash: block_hash(creator, &content),
             creator: creator.clone(),
             signature: vec![state_tag; 64],
         },
@@ -352,4 +352,42 @@ fn recovery_skips_corrupt_lmdb_entries_without_panic() {
         .ingest_and_persist(next.clone(), &repo)
         .expect("live ingress must stay usable after recovering past corrupt entries");
     assert!(ingress.blocklace().get(&next.identity).is_some());
+}
+
+#[test]
+fn opening_v2_store_with_v3_code_fails_closed() {
+    use cordial_f1r3space_adapter::RepoError;
+    use heed::EnvOpenOptions;
+    use heed::types::Bytes;
+
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("blocklace");
+    std::fs::create_dir_all(&db_path).unwrap();
+
+    {
+        let env = unsafe {
+            EnvOpenOptions::new()
+                .map_size(MAP_SIZE)
+                .max_dbs(10)
+                .max_readers(128)
+                .open(&db_path)
+                .unwrap()
+        };
+        let mut wtxn = env.write_txn().unwrap();
+        let meta: heed::Database<Bytes, Bytes> = env
+            .create_database(&mut wtxn, Some("cordial-meta"))
+            .unwrap();
+        let v2: u32 = 2;
+        meta.put(&mut wtxn, BLOCK_HASH_FORMAT_VERSION_KEY, &v2.to_be_bytes())
+            .unwrap();
+        wtxn.commit().unwrap();
+    }
+
+    match RSpaceBlocklaceRepository::open(dir.path(), MAP_SIZE) {
+        Err(RepoError::IncompatibleStorage(msg)) => {
+            assert!(msg.contains("version 2 is not supported; expected version 3"));
+        }
+        Err(other) => panic!("expected IncompatibleStorage, got {other:?}"),
+        Ok(_) => panic!("expected open to fail with IncompatibleStorage, but it succeeded"),
+    }
 }

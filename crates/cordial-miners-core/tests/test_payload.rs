@@ -89,6 +89,7 @@ fn genesis_payload_roundtrips() {
 #[test]
 fn payload_with_deploys_roundtrips() {
     let payload = CordialBlockPayload {
+        por_authorizations: vec![],
         state: BlockState {
             pre_state_hash: vec![0x01; 32],
             post_state_hash: vec![0x02; 32],
@@ -111,6 +112,7 @@ fn payload_with_deploys_roundtrips() {
 #[test]
 fn payload_with_rejected_deploys_roundtrips() {
     let payload = CordialBlockPayload {
+        por_authorizations: vec![],
         state: BlockState {
             pre_state_hash: vec![],
             post_state_hash: vec![],
@@ -132,6 +134,7 @@ fn payload_with_rejected_deploys_roundtrips() {
 #[test]
 fn payload_with_system_deploys_roundtrips() {
     let payload = CordialBlockPayload {
+        por_authorizations: vec![],
         state: BlockState {
             pre_state_hash: vec![],
             post_state_hash: vec![],
@@ -178,6 +181,7 @@ fn all_reject_reasons_roundtrip() {
 #[test]
 fn payload_fits_in_block_content() {
     let payload = CordialBlockPayload {
+        por_authorizations: vec![],
         state: BlockState {
             pre_state_hash: vec![0xaa; 32],
             post_state_hash: vec![0xbb; 32],
@@ -246,7 +250,7 @@ fn genesis_has_block_number_zero() {
 fn chain_of_typed_blocks() {
     let verifier = MockVerifier;
     use cordial_miners_core::blocklace::Blocklace;
-    use cordial_miners_core::crypto::hash_content;
+    use cordial_miners_core::crypto::block_hash;
 
     let mut bl = Blocklace::new();
     let bonds = sample_bonds();
@@ -259,7 +263,7 @@ fn chain_of_typed_blocks() {
     };
     let genesis = Block {
         identity: BlockIdentity {
-            content_hash: hash_content(&genesis_content),
+            content_hash: block_hash(&node(1), &genesis_content),
             creator: node(1),
             signature: vec![],
         },
@@ -269,6 +273,7 @@ fn chain_of_typed_blocks() {
 
     // Block 1 with a deploy
     let b1_payload = CordialBlockPayload {
+        por_authorizations: vec![],
         state: BlockState {
             pre_state_hash: vec![0x00; 32],
             post_state_hash: vec![0x01; 32],
@@ -289,7 +294,7 @@ fn chain_of_typed_blocks() {
     };
     let b1 = Block {
         identity: BlockIdentity {
-            content_hash: hash_content(&b1_content),
+            content_hash: block_hash(&node(2), &b1_content),
             creator: node(2),
             signature: vec![],
         },
@@ -311,4 +316,47 @@ fn chain_of_typed_blocks() {
     assert_eq!(b1_recovered.state.block_number, 1);
     assert_eq!(b1_recovered.deploys.len(), 1);
     assert_eq!(b1_recovered.deploys[0].cost, 500);
+}
+
+#[test]
+fn empty_authorization_carrier_preserves_legacy_bytes() {
+    let payload = CordialBlockPayload::genesis(sample_bonds());
+    let legacy = bincode::serialize(&(
+        &payload.state,
+        &payload.deploys,
+        &payload.rejected_deploys,
+        &payload.system_deploys,
+    ))
+    .unwrap();
+    assert_eq!(payload.to_bytes(), legacy);
+    assert_eq!(CordialBlockPayload::from_bytes(&legacy).unwrap(), payload);
+}
+
+#[test]
+fn authorization_carrier_roundtrips_and_rejects_malformed_extensions() {
+    let mut payload = CordialBlockPayload::genesis(sample_bonds());
+    payload.por_authorizations.push(
+        cordial_miners_core::execution::PorEquivocationAuthorization {
+            shard_id: b"root".to_vec(),
+            source_finalized_wave: 0,
+            round: 1,
+            message: vec![1, 2, 3],
+        },
+    );
+    let bytes = payload.to_bytes();
+    assert_eq!(CordialBlockPayload::from_bytes(&bytes).unwrap(), payload);
+    assert_eq!(
+        CordialBlockPayload::por_authorizations_from_bytes(&bytes).unwrap(),
+        payload.por_authorizations
+    );
+    let extra = CordialBlockPayload::encode_por_extra(&payload.por_authorizations);
+    assert_eq!(
+        CordialBlockPayload::decode_por_extra(&extra).unwrap(),
+        payload.por_authorizations
+    );
+    assert!(CordialBlockPayload::decode_por_extra(&extra[..extra.len() - 1]).is_err());
+    assert!(CordialBlockPayload::por_authorizations_from_bytes(&bytes[..bytes.len() - 1]).is_err());
+    let mut trailing = bytes;
+    trailing.push(0);
+    assert!(CordialBlockPayload::from_bytes(&trailing).is_err());
 }

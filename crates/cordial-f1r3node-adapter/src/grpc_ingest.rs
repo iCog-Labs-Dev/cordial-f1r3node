@@ -126,7 +126,7 @@ impl NativeBlockIdentityIndex {
     pub fn check_candidate(&self, block: &ValidatedF1r3nodeBlock) -> Result<()> {
         let identity = &block.block.identity;
         if !identity.signature.is_empty()
-            || identity.content_hash != crypto::hash_content(&block.block.content)
+            || identity.content_hash != crypto::block_hash(&identity.creator, &block.block.content)
         {
             bail!("native block has an invalid translated Cordial identity");
         }
@@ -309,7 +309,7 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
             predecessors.insert(resolved.clone());
         }
         block.content.predecessors = predecessors;
-        block.identity.content_hash = crypto::hash_content(&block.content);
+        block.identity.content_hash = crypto::block_hash(&block.identity.creator, &block.content);
 
         let wire_hash: [u8; 32] = wire_hash
             .as_ref()
@@ -360,7 +360,7 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
 
     /// Verify the adapter message's block_hash matches either the snapshot hash
     /// computed from the `BlockMessage` fields via [`compute_adapter_snapshot_hash`], or the
-    /// internal Cordial `hash_content` (when constructed by `block_to_message`).
+    /// internal Cordial `block_hash` (when constructed by `block_to_message`).
     /// Also verifies that the translated block's internal content_hash is self-consistent.
     fn validate_adapter_content_hash(
         &self,
@@ -376,7 +376,7 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
         let mut declared_hash = [0u8; 32];
         declared_hash.copy_from_slice(&block_msg.block_hash);
 
-        let recomputed_internal = crypto::hash_content(&block.content);
+        let recomputed_internal = crypto::block_hash(&block.identity.creator, &block.content);
         let recomputed_adapter = compute_adapter_snapshot_hash(block_msg);
 
         // Both accepted hashes belong to local adapter messages. Real f1r3node
@@ -389,11 +389,11 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
         }
 
         // Sanity-check that the translated block's internal content_hash
-        // matches what hash_content() produces over the translated content.
+        // matches what block_hash() produces over the translated content.
         if block.identity.content_hash != recomputed_internal {
             return Err(anyhow!(
                 "Internal content hash mismatch: translated identity {:?} \
-                 does not match recomputed hash_content {:?}",
+                 does not match recomputed block_hash {:?}",
                 block.identity.content_hash,
                 recomputed_internal
             ));
@@ -403,7 +403,7 @@ impl<V, P, Id> GrpcBlockMapper<V, P, Id> {
     }
 
     fn validate_internal_content_hash(&self, block: &Block) -> Result<()> {
-        let recomputed = crypto::hash_content(&block.content);
+        let recomputed = crypto::block_hash(&block.identity.creator, &block.content);
         if block.identity.content_hash != recomputed {
             return Err(anyhow!(
                 "Content hash mismatch: translated identity {:?} does not match recomputed {recomputed:?}",

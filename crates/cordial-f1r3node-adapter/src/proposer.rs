@@ -6,7 +6,7 @@ use cordial_miners_core::blocklace::Blocklace;
 use cordial_miners_core::consensus::{
     CordialEquivocationEvidence, EvidencePool, select_predecessors, select_predecessors_strict,
 };
-use cordial_miners_core::crypto::{SignatureScheme, hash_content};
+use cordial_miners_core::crypto::{SignatureScheme, block_hash};
 use cordial_miners_core::execution::{
     BlockState, Bond, CordialBlockPayload, DeployPool, DeployPoolConfig, ExecutionRequest,
     ExecutionResult, RuntimeError, RuntimeManager, SystemDeployRequest, compute_deploys_in_scope,
@@ -234,7 +234,7 @@ impl BlockSigner for Secp256k1BlockSigner {
     ) -> Result<BlockIdentity, String> {
         use cordial_miners_core::crypto::Secp256k1Scheme;
 
-        let content_hash = hash_content(content);
+        let content_hash = block_hash(creator, content);
         let signature = Secp256k1Scheme.sign(&content_hash, &self.private_key)?;
         Ok(BlockIdentity {
             content_hash,
@@ -526,6 +526,7 @@ pub struct CordialProposer<TS, EE, BS, BC, ES = NoEvidenceSource, SF = NoopSlash
     bonds: HashMap<NodeId, u64>,
     deploy_pool_config: DeployPoolConfig,
     include_close_block: bool,
+    por_authorizations: Vec<cordial_miners_core::execution::PorEquivocationAuthorization>,
 }
 
 impl<TS, EE, BS, BC> CordialProposer<TS, EE, BS, BC, NoEvidenceSource, NoopSlashFormatter> {
@@ -550,6 +551,7 @@ impl<TS, EE, BS, BC> CordialProposer<TS, EE, BS, BC, NoEvidenceSource, NoopSlash
             bonds,
             deploy_pool_config,
             include_close_block: true,
+            por_authorizations: vec![],
         }
     }
 }
@@ -572,7 +574,53 @@ impl<TS, EE, BS, BC, ES, SF> CordialProposer<TS, EE, BS, BC, ES, SF> {
             bonds: self.bonds,
             deploy_pool_config: self.deploy_pool_config,
             include_close_block: self.include_close_block,
+            por_authorizations: self.por_authorizations,
         }
+    }
+
+    /// Queue a verified proof's authorization for the next successful proposal.
+    /// The signed carrier only becomes authoritative after Cordial finalization.
+    /// The host supplies the source wave in which it intends to propose.
+    pub fn queue_por_equivocation_authorization(
+        &mut self,
+        context: cordial_por::EquivocationAuthorizationContext,
+        proof: &cordial_miners_core::consensus::VerifiedEquivocationEvidence,
+    ) -> Result<(), cordial_por::PorError> {
+        let message = cordial_por::equivocation_authorization_payload(&context, proof)?;
+        let authorization = cordial_miners_core::execution::PorEquivocationAuthorization {
+            shard_id: context.shard_id,
+            source_finalized_wave: context.source_finalized_wave,
+            round: context.round,
+            message,
+        };
+        if !self.por_authorizations.contains(&authorization) {
+            self.por_authorizations.push(authorization);
+            self.por_authorizations.sort();
+        }
+        Ok(())
+    }
+
+    /// Queue a v2 intent for exactly one finalized 16-block checkpoint window.
+    /// The source-wave slot is reserved zero; the message domain selects v2.
+    pub fn queue_por_checkpoint_equivocation_authorization(
+        &mut self,
+        shard_id: &[u8],
+        round: u64,
+        proof: &cordial_miners_core::consensus::VerifiedEquivocationEvidence,
+    ) -> Result<(), cordial_por::PorError> {
+        let message =
+            cordial_por::checkpoint_equivocation_authorization_payload(shard_id, round, proof)?;
+        let authorization = cordial_miners_core::execution::PorEquivocationAuthorization {
+            shard_id: shard_id.to_vec(),
+            source_finalized_wave: 0,
+            round,
+            message,
+        };
+        if !self.por_authorizations.contains(&authorization) {
+            self.por_authorizations.push(authorization);
+            self.por_authorizations.sort();
+        }
+        Ok(())
     }
 
     pub fn with_close_block(mut self, include: bool) -> Self {
@@ -696,6 +744,7 @@ where
 
         let next_bonds = active_bonds_to_map(&result.new_bonds);
         let payload = CordialBlockPayload {
+            por_authorizations: self.por_authorizations.clone(),
             state: BlockState {
                 pre_state_hash,
                 post_state_hash: result.post_state_hash,
@@ -735,6 +784,7 @@ where
         // completed successfully. Failed execution, signing, or broadcast
         // must leave the next proposal's consensus view unchanged.
         self.bonds = next_bonds;
+        self.por_authorizations.clear();
 
         Ok(block)
     }

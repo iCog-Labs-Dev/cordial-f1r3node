@@ -429,3 +429,33 @@ fn get_block_with_corrupt_value_returns_error() {
         other => panic!("Expected RepoError::Bincode for corrupt value, got: {other:?}"),
     }
 }
+
+// Explicit close must release heed's registry reference, not just the caller's
+// handle. Otherwise successive unique temporary environments exhaust resources.
+#[test]
+fn explicit_close_releases_environment_and_preserves_persisted_data() {
+    for _ in 0..24 {
+        let dir = tempdir().unwrap();
+        let repo = open(dir.path());
+        let block = make_block(0xAB, vec![]);
+        repo.put_block(&block).unwrap();
+        repo.put_finalized_cursor(&block.identity).unwrap();
+        let path = std::fs::canonicalize(dir.path().join("blocklace")).unwrap();
+        assert!(heed::env_closing_event(&path).is_some());
+        repo.close();
+        assert!(
+            heed::env_closing_event(&path).is_none(),
+            "environment must leave the registry"
+        );
+
+        let reopened = open(dir.path());
+        let restored = reopened.get_block(&block.identity).unwrap().unwrap();
+        assert_eq!(restored.identity, block.identity);
+        assert_eq!(restored.content.payload, block.content.payload);
+        assert_eq!(reopened.finalized_cursor().unwrap(), Some(block.identity));
+        reopened.close();
+        assert!(heed::env_closing_event(&path).is_none());
+        dir.close()
+            .expect("directory can be removed after LMDB closes");
+    }
+}

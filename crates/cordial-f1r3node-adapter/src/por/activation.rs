@@ -232,7 +232,7 @@ impl PorWeightActivationStore {
     }
 }
 
-fn authorized_weight_commitment(
+pub(crate) fn authorized_weight_commitment(
     weights: &HashMap<NodeId, ReputationWeight>,
 ) -> ReputationCommitment {
     let mut entries: Vec<_> = weights.iter().collect();

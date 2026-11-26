@@ -11,7 +11,7 @@ checks independent executable ordering comparison; it does not claim that
 Run the complete local gate from the repository root:
 
 ```bash
-just issue188-conformance
+just trace-conformance
 ```
 
 The workspace also needs a sibling `../f1r3node` checkout, including for
@@ -37,7 +37,7 @@ lake build replay_runner conformance_tests
 lake exe replay_runner
 lake exe conformance_tests
 cd ..
-bash scripts/issue188_mutation_test.sh
+bash scripts/quorum_threshold_mutation_test.sh
 ```
 
 Cargo is limited to two jobs and the three fixture scenarios share one test

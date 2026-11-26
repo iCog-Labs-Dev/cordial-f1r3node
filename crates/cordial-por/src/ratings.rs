@@ -17,6 +17,35 @@ use crate::{
 /// signature valid under both the old and new protocols.
 pub const RATING_SIGNING_DOMAIN: &[u8] = b"cordial-por:rating:v1";
 
+/// Domain for ratings bound to a finalized-prefix checkpoint.
+pub const CHECKPOINT_RATING_SIGNING_DOMAIN: &[u8] = b"cordial-por:rating:v2";
+
+/// Source identity for one checkpoint-driven PoR round.
+///
+/// The prefix hash commits every ordered block identity through the boundary.
+/// The fixed 16-block cadence is part of this version of the protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RatingSourceCheckpoint {
+    pub round: ReputationRound,
+    pub finalized_prefix_len: u64,
+    pub finalized_prefix_hash: [u8; 32],
+}
+
+impl RatingSourceCheckpoint {
+    /// Check the fixed source boundary and a nonzero consecutive PoR round.
+    pub fn validate(&self) -> Result<(), PorError> {
+        if self.round == 0
+            || self.round.checked_mul(POR_FINALIZED_BLOCKS_PER_CHECKPOINT)
+                != Some(self.finalized_prefix_len)
+        {
+            return Err(PorError::InvalidRatingSourceCheckpoint);
+        }
+        Ok(())
+    }
+}
+
+pub const POR_FINALIZED_BLOCKS_PER_CHECKPOINT: u64 = 16;
+
 /// Encode all signed fields of a rating using the canonical v1 wire layout.
 ///
 /// The signature itself is deliberately excluded. The byte layout is:
@@ -65,6 +94,54 @@ pub fn canonical_rating_payload(rating: &RatingRecord) -> Vec<u8> {
     }
 
     payload
+}
+
+/// Encode a v2 signed rating bound to its exact finalized-prefix checkpoint.
+///
+/// The layout is `v2 domain || round || prefix length || prefix hash ||`
+/// `rater || recipient || score || interaction reference`, using the same
+/// length-prefixed fields as v1. A v1 signature cannot verify against this
+/// payload, and two source prefixes cannot share a valid signature.
+pub fn canonical_checkpoint_rating_payload(
+    rating: &RatingRecord,
+    source: &RatingSourceCheckpoint,
+) -> Result<Vec<u8>, PorError> {
+    if rating.round != source.round {
+        return Err(PorError::InvalidRatingRound);
+    }
+    source.validate()?;
+
+    let mut payload = Vec::with_capacity(
+        CHECKPOINT_RATING_SIGNING_DOMAIN.len()
+            + 8
+            + 8
+            + 32
+            + 8
+            + rating.rater.0.len()
+            + 8
+            + rating.recipient.0.len()
+            + 8
+            + 1
+            + rating
+                .interaction_ref
+                .as_ref()
+                .map_or(0, |interaction_ref| 8 + interaction_ref.len()),
+    );
+    payload.extend_from_slice(CHECKPOINT_RATING_SIGNING_DOMAIN);
+    payload.extend_from_slice(&source.round.to_be_bytes());
+    payload.extend_from_slice(&source.finalized_prefix_len.to_be_bytes());
+    payload.extend_from_slice(&source.finalized_prefix_hash);
+    put_bytes(&mut payload, &rating.rater.0);
+    put_bytes(&mut payload, &rating.recipient.0);
+    payload.extend_from_slice(&rating.score.to_be_bytes());
+    match &rating.interaction_ref {
+        Some(interaction_ref) => {
+            payload.push(1);
+            put_bytes(&mut payload, interaction_ref);
+        }
+        None => payload.push(0),
+    }
+    Ok(payload)
 }
 
 fn put_bytes(output: &mut Vec<u8>, bytes: &[u8]) {

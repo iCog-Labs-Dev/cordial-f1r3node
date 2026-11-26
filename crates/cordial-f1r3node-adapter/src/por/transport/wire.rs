@@ -7,14 +7,16 @@
 
 use std::fmt;
 
-use cordial_por::RatingRecord;
+use cordial_por::{RatingRecord, RatingSourceCheckpoint};
 
 /// Fixed domain identifying a block-production PoR rating envelope.
 pub const BLOCK_PRODUCTION_RATING_ENVELOPE_DOMAIN: &[u8] =
     b"cordial-por:block-production-rating-envelope";
 
-/// Current block-production rating envelope version.
+/// Wave-based block-production rating envelope version.
 pub const BLOCK_PRODUCTION_RATING_ENVELOPE_VERSION: u16 = 1;
+/// Checkpoint-bound block-production rating envelope version.
+pub const CHECKPOINT_RATING_ENVELOPE_VERSION: u16 = 2;
 
 const COMPRESSED_SECP256K1_PUBLIC_KEY_LEN: usize = 33;
 const UNCOMPRESSED_SECP256K1_PUBLIC_KEY_LEN: usize = 65;
@@ -36,6 +38,9 @@ pub const MAX_BLOCK_PRODUCTION_RATING_ENVELOPE_LEN: usize = BLOCK_PRODUCTION_RAT
     + 2
     + MAX_SECP256K1_DER_SIGNATURE_LEN;
 
+/// Maximum byte length of a valid v2 checkpoint envelope.
+pub const MAX_CHECKPOINT_RATING_ENVELOPE_LEN: usize = MAX_BLOCK_PRODUCTION_RATING_ENVELOPE_LEN + 32;
+
 /// Structural failures while encoding or decoding a rating envelope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PorRatingWireError {
@@ -51,6 +56,8 @@ pub enum PorRatingWireError {
     MissingSignature,
     SignatureTooLong { actual: usize, maximum: usize },
     FinalizedWaveRoundMismatch,
+    InvalidSourceCheckpoint,
+    SourceCheckpointRoundMismatch,
 }
 
 impl fmt::Display for PorRatingWireError {
@@ -93,6 +100,12 @@ impl fmt::Display for PorRatingWireError {
                 f,
                 "PoR rating round does not immediately follow the finalized wave"
             ),
+            Self::InvalidSourceCheckpoint => {
+                write!(f, "invalid PoR finalized-prefix source checkpoint")
+            }
+            Self::SourceCheckpointRoundMismatch => {
+                write!(f, "PoR rating round does not match its source checkpoint")
+            }
         }
     }
 }
@@ -211,6 +224,107 @@ impl BlockProductionRatingEnvelopeV1 {
     }
 }
 
+/// Version 2 transport envelope for one checkpoint-bound signed rating.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockProductionRatingEnvelopeV2 {
+    source: RatingSourceCheckpoint,
+    rating: RatingRecord,
+}
+
+impl BlockProductionRatingEnvelopeV2 {
+    pub fn new(
+        source: RatingSourceCheckpoint,
+        rating: RatingRecord,
+    ) -> Result<Self, PorRatingWireError> {
+        source
+            .validate()
+            .map_err(|_| PorRatingWireError::InvalidSourceCheckpoint)?;
+        if rating.round != source.round {
+            return Err(PorRatingWireError::SourceCheckpointRoundMismatch);
+        }
+        validate_rating_fields(&rating)?;
+        Ok(Self { source, rating })
+    }
+
+    pub fn source(&self) -> RatingSourceCheckpoint {
+        self.source
+    }
+
+    pub fn rating(&self) -> &RatingRecord {
+        &self.rating
+    }
+
+    pub fn into_parts(self) -> (RatingSourceCheckpoint, RatingRecord) {
+        (self.source, self.rating)
+    }
+
+    /// Encode the v2 domain, round, prefix length and hash, then rating fields.
+    pub fn encode(&self) -> Vec<u8> {
+        let interaction_ref = self
+            .rating
+            .interaction_ref
+            .as_deref()
+            .expect("validated envelope always has an interaction reference");
+        let mut output = Vec::with_capacity(MAX_CHECKPOINT_RATING_ENVELOPE_LEN);
+        output.extend_from_slice(BLOCK_PRODUCTION_RATING_ENVELOPE_DOMAIN);
+        output.extend_from_slice(&CHECKPOINT_RATING_ENVELOPE_VERSION.to_be_bytes());
+        output.extend_from_slice(&self.source.round.to_be_bytes());
+        output.extend_from_slice(&self.source.finalized_prefix_len.to_be_bytes());
+        output.extend_from_slice(&self.source.finalized_prefix_hash);
+        put_u16_bytes(&mut output, &self.rating.rater.0);
+        put_u16_bytes(&mut output, &self.rating.recipient.0);
+        output.extend_from_slice(&self.rating.score.to_be_bytes());
+        output.extend_from_slice(interaction_ref);
+        put_u16_bytes(&mut output, &self.rating.signature);
+        output
+    }
+
+    /// Decode one structurally valid v2 checkpoint rating envelope.
+    pub fn decode(input: &[u8]) -> Result<Self, PorRatingWireError> {
+        if input.len() > MAX_CHECKPOINT_RATING_ENVELOPE_LEN {
+            return Err(PorRatingWireError::EnvelopeTooLong {
+                actual: input.len(),
+                maximum: MAX_CHECKPOINT_RATING_ENVELOPE_LEN,
+            });
+        }
+
+        let mut decoder = Decoder::new(input);
+        if decoder.read_exact(BLOCK_PRODUCTION_RATING_ENVELOPE_DOMAIN.len())?
+            != BLOCK_PRODUCTION_RATING_ENVELOPE_DOMAIN
+        {
+            return Err(PorRatingWireError::InvalidDomain);
+        }
+        let version = decoder.read_u16()?;
+        if version != CHECKPOINT_RATING_ENVELOPE_VERSION {
+            return Err(PorRatingWireError::UnsupportedVersion(version));
+        }
+        let source = RatingSourceCheckpoint {
+            round: decoder.read_u64()?,
+            finalized_prefix_len: decoder.read_u64()?,
+            finalized_prefix_hash: decoder.read_array::<32>()?,
+        };
+        let rater = decoder.read_u16_bytes()?;
+        let recipient = decoder.read_u16_bytes()?;
+        let score = decoder.read_u64()?;
+        let interaction_ref = decoder.read_exact(BLOCK_HASH_LEN)?.to_vec();
+        let signature = decoder.read_u16_bytes()?;
+        if !decoder.is_finished() {
+            return Err(PorRatingWireError::TrailingBytes);
+        }
+        Self::new(
+            source,
+            RatingRecord {
+                round: source.round,
+                rater: cordial_miners_core::NodeId(rater),
+                recipient: cordial_miners_core::NodeId(recipient),
+                score,
+                signature,
+                interaction_ref: Some(interaction_ref),
+            },
+        )
+    }
+}
+
 fn validate_rating_shape(
     finalized_wave: u64,
     rating: &RatingRecord,
@@ -219,6 +333,10 @@ fn validate_rating_shape(
         return Err(PorRatingWireError::FinalizedWaveRoundMismatch);
     }
 
+    validate_rating_fields(rating)
+}
+
+fn validate_rating_fields(rating: &RatingRecord) -> Result<(), PorRatingWireError> {
     validate_public_key_length(&rating.rater.0)
         .map_err(PorRatingWireError::InvalidRaterKeyLength)?;
     validate_public_key_length(&rating.recipient.0)
@@ -297,6 +415,12 @@ impl<'a> Decoder<'a> {
             .try_into()
             .expect("read_exact returned eight bytes");
         Ok(u64::from_be_bytes(bytes))
+    }
+
+    fn read_array<const N: usize>(&mut self) -> Result<[u8; N], PorRatingWireError> {
+        self.read_exact(N)?
+            .try_into()
+            .map_err(|_| PorRatingWireError::UnexpectedEnd)
     }
 
     fn read_u16_bytes(&mut self) -> Result<Vec<u8>, PorRatingWireError> {

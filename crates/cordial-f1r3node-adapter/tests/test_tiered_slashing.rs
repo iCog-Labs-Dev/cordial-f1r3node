@@ -703,6 +703,7 @@ fn rejected_equivocation_reaches_a_signed_broadcast_and_peer_validation() {
         ]);
         let genesis = |tag| {
             let payload = CordialBlockPayload {
+                por_authorizations: vec![],
                 state: BlockState {
                     pre_state_hash: vec![],
                     post_state_hash: vec![tag; 32],
